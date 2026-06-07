@@ -1,0 +1,10 @@
+name: ai-study-qb
+channels:
+  - conda-forge
+dependencies:
+  - python=3.13
+  - fastapi
+  - httpx
+  - pytest
+  - python-dotenv
+  - uvicorn

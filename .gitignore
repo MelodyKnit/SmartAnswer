@@ -1,0 +1,106 @@
+# =========================================================================
+# StudyQuestionBankAssistant - 题库与学习助手 Git 忽略规范
+# =========================================================================
+
+# --- Python 运行与字节码缓存 ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# --- 虚拟环境与依赖管理 ---
+.venv/
+venv/
+ENV/
+env/
+.conda/
+conda-meta/
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- 测试与代码静态分析缓存 ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# --- 本地环境变量与鉴权密钥 (严格防泄露) ---
+.env
+.env.local
+.env.*
+!.env.example
+*.key
+*.pem
+jwt_secret*
+
+# --- 本地数据库与临时缓存 (防提交用户数据与大模型内容) ---
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.jsonl
+# 排除 data 目录下本地生成的文件与日志
+data/raw/
+data/normalized/
+data/logs/
+data/runtime/
+data/manifests/
+configs/answer-quality-rules.json
+
+# --- IDE 及编辑器配置 ---
+# 仅保留基础团队环境设置，忽略个人任务、调试运行配置和日志
+.vscode/
+.codex/
+.agents/
+.local/
+.vscode/tasks.json
+.vscode/launch.json
+.vscode/*.log
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+*~
+
+# --- 操作系统临时垃圾文件 ---
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# --- 运行时应用日志 ---
+*.log
+logs/

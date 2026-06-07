@@ -1,0 +1,14 @@
+[project]
+name = "study-question-bank-assistant"
+version = "0.1.0"
+description = "Study-oriented question-bank ingestion and retrieval foundation."
+requires-python = ">=3.13"
+dependencies = [
+  "fastapi",
+  "httpx",
+  "python-dotenv",
+  "uvicorn",
+]
+
+[tool.black]
+line-length = 100

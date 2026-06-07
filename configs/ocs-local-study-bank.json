@@ -1,0 +1,16 @@
+[
+  {
+    "name": "Local Study Question Bank",
+    "homepage": "http://127.0.0.1:8765/healthz",
+    "url": "http://127.0.0.1:8765/ocs/query",
+    "method": "get",
+    "type": "GM_xmlhttpRequest",
+    "contentType": "json",
+    "data": {
+      "title": "${title}",
+      "options": "${options}",
+      "type": "${type}"
+    },
+    "handler": "return (res)=>res.code === 0 ? [res.data.question, res.data.answer] : [res.message || (res.data && res.data.question) || '未找到答案', undefined]"
+  }
+]
