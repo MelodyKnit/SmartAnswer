@@ -1,0 +1,87 @@
+"""认证与会话相关路由。"""
+
+from __future__ import annotations
+
+from fastapi import APIRouter, Request
+from starlette.responses import JSONResponse
+
+from ...auth import AuthError
+from ..context import (
+    SESSION_COOKIE,
+    auth_error_response,
+    current_user,
+    get_auth_service,
+    session_token_from_request,
+)
+from ..schemas import LoginPayload, RegisterPayload, ResetConfirmPayload, ResetRequestPayload
+
+
+def build_auth_router() -> APIRouter:
+    """构建认证域路由。"""
+    router = APIRouter()
+
+    @router.get("/auth/session")
+    def session(request: Request) -> JSONResponse:
+        user = current_user(request)
+        if user is None:
+            return JSONResponse({"ok": False}, status_code=401)
+        return JSONResponse({"ok": True, "user": user})
+
+    @router.post("/auth/register")
+    def register(request: Request, payload: RegisterPayload) -> JSONResponse:
+        auth = get_auth_service(request)
+        try:
+            user = auth.register(payload.username, payload.password, payload.email)
+        except AuthError as exc:
+            return auth_error_response(exc)
+        return JSONResponse({"ok": True, "user": user})
+
+    @router.post("/auth/login")
+    def login(request: Request, payload: LoginPayload) -> JSONResponse:
+        auth = get_auth_service(request)
+        try:
+            token, user, ttl = auth.login(
+                payload.username,
+                payload.password,
+                remember=payload.remember,
+                client_ip=request.client.host if request.client else "",
+            )
+        except AuthError as exc:
+            return auth_error_response(exc)
+        response = JSONResponse({"ok": True, "user": user, "token": token, "expires_in": ttl})
+        response.set_cookie(
+            SESSION_COOKIE,
+            token,
+            path="/",
+            httponly=True,
+            samesite="strict",
+            max_age=ttl if payload.remember else None,
+        )
+        return response
+
+    @router.post("/auth/logout")
+    def logout(request: Request) -> JSONResponse:
+        auth = get_auth_service(request)
+        auth.logout(session_token_from_request(request))
+        response = JSONResponse({"ok": True})
+        response.delete_cookie(SESSION_COOKIE, path="/")
+        return response
+
+    @router.post("/auth/reset-request")
+    def reset_request(request: Request, payload: ResetRequestPayload) -> dict[str, str | bool]:
+        auth = get_auth_service(request)
+        token = auth.create_reset_token(payload.username)
+        if token is not None:
+            print(f"[密码重置] 用户 {payload.username} 的一次性重置令牌（30 分钟内有效）：{token}")
+        return {"ok": True, "message": "若该账号存在，重置令牌已打印到服务器控制台，请联系本机管理员获取"}
+
+    @router.post("/auth/reset-confirm")
+    def reset_confirm(request: Request, payload: ResetConfirmPayload) -> JSONResponse:
+        auth = get_auth_service(request)
+        try:
+            auth.confirm_reset(payload.username, payload.token, payload.new_password)
+        except AuthError as exc:
+            return auth_error_response(exc)
+        return JSONResponse({"ok": True, "message": "密码已重置，请使用新密码登录"})
+
+    return router

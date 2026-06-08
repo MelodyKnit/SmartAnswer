@@ -7,4 +7,6 @@ dependencies:
   - httpx
   - pytest
   - python-dotenv
+  - redis-py
+  - sqlalchemy
   - uvicorn

@@ -1,14 +1,41 @@
 # API 契约
 
-更新时间：`2026-06-07`
+更新时间：`2026-06-08`
 
 ## 1. 目的
 
-本文件定义了学习助手服务的规范化内部 API。该设计特意与客户端解耦，以便即使后续下游工具或适配器发生变化，后端也能保持稳定。
+本文件定义当前后端接口的请求、响应和角色边界。接口分为两类：
 
-## 2. 请求结构
+- 题库查询接口：供 OCS 或其他客户端查题
+- 平台管理接口：供用户、管理员、超级管理员管理令牌、积分、日志与反馈
 
-### 2.1 最小请求
+## 2. 鉴权与角色
+
+### 2.1 鉴权方式
+
+- 浏览器控制台：登录后使用会话 Cookie
+- OCS 客户端：使用 `Authorization: Bearer <token>`
+
+### 2.2 角色
+
+- `superadmin`
+  - 首个注册用户
+  - 可调整积分消耗规则
+  - 可修改用户角色、状态、积分
+  - 可查看所有用户日志与反馈
+- `admin`
+  - 可查看所有用户日志与反馈
+  - 可修改普通用户的状态与积分
+  - 不可调整用户等级
+  - 不可修改积分计费规则
+  - 不可修改系统配置
+- `user`
+  - 可创建和吊销自己的 API 令牌
+  - 只能查看自己的使用日志、自己的反馈和自己的看板
+
+## 3. 题库查询接口
+
+### 3.1 最小请求
 
 ```json
 {
@@ -23,7 +50,7 @@
 }
 ```
 
-### 2.2 扩展请求
+### 3.2 扩展请求
 
 ```json
 {
@@ -43,7 +70,7 @@
 }
 ```
 
-## 3. 规范化响应结构
+### 3.3 规范化响应结构
 
 ```json
 {
@@ -79,7 +106,7 @@
 }
 ```
 
-## 4. 错误响应结构
+### 3.4 错误响应结构
 
 ```json
 {
@@ -92,9 +119,9 @@
 }
 ```
 
-## 5. 字段规则
+### 3.5 字段规则
 
-### 请求字段
+请求字段：
 
 - `title`：必填字符串
 - `options`：可选字符串数组；如果需要，在导入期间将字符串输入规范化为数组
@@ -105,7 +132,7 @@
 - `locale`：可选字符串
 - `request_id`：可选字符串
 
-### 响应字段
+响应字段：
 
 - `candidate_answer`：规范化的符号答案，例如 `A`、`A#C`、`true` 或填空字符串
 - `answer_text`：供人工审核的渲染答案
@@ -114,7 +141,505 @@
 - `resolution_mode`：`exact_match`（精确匹配）、`fuzzy_match`（模糊匹配）、`rag_match`（RAG 匹配）、`external_source`（外部源）、`llm_normalized`（LLM 规范化）、`fallback`（兜底）
 - `review_required`：布尔值
 
-## 6. 外部适配器映射说明
+### 3.6 OCS 兼容说明
+
+- 单选题：`data.answer` 返回 `A/B/C...`
+- 多选题：`data.answer` 返回 `A#B#C...`
+- 判断题：`data.answer` 返回 `对/错`
+- 单空填空：`data.answer` 返回文本答案
+- 多空填空：`data.answer` 返回 JSON 数组字符串，例如 `["第一空","第二空"]`
+
+## 4. 平台管理接口
+
+### 4.1 会话与账号
+
+#### `POST /auth/register`
+
+请求：
+
+```json
+{
+  "username": "alice",
+  "password": "password123",
+  "email": "alice@example.com"
+}
+```
+
+响应：
+
+```json
+{
+  "ok": true,
+  "user": {
+    "user_id": "u_001",
+    "username": "alice",
+    "role": "user",
+    "status": "active",
+    "email": "alice@example.com",
+    "points": 100
+  }
+}
+```
+
+#### `POST /auth/login`
+
+请求：
+
+```json
+{
+  "username": "alice",
+  "password": "password123",
+  "remember": true
+}
+```
+
+响应：
+
+```json
+{
+  "ok": true,
+  "user": {
+    "user_id": "u_001",
+    "username": "alice",
+    "role": "user",
+    "status": "active",
+    "points": 100
+  },
+  "token": "session-token",
+  "expires_in": 2592000
+}
+```
+
+#### `GET /auth/session`
+
+返回当前登录用户信息。
+
+#### `POST /auth/logout`
+
+注销当前会话。
+
+#### `POST /auth/reset-request`
+
+请求重置令牌，令牌会打印到服务端控制台。
+
+#### `POST /auth/reset-confirm`
+
+使用令牌提交新密码。
+
+### 4.2 用户与角色
+
+#### `GET /users/me`
+
+返回当前用户与当前积分计费规则摘要。
+
+#### `GET /users`
+
+- 角色：`admin` / `superadmin`
+- 返回所有用户列表
+
+#### `PATCH /users/{username}`
+
+- 角色：`admin` / `superadmin`
+- 支持字段：
+  - `role`
+  - `points`
+  - `status`
+
+说明：
+
+- `superadmin` 可调整任意用户的角色、状态、积分
+- `admin` 只能管理 `user` 角色用户，且不能修改角色等级
+
+### 4.3 API 令牌
+
+#### `GET /tokens`
+
+返回当前用户自己的 API 令牌列表。
+
+#### `POST /tokens`
+
+请求：
+
+```json
+{
+  "description": "我的 OCS"
+}
+```
+
+响应：
+
+```json
+{
+  "ok": true,
+  "token": "sk_stqb_xxx",
+  "token_info": {
+    "token_id": "t_001",
+    "key_mask": "sk_stqb_xx...abcd",
+    "description": "我的 OCS",
+    "status": "active"
+  },
+  "ocs_config": {
+    "name": "Local Study Question Bank",
+    "url": "http://127.0.0.1:8765/ocs/query",
+    "headers": {
+      "Authorization": "Bearer sk_stqb_xxx"
+    }
+  }
+}
+```
+
+#### `POST /tokens/{token_id}/revoke`
+
+吊销当前用户自己的 API 令牌。
+
+### 4.4 积分计费
+
+#### `GET /billing`
+
+- 角色：`admin` / `superadmin`
+- 返回当前积分规则：
+  - `local_hit`
+  - `web_search`
+  - `llm_fallback`
+
+#### `PATCH /billing`
+
+- 角色：仅 `superadmin`
+- 请求：
+
+```json
+{
+  "local_hit": 1,
+  "web_search": 2,
+  "llm_fallback": 3
+}
+```
+
+### 4.5 系统配置
+
+#### `GET /system-config`
+
+- 角色：仅 `superadmin`
+- 返回当前系统配置
+- 敏感字段不回明文，只返回 `*_configured` 标志
+
+#### `PATCH /system-config`
+
+- 角色：仅 `superadmin`
+- 支持字段：
+  - `llm_base_url`
+  - `llm_model`
+  - `llm_api_key`
+  - `llm_stream`
+  - `llm_fallback`
+  - `llm_explain`
+  - `web_search_provider`
+  - `search_proxy`
+  - `llm_proxy`
+  - `google_search_api_key`
+  - `google_search_cx`
+  - `baidu_search_api_key`
+  - `ai_cache_enabled`
+  - `ai_cache_min_confidence`
+  - `ai_cache_min_confirmations`
+
+响应包含：
+
+```json
+{
+  "ok": true,
+  "config": {
+    "llm_base_url": "https://classbot.top/v1",
+    "llm_model": "gpt-5.4",
+    "llm_api_key_configured": true
+  },
+  "reload_required": false
+}
+```
+
+### 4.6 钱包
+
+#### `GET /wallet/me`
+
+返回当前用户钱包摘要：
+
+- `points`
+- `subscription_active`
+- `subscription_expires_at`
+
+#### `GET /wallet/orders`
+
+查询参数：
+
+- `username`：管理员 / 超级管理员可用
+- `limit`
+
+说明：
+
+- `user` 只能查看自己的订单
+- `admin` / `superadmin` 可查看全部订单
+
+#### `POST /wallet/grants`
+
+- 角色：`admin` / `superadmin`
+- 用于手动充值 / 订阅发放
+
+请求：
+
+```json
+{
+  "username": "alice",
+  "kind": "points",
+  "points": 100
+}
+```
+
+或：
+
+```json
+{
+  "username": "alice",
+  "kind": "subscription",
+  "subscription_days": 30
+}
+```
+
+#### `GET /wallet/redeem-codes`
+
+- 角色：`admin` / `superadmin`
+- 查看所有兑换码
+
+#### `POST /wallet/redeem-codes`
+
+- 角色：`admin` / `superadmin`
+- 创建兑换码
+
+请求：
+
+```json
+{
+  "kind": "points",
+  "points": 50,
+  "max_uses": 10
+}
+```
+
+或：
+
+```json
+{
+  "kind": "subscription",
+  "subscription_days": 30,
+  "max_uses": 1
+}
+```
+
+#### `POST /wallet/redeem`
+
+- 角色：登录用户
+- 使用兑换码兑换额度
+
+请求：
+
+```json
+{
+  "code": "rc_xxx"
+}
+```
+
+### 4.7 使用日志
+
+#### `GET /usage-logs`
+
+查询参数：
+
+- `username`：管理员/超级管理员可用
+- `keyword`
+- `limit`
+
+说明：
+
+- `user` 只能查看自己的日志
+- `admin` / `superadmin` 可查看所有用户日志
+
+### 4.8 反馈
+
+#### `POST /feedback`
+
+请求：
+
+```json
+{
+  "usage_log_id": "log_001",
+  "title": "答错了",
+  "content": "这题答案不对",
+  "image_urls": ["https://example.com/a.png"]
+}
+```
+
+#### `GET /feedback`
+
+说明：
+
+- `user` 只能查看自己的反馈
+- `admin` / `superadmin` 可查看所有反馈
+
+### 4.9 用户看板
+
+#### `GET /dashboard/summary`
+
+查询参数：
+
+- `days`：默认 `30`，最大 `365`
+
+返回：
+
+- 时间窗口内的使用量
+- 积分消耗
+- `resolution_mode` 分布
+- 按天聚合的趋势数据 `trend`
+
+### 4.10 工作台聚合
+
+#### `GET /dashboard/workbench`
+
+用途：
+
+- 为工作台首页一次性返回聚合数据
+
+建议返回字段：
+
+- `hero`
+- `quick_actions`
+- `overview`
+- `trend`
+- `question_distribution`
+- `ranking_preview`
+- `notifications_preview`
+- `service_status`
+
+### 4.11 排行统计
+
+#### `GET /dashboard/rankings`
+
+查询参数：
+
+- `days`
+- `limit`
+- `dimension`
+
+建议默认值：
+
+- `days=1`
+- `limit=10`
+- `dimension=integration`
+
+### 4.12 消息中心
+
+#### `GET /notifications`
+
+查询参数：
+
+- `status`
+- `limit`
+
+#### `POST /notifications/{notification_id}/read`
+
+标记单条消息已读。
+
+#### `POST /notifications/read-all`
+
+全部标记已读。
+
+### 4.13 导入脚本
+
+#### `GET /import-scripts`
+
+返回脚本列表。
+
+#### `POST /import-scripts/generate`
+
+根据接入点和模板生成导入脚本。
+
+请求建议字段：
+
+- `name`
+- `integration_id`
+- `token_id`
+- `target`
+- `include_test_snippet`
+
+#### `GET /import-scripts/{script_id}`
+
+返回脚本详情与内容。
+
+#### `DELETE /import-scripts/{script_id}`
+
+删除脚本记录。
+
+### 4.14 接入管理
+
+#### `GET /integrations`
+
+返回接入点列表。
+
+#### `POST /integrations`
+
+创建接入点。
+
+#### `GET /integrations/{integration_id}`
+
+返回接入点详情。
+
+#### `PATCH /integrations/{integration_id}`
+
+更新接入点。
+
+#### `DELETE /integrations/{integration_id}`
+
+删除接入点。
+
+#### `POST /integrations/{integration_id}/test`
+
+测试当前接入配置。
+
+#### `GET /integrations/{integration_id}/status`
+
+返回接入点状态、最近错误与最近调用摘要。
+
+### 4.15 套餐目录
+
+#### `GET /quota-packages`
+
+返回套餐目录。
+
+#### `POST /quota-packages`
+
+创建套餐。
+
+#### `PATCH /quota-packages/{package_id}`
+
+更新套餐。
+
+#### `DELETE /quota-packages/{package_id}`
+
+下架套餐。
+
+### 4.16 角色权限
+
+#### `GET /roles`
+
+返回角色列表。
+
+#### `GET /roles/{role_id}/permissions`
+
+返回角色权限矩阵。
+
+#### `PUT /roles/{role_id}/permissions`
+
+更新角色权限矩阵。
+
+## 5. 外部适配器映射说明
 
 该服务应支持一个轻量级的适配器层，其作用是：
 
@@ -123,38 +648,18 @@
 
 请将该适配器保留在核心检索逻辑之外。
 
-## 7. 健康检查端点
+## 6. 健康检查端点
 
 推荐端点：
 
 - `GET /healthz`
-- `GET /readyz`
-- `GET /providers`
+- `GET /status`
 - `GET /query?title=...&options=...&type=...`
 - `POST /query`
 - `GET /ocs/query?title=...&options=...&type=...`
 - `POST /ocs/query`
 
-建议的 `GET /providers` 响应：
-
-```json
-{
-  "llm": {
-    "provider": "openai-compatible",
-    "healthy": true
-  },
-  "embedding": {
-    "provider": "openai-compatible",
-    "healthy": true
-  },
-  "retrieval": {
-    "provider": "local-normalized-jsonl",
-    "healthy": true
-  }
-}
-```
-
-## 8. 版本 1 验证规则
+## 7. 版本 1 验证规则
 
 - 拒绝空的 `title`
 - 仅在适配器层或导入层将 `options` 字符串强制转换为数组
@@ -162,7 +667,7 @@
 - 当 `ok` 为 true 时，始终返回至少一个出处字段
 - 当置信度低于阈值或未使用整理过的来源时，将 `review_required` 标记为 true
 
-## 9. 当前本地实现
+## 8. 当前本地实现
 
 当前本地实现记录在 [local-service.md](../services/local-service.md) 中。
 
@@ -173,4 +678,6 @@
 - 模糊匹配兜底
 - 可选的兼容 OpenAI 模型兜底
 - 成功响应中必须包含出处信息
-- 默认不需要外部模型提供商
+- 新增平台用户、令牌、积分、使用日志、反馈与数字看板接口
+
+截图功能与当前接口覆盖差异，详见 [dashboard-interface-coverage.md](dashboard-interface-coverage.md)。

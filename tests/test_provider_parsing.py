@@ -165,6 +165,21 @@ class ProviderParsingTests(unittest.TestCase):
         self.assertEqual(answer.candidate_answer, '["第一空答案", "第二空答案"]')
         self.assertEqual(answer.answer_text, "第一空答案；第二空答案")
 
+    def test_render_question_uses_public_option_label_helper_without_name_error(self) -> None:
+        """测试渲染带选项题目时不会因为旧私有函数名残留而抛出异常。"""
+        provider = OpenAICompatibleProvider(base_url="http://example.test/v1", model="mock")
+        query = QuestionQuery(
+            title="多选题(1分)渲染题干测试",
+            options=("A. 甲", "B. 乙", "C. 丙", "D. 丁"),
+            question_type="multiple",
+        )
+
+        prompt = provider._render_question(query)
+
+        self.assertIn("Question type: multiple", prompt)
+        self.assertIn("A. 甲", prompt)
+        self.assertIn("D. 丁", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

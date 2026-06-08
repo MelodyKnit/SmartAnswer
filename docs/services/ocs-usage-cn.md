@@ -79,7 +79,7 @@ conda activate ai-study-qb
 $env:STQB_LLM_BASE_URL="https://classbot.top/v1"
 $env:STQB_LLM_MODEL="gpt-5.4"
 $env:STQB_LLM_API_KEY="your-api-key"
-uvicorn study_qb_assistant.runtime:create_runtime_app --factory --host 127.0.0.1 --port 8765 --app-dir src
+.\scripts\run.ps1
 ```
 
 说明：
@@ -153,7 +153,7 @@ Ollama 只是可选方案，不是项目依赖。
 ```powershell
 $env:STQB_LLM_BASE_URL="http://127.0.0.1:11434/v1"
 $env:STQB_LLM_MODEL="qwen2.5:7b"
-uvicorn study_qb_assistant.runtime:create_runtime_app --factory --host 127.0.0.1 --port 8765 --app-dir src
+.\scripts\run.ps1
 ```
 
 如果使用 LM Studio、vLLM 或其他本地服务，把 `STQB_LLM_BASE_URL` and `STQB_LLM_MODEL` 改成对应服务即可。
@@ -243,7 +243,7 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8765/status"
 如果题库没有命中但希望继续由大模型回答，启动服务时必须启用模型兜底：
 
 ```powershell
-uvicorn study_qb_assistant.runtime:create_runtime_app --factory --host 127.0.0.1 --port 8765 --app-dir src
+.\scripts\run.ps1
 ```
 
 完整验收：

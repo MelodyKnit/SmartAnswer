@@ -7,11 +7,11 @@
 from __future__ import annotations
 
 import difflib
-import json
 from pathlib import Path
 
-from .models import CanonicalQuestionRecord, QueryResult, QuestionQuery
-from .normalization import normalize_options, normalize_text
+from ..models import CanonicalQuestionRecord, QueryResult, QuestionQuery
+from ..normalization import normalize_options, normalize_text
+from .support import float_from_metadata, is_ai_record, read_jsonl_records, record_options_match
 
 
 class LocalQuestionIndex:
@@ -51,7 +51,7 @@ class LocalQuestionIndex:
             LocalQuestionIndex: 初始化完成的检索索引实例。
         """
         resolved_path = Path(path)
-        records = _read_jsonl_records(resolved_path)
+        records = read_jsonl_records(resolved_path)
         return cls(tuple(records), source_path=str(resolved_path))
 
     @classmethod
@@ -70,7 +70,7 @@ class LocalQuestionIndex:
             resolved_path = Path(path)
             if not resolved_path.exists():
                 continue
-            records.extend(_read_jsonl_records(resolved_path))
+            records.extend(read_jsonl_records(resolved_path))
             loaded_paths.append(str(resolved_path))
         return cls(tuple(records), source_path=";".join(loaded_paths))
 
@@ -139,7 +139,7 @@ class LocalQuestionIndex:
             exact_candidates = [
                 record
                 for record in exact_candidates
-                if not _is_ai_record(record) or _record_options_match(record, query)
+                if not is_ai_record(record) or record_options_match(record, query)
             ]
         if exact_candidates:
             # 如果命中了多个同题干题目（比如选项不同），基于选项匹配度进行优胜排序
@@ -166,7 +166,7 @@ class LocalQuestionIndex:
         best_score = 0.0
         for record in self.records:
             # AI 自动沉淀题依赖具体选项顺序，不能通过相似题干模糊复用。
-            if _is_ai_record(record):
+            if is_ai_record(record):
                 continue
             score = self._score_record(record, query)
             if score > best_score:
@@ -235,10 +235,10 @@ class LocalQuestionIndex:
     ) -> QueryResult:
         """从匹配成功的 CanonicalQuestionRecord 结构体生成标准 QueryResult。"""
         answer_text = self._answer_text(record)
-        is_ai_record = _is_ai_record(record)
-        if is_ai_record and record.metadata.get("ai_status") == "trusted":
+        ai_generated_record = is_ai_record(record)
+        if ai_generated_record and record.metadata.get("ai_status") == "trusted":
             resolution_mode = "ai_cache"
-            confidence = _float_from_metadata(record.metadata.get("ai_confidence"), confidence)
+            confidence = float_from_metadata(record.metadata.get("ai_confidence"), confidence)
         return QueryResult(
             ok=True,
             query=query,
@@ -252,7 +252,7 @@ class LocalQuestionIndex:
             sources=(
                 {
                     "source_name": record.source_name,
-                    "source_type": "ai_generated_question_bank" if is_ai_record else "qa_record",
+                    "source_type": "ai_generated_question_bank" if ai_generated_record else "qa_record",
                     "source_id": record.question_id,
                     "source_url": record.source_url,
                     "source_license": record.source_license,
@@ -269,31 +269,3 @@ class LocalQuestionIndex:
             return None
         choice_map = record.as_choice_map()
         return choice_map.get(record.answer_raw, record.answer_raw)
-
-
-def _read_jsonl_records(path: Path) -> list[CanonicalQuestionRecord]:
-    """读取标准化 JSONL 题库记录。"""
-    records: list[CanonicalQuestionRecord] = []
-    with path.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            if line.strip():
-                records.append(CanonicalQuestionRecord.from_dict(json.loads(line)))
-    return records
-
-
-def _float_from_metadata(value: object, default: float) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _is_ai_record(record: CanonicalQuestionRecord) -> bool:
-    return record.source_name == "AIGenerated" or "ai_generated" in record.tags
-
-
-def _record_options_match(record: CanonicalQuestionRecord, query: QuestionQuery) -> bool:
-    """AI learned records are reusable only when their option set/order matches."""
-    if not record.options_raw and not query.options:
-        return True
-    return normalize_options(record.options_raw) == normalize_options(query.options)

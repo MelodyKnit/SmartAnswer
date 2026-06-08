@@ -63,19 +63,19 @@
 仅在本地查找未命中时才使用模型：
 
 ```powershell
-uvicorn study_qb_assistant.runtime:create_runtime_app --factory --host 127.0.0.1 --port 8765 --app-dir src
+.\scripts\run.ps1
 ```
 
 使用模型为缺乏解释的本地匹配项添加解释说明：
 
 ```powershell
-uvicorn study_qb_assistant.runtime:create_runtime_app --factory --host 127.0.0.1 --port 8765 --app-dir src
+.\scripts\run.ps1
 ```
 
 同时使用两者：
 
 ```powershell
-uvicorn study_qb_assistant.runtime:create_runtime_app --factory --host 127.0.0.1 --port 8765 --app-dir src
+.\scripts\run.ps1
 ```
 
 ## 5. 云端 API 示例
@@ -86,7 +86,7 @@ uvicorn study_qb_assistant.runtime:create_runtime_app --factory --host 127.0.0.1
 $env:STQB_LLM_BASE_URL="https://classbot.top/v1"
 $env:STQB_LLM_MODEL="gpt-5.4"
 $env:STQB_LLM_API_KEY="your-api-key"
-uvicorn study_qb_assistant.runtime:create_runtime_app --factory --host 127.0.0.1 --port 8765 --app-dir src
+.\scripts\run.ps1
 ```
 
 请仅在环境变量中保留 API 密钥。不要将其放入 OCS 配置、JSON 文件、示例、日志或源代码中。
@@ -230,7 +230,7 @@ ClassBot/OpenAI 兼容提供商已通过以下配置进行了实测：
 ```powershell
 $env:STQB_LLM_BASE_URL="http://127.0.0.1:11434/v1"
 $env:STQB_LLM_MODEL="qwen2.5:7b"
-uvicorn study_qb_assistant.runtime:create_runtime_app --factory --host 127.0.0.1 --port 8765 --app-dir src
+.\scripts\run.ps1
 ```
 
 实际模型名称应与本地运行时中安装的模型相匹配。

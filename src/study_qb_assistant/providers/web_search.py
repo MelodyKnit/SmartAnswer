@@ -10,41 +10,11 @@ import json
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Protocol
 
-from ..http_client import HttpClientError, get_json, post_json
 from ..models import QuestionQuery
 from ..runtime_log import log_event
-
-
-@dataclass(slots=True)
-class WebSearchResult:
-    """标准化后的网页检索结果片段结构体。"""
-
-    title: str  # 网页标题
-    url: str  # 网页 URL 链接
-    snippet: str  # 文本摘要/内容摘录
-    source: str  # 数据源/搜索引擎标识 (例如 "google-custom-search")
-
-
-class WebSearchProvider(Protocol):
-    """搜索引擎提供商的极简协议接口。
-
-    所有具体的搜索引擎适配类都需要实现此协议以保证接口一致性。
-    """
-
-    provider_name: str
-
-    def search(self, query: QuestionQuery, *, top_k: int = 5) -> tuple[WebSearchResult, ...]:
-        """为给定的题目查询执行实时搜索，并返回清洗后的网页摘要片段列表。
-
-        参数:
-            query: 题目查询结构体 (QuestionQuery)。
-            top_k: 返回的最大结果数量，默认为 5。
-
-        返回:
-            tuple[WebSearchResult, ...]: 标准化网页搜索结果元组。
-        """
+from .web_search_http import get_search_json, iter_duckduckgo_related, post_search_json
+from .web_search_types import WebSearchProvider, WebSearchResult
 
 
 @dataclass(slots=True)
@@ -138,7 +108,7 @@ class GoogleCustomSearchProvider:
             "lr": "lang_zh-CN|lang_zh-TW",
             "safe": "active",
         }
-        payload = _get_json(self.endpoint, params=params)
+        payload = get_search_json(self.endpoint, params=params)
         return tuple(
             WebSearchResult(
                 title=str(item.get("title") or ""),
@@ -177,7 +147,7 @@ class BaiduAiSearchProvider:
             "X-Appbuilder-Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        response = _post_json(self.endpoint, payload, headers=headers)
+        response = post_search_json(self.endpoint, payload, headers=headers)
         references = response.get("references") or []
         return tuple(
             WebSearchResult(
@@ -207,7 +177,7 @@ class DuckDuckGoInstantAnswerProvider:
             "skip_disambig": "1",
             "kl": "cn-zh",
         }
-        payload = _get_json(self.endpoint, params=params)
+        payload = get_search_json(self.endpoint, params=params)
         results: list[WebSearchResult] = []
         abstract_text = str(payload.get("AbstractText") or "")
         # 如果返回了概括性的简介文本，则将其作为置信度最高的首条证据
@@ -221,7 +191,7 @@ class DuckDuckGoInstantAnswerProvider:
                 )
             )
         # 遍历相关关联话题 Topic 以丰富证据池
-        for result in _iter_duckduckgo_related(payload.get("RelatedTopics") or ()):
+        for result in iter_duckduckgo_related(payload.get("RelatedTopics") or ()):
             results.append(result)
             if len(results) >= top_k:
                 break
@@ -297,66 +267,3 @@ def build_search_query(query: QuestionQuery, *, max_chars: int = 160) -> str:
     if option_text and remaining > 12:
         return f"{title} {option_text[:remaining - 1]}".strip()
     return title
-
-
-def _get_json(
-    url: str,
-    *,
-    params: dict[str, str] | None = None,
-    timeout_seconds: float = 2.0,
-) -> dict:
-    """发送 GET 请求并解析 JSON，支持代理设置。"""
-    try:
-        return get_json(
-            url,
-            params=params,
-            headers={"Accept": "application/json"},
-            timeout=timeout_seconds,
-            proxy_env="STQB_SEARCH_PROXY",
-        )
-    except (HttpClientError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"search request failed: {exc}") from exc
-
-
-def _post_json(url: str, payload: dict, *, headers: dict[str, str]) -> dict:
-    """发送 POST 请求并解析 JSON，支持代理设置。"""
-    try:
-        return post_json(
-            url,
-            payload,
-            headers=headers,
-            timeout=12,
-            proxy_env="STQB_SEARCH_PROXY",
-        )
-    except (HttpClientError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"search request failed: {exc}") from exc
-
-
-def _iter_duckduckgo_related(items: object) -> tuple[WebSearchResult, ...]:
-    """递归遍历 DuckDuckGo 返回的 Topics 列表，转换为 standard WebSearchResult 对象。"""
-    results: list[WebSearchResult] = []
-    if not isinstance(items, list):
-        return ()
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        nested = item.get("Topics")
-        # 如果是嵌套的分组主题，递归遍历
-        if isinstance(nested, list):
-            results.extend(_iter_duckduckgo_related(nested))
-            continue
-        text = str(item.get("Text") or "")
-        url = str(item.get("FirstURL") or "")
-        if not text or not url:
-            continue
-        # 尝试通过 " - " 拆分，取得首段作为关联主题的标题
-        title = text.split(" - ", 1)[0].strip() or "DuckDuckGo related topic"
-        results.append(
-            WebSearchResult(
-                title=title,
-                url=url,
-                snippet=text,
-                source="duckduckgo-instant-answer",
-            )
-        )
-    return tuple(results)

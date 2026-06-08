@@ -88,7 +88,7 @@
 - 历史约束中的“后端限用标准库”已不再适用于当前 FastAPI 服务；密码哈希仍使用 `hashlib.pbkdf2_hmac`（加随机 `salt`，迭代≥200000）并禁止明文存储。
 - 前端保持**无构建**：纯 HTML+CSS+原生 JS。登录/注册可作为独立 HTML 文件（如 `static/login.html`、`static/register.html`），也可单页内路由切换，自行权衡，但都由后端静态返回。
 - 会话 token：推荐用后端签发的随机 token（`secrets.token_urlsafe`）存服务端内存/文件，前端存储优先 `Cookie`（`HttpOnly` 由后端 set-cookie 更安全）；若用 `localStorage` 要在代码注释里写明 XSS 风险。**不要把密码或长期密钥放进 URL 参数**。
-- 用户数据持久化：存到 `data/runtime/users.json`（参考现有 `ai_answer_cache.py` 的原子写：先写 `.tmp` 再 `replace`，加 `threading.Lock`）。**不要把该文件提交进 git**，在 `.gitignore` 里排除（若无则新建）。
+- 用户与平台状态当前已迁移到 `SQLAlchemy + SQLite`，默认数据库文件为 `data/runtime/study-qb.sqlite3`；若配置 `STQB_REDIS_URL`，会话与最近事件优先使用 Redis。不要再新增基于 `users.json` 的新逻辑。
 - 安全收尾：现有 CORS `*` 在带鉴权后是风险，登录态接口应收紧为同源或 `127.0.0.1`；不要在日志里打印密码/token（`runtime_log.py` 已有脱敏，扩展其敏感词即可）。
 - 不破坏现有逻辑：`AnswerService` / `LocalQuestionIndex` / `to_ocs_response` / OCS 配置生成等不得改坏；OCS 查询接口 `/ocs/query` 给浏览器脚本用，**鉴权方式要可配置**（见 §5.3），默认不要让现有无 token 的 OCS 客户端直接全挂。
 
@@ -124,13 +124,13 @@
 
 ## 6. 验收标准
 
-1. 全新跑通：删除 `data/runtime/users.json` 后，访问控制台被重定向到登录页；注册首个用户成为管理员；登录后进入控制台，右上显示用户名+角色+退出。
+1. 全新跑通：删除 `data/runtime/study-qb.sqlite3` 后，访问控制台被重定向到登录页；注册首个用户成为管理员；登录后进入控制台，右上显示用户名+角色+退出。
 2. 未登录直接打开控制台或调 `/status` 返回 401 并跳登录（按 §5.3 配置）。
 3. 退出后 token 失效，再访问受保护页要求重新登录。
 4. 概览页四个指标卡显示真实数据（题库量、LLM 状态、resolution_mode 占比或“暂无数据”、待审核 pending 数），日志页能正确按 `ev.ts`/`ev.event` 渲染，题库检索测试按 `data.result.*` 渲染——即 §1 三个 bug 全部修复。
 5. 登录/注册/忘记密码三页表单校验、错误提示、加载态、空状态完整，全中文。
 6. 新设计系统在登录页与控制台一致落地；响应式在 1280 与 768 两个断点正常。
-7. 历史前端任务约束中的“后端无新增第三方依赖”已被当前 FastAPI/httpx 服务目标取代；密码非明文；`users.json` 已在 `.gitignore`。
+7. 历史前端任务约束中的“后端无新增第三方依赖”已被当前 FastAPI/httpx + SQLAlchemy/Redis 服务目标取代；密码非明文；默认数据库使用 SQLite。
 8. `python -m unittest discover -s tests` 现有测试不被破坏；为新增鉴权逻辑补充至少覆盖“注册→登录→校验 token→登出”和“错误密码被拒”的单元测试。
 
 ---
@@ -139,7 +139,7 @@
 
 - 新/改前端：`static/login.html`、`static/register.html`（或单页路由）、改造后的 `static/index.html`。
 - 新后端：鉴权模块（建议 `src/study_qb_assistant/auth/`：用户存储 + 密码哈希 + token 管理）、`local_server.py` 路由与守卫接入。
-- `.gitignore` 排除 `data/runtime/users.json`。
+- `.gitignore` 排除运行时数据库、日志与本地产物。
 - 新增鉴权单元测试（`tests/test_auth.py`）。
 - 简短改动说明：新增接口、环境变量开关、如何本地跑通登录流程。
 

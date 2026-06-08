@@ -6,7 +6,7 @@
 
 本地服务在规范化的 JSONL 数据之上暴露出一个简易的、面向学习的题目检索 API。它返回带有出处和置信度元数据的候选答案。
 
-HTTP 层使用 FastAPI 实现并由 uvicorn 运行。业务逻辑保留在检索 (retrieval)、解答 (answering)、模型提供商 (provider) 和身份验证 (auth) 模块中，以保持路由处理足够轻量。它不需要数据库。大模型提供商是可选的，并且默认禁用。
+HTTP 层使用 FastAPI 实现并由 uvicorn 运行。业务逻辑保留在检索 (retrieval)、解答 (answering)、模型提供商 (provider) 和身份验证 (auth) 模块中，以保持路由处理足够轻量。运行时状态默认使用 SQLAlchemy + SQLite 持久化；若配置 Redis，则会话和最近事件优先进入 Redis。大模型提供商是可选的，并且默认禁用。
 
 ## 2. 当前已实现的答案工作流
 
@@ -53,7 +53,7 @@ OCS 或 /query 请求
 可选的模型支持模式：
 
 ```powershell
-uvicorn study_qb_assistant.runtime:create_runtime_app --factory --host 127.0.0.1 --port 8765 --app-dir src
+.\scripts\run.ps1
 ```
 
 开发模式热重载：
@@ -63,6 +63,12 @@ uvicorn study_qb_assistant.runtime:create_runtime_app --factory --host 127.0.0.1
 ```
 
 模型支持模式需要 [model-provider.md](model-provider.md) 中记录的环境变量。
+
+运行时存储相关环境变量：
+
+- `STQB_DATABASE_URL`
+- `STQB_DATABASE_PATH`
+- `STQB_REDIS_URL`
 
 可用端点：
 
@@ -79,6 +85,49 @@ uvicorn study_qb_assistant.runtime:create_runtime_app --factory --host 127.0.0.1
 - `GET /ocs/query?title=...&options=...&type=...`
 - `POST /ocs/query`
 - `GET /configs/ocs-local-study-bank.json`
+- `GET /users/me`
+- `GET /users`
+- `PATCH /users/{username}`
+- `GET /tokens`
+- `POST /tokens`
+- `POST /tokens/{token_id}/revoke`
+- `GET /billing`
+- `PATCH /billing`
+- `GET /system-config`
+- `PATCH /system-config`
+- `GET /usage-logs`
+- `GET /dashboard/summary`
+- `GET /dashboard/workbench`
+- `GET /dashboard/rankings`
+- `GET /notifications`
+- `POST /notifications/{notification_id}/read`
+- `POST /notifications/read-all`
+- `POST /feedback`
+- `GET /feedback`
+- `GET /wallet/me`
+- `GET /wallet/orders`
+- `POST /wallet/grants`
+- `GET /wallet/redeem-codes`
+- `POST /wallet/redeem-codes`
+- `POST /wallet/redeem`
+- `GET /integrations`
+- `POST /integrations`
+- `GET /integrations/{integration_id}`
+- `PATCH /integrations/{integration_id}`
+- `DELETE /integrations/{integration_id}`
+- `POST /integrations/{integration_id}/test`
+- `GET /integrations/{integration_id}/status`
+- `GET /import-scripts`
+- `POST /import-scripts/generate`
+- `GET /import-scripts/{script_id}`
+- `DELETE /import-scripts/{script_id}`
+- `GET /quota-packages`
+- `POST /quota-packages`
+- `PATCH /quota-packages/{package_id}`
+- `DELETE /quota-packages/{package_id}`
+- `GET /roles`
+- `GET /roles/{role_id}/permissions`
+- `PUT /roles/{role_id}/permissions`
 
 ## 5. GET 查询结构
 

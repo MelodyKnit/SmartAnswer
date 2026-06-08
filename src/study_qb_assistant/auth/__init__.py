@@ -6,6 +6,6 @@
 
 from __future__ import annotations
 
-from .store import AuthError, AuthService
+from .service import AuthError, AuthService
 
 __all__ = ["AuthError", "AuthService"]

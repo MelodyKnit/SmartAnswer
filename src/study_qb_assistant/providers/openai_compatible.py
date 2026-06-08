@@ -8,13 +8,24 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from dataclasses import dataclass
 
 from ..http_client import HttpClientError, request_text
 from ..models import ModelAnswer, QuestionQuery
-from ..option_labels import canonicalize_label_answer
 from ..runtime_log import log_event
+from .openai_answer_parser import (
+    answer_field,
+    bool_from_env,
+    completion_answer_field,
+    decode_chat_response,
+    int_from_env,
+    is_completion_without_options,
+    normalize_answer_for_query,
+    parse_plain_text_answer,
+    strip_json_fence,
+    strip_option_label,
+    text_field,
+)
 from .search_augmented import render_search_evidence
 from .web_search import WebSearchResult
 
@@ -67,8 +78,8 @@ class OpenAICompatibleProvider:
             base_url=base_url,
             model=model,
             api_key=os.getenv(api_key_env),
-            stream=_bool_from_env(os.getenv(stream_env), default=True),
-            max_completion_tokens=_int_from_env(os.getenv(max_tokens_env), default=700),
+            stream=bool_from_env(os.getenv(stream_env), default=True),
+            max_completion_tokens=int_from_env(os.getenv(max_tokens_env), default=700),
         )
 
     def answer(self, query: QuestionQuery) -> ModelAnswer:
@@ -206,7 +217,7 @@ class OpenAICompatibleProvider:
                 proxy_env="STQB_LLM_PROXY",
             )
             try:
-                return _decode_chat_response(response_body)
+                return decode_chat_response(response_body)
             except (json.JSONDecodeError, RuntimeError) as exc:
                 log_event(
                     "model_error",
@@ -236,25 +247,25 @@ class OpenAICompatibleProvider:
             ModelAnswer: 结构化题目答案。
         """
         # 清除可能带有的 Markdown 语法块 ```json 围栏
-        stripped = _strip_json_fence(content)
+        stripped = strip_json_fence(content)
         try:
             payload = json.loads(stripped)
         except json.JSONDecodeError:
             # 进入纯文本容错解析机制
-            answer = _parse_plain_text_answer(stripped)
-            return _normalize_answer_for_query(answer, query)
+            answer = parse_plain_text_answer(stripped)
+            return normalize_answer_for_query(answer, query)
         confidence = float(payload.get("confidence") or 0.0)
-        candidate_answer = _answer_field(payload.get("candidate_answer"))
-        answer_text = _text_field(payload.get("answer_text"))
-        if _is_completion_without_options(query):
-            candidate_answer = _completion_answer_field(payload.get("candidate_answer"), payload.get("answer_text"))
+        candidate_answer = answer_field(payload.get("candidate_answer"))
+        answer_text = text_field(payload.get("answer_text"))
+        if is_completion_without_options(query):
+            candidate_answer = completion_answer_field(payload.get("candidate_answer"), payload.get("answer_text"))
         answer = ModelAnswer(
             candidate_answer=candidate_answer,
             answer_text=answer_text,
-            explanation=_optional_string(payload.get("explanation")),
+            explanation=(str(payload.get("explanation")).strip() if payload.get("explanation") is not None and str(payload.get("explanation")).strip() else None),
             confidence=max(0.0, min(confidence, 1.0)),
         )
-        return _normalize_answer_for_query(answer, query)
+        return normalize_answer_for_query(answer, query)
 
     def _render_question(
         self,
@@ -275,7 +286,7 @@ class OpenAICompatibleProvider:
             lines.append("Options:")
             labels = ("A", "B", "C", "D", "E", "F")
             lines.extend(
-                f"{label}. {_strip_option_label(option)}"
+                f"{label}. {strip_option_label(option)}"
                 for label, option in zip(labels, query.options, strict=False)
             )
         if evidence:
@@ -284,282 +295,5 @@ class OpenAICompatibleProvider:
         return "\n".join(lines)
 
 
-def _strip_json_fence(content: str) -> str:
-    """去除 Markdown 格式的代码块围栏 (e.g. ```json ... ```)。"""
-    stripped = content.strip()
-    if stripped.startswith("```"):
-        lines = stripped.splitlines()
-        if lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        return "\n".join(lines).strip()
-    return stripped
-
-
-def _optional_string(value: object) -> str | None:
-    """将普通对象安全转换为去除首尾空格后的字符串或 None。"""
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
-
-
-def _answer_field(value: object) -> str | None:
-    """将 candidate_answer 字段值转换为字符串。
-
-    若其是一个数组（可能是多选题），则用 "#" 连接。
-    """
-    if isinstance(value, (list, tuple)):
-        parts = [_optional_string(item) for item in value]
-        return "#".join(part for part in parts if part)
-    return _optional_string(value)
-
-
-def _text_field(value: object) -> str | None:
-    """将 answer_text 字段值转换为字符串。
-
-    若其是一个数组，则用中文分号 "；" 连接。
-    """
-    if isinstance(value, (list, tuple)):
-        parts = [_optional_string(item) for item in value]
-        return "；".join(part for part in parts if part)
-    return _optional_string(value)
-
-
-def _completion_answer_field(candidate_value: object, answer_text_value: object) -> str | None:
-    """Encode multi-blank completion answers as a JSON array string for OCS."""
-    for value in (candidate_value, answer_text_value):
-        if isinstance(value, (list, tuple)):
-            parts = [_optional_string(item) for item in value]
-            normalized = [part for part in parts if part]
-            if normalized:
-                return json.dumps(normalized, ensure_ascii=False)
-    return _answer_field(candidate_value) or _text_field(answer_text_value)
-
-
-def _parse_plain_text_answer(content: str) -> ModelAnswer:
-    """尽力而为的解析器，用于处理模型忽略 JSON 指令直接输出文本的情况。
-
-    通过正则表达式识别答案前缀并提取大写字母标号（A-F）；支持对错判断题识别。
-    """
-
-    normalized = content.strip()
-    # 使用正则表达式匹配常见的 “答案是 A”、“Answer: B” 等格式的指示信息
-    choice_match = re.search(
-        r"(?:答案|answer|选项)?\s*[:：是为]?\s*([A-F](?:[#、,，;；\s]*[A-F]){0,7})\b",
-        normalized,
-        re.IGNORECASE,
-    )
-    if choice_match:
-        answer = choice_match.group(1).upper()
-        return ModelAnswer(
-            candidate_answer=answer,
-            answer_text=answer,
-            explanation=normalized,
-            confidence=0.45,  # 文本启发式识别，设置较低的置信度值
-        )
-    # 处理判断题（正确/对）
-    if any(token in normalized for token in ("正确", "对", "true", "True", "TRUE")):
-        return ModelAnswer("true", "正确", normalized, 0.4)
-    # 处理判断题（错误/错）
-    if any(token in normalized for token in ("错误", "错", "false", "False", "FALSE")):
-        return ModelAnswer("false", "错误", normalized, 0.4)
-    return ModelAnswer(None, None, normalized or None, 0.0)
-
-
-def _normalize_answer_for_query(answer: ModelAnswer, query: QuestionQuery | None) -> ModelAnswer:
-    """根据查询的具体内容和选项列表，对模型返回的答案进行映射与过滤。
-
-    例如将模型给出的原始选项文本内容映射回字母标签 (A/B/C...)。
-    """
-    if _is_completion_without_options(query):
-        return answer
-    if not query or not query.options or not answer.candidate_answer:
-        return answer
-
-    normalized_candidate = _candidate_to_labels(answer.candidate_answer, query)
-    if not normalized_candidate:
-        return answer
-    if normalized_candidate != answer.candidate_answer:
-        log_event(
-            "model_answer_normalized",
-            {
-                "title": query.title,
-                "question_type": query.question_type,
-                "original_candidate": answer.candidate_answer,
-                "normalized_candidate": normalized_candidate,
-            },
-        )
-
-    rebuilt_answer_text = _answer_text_from_labels(normalized_candidate, query)
-    answer_text = rebuilt_answer_text or answer.answer_text
-    return ModelAnswer(
-        candidate_answer=normalized_candidate,
-        answer_text=answer_text,
-        explanation=answer.explanation,
-        confidence=answer.confidence,
-    )
-
-
-def _candidate_to_labels(candidate_answer: str, query: QuestionQuery) -> str | None:
-    """将候选答案标准化为大写的标签选项（如 "A"、"A#B" 等）。"""
-    compact = candidate_answer.strip().upper().replace(" ", "")
-    # 格式已经是 A#B 类的直接匹配校验
-    if re.fullmatch(r"[A-F](?:#[A-F])*", compact):
-        normalized = canonicalize_label_answer(query, compact)
-        if normalized:
-            return normalized
-    # 处理没有井号的连续选项（如多选题 "ABC" 转换为 "A#B#C"）
-    if query.question_type.lower() in {"multiple", "multi", "多选", "多选题"} and re.fullmatch(r"[A-F]{2,}", compact):
-        normalized = canonicalize_label_answer(query, compact)
-        if normalized:
-            return normalized
-
-    # 如果模型返回了选项的完整文本，则逐个匹配转换
-    mapped: list[str] = []
-    for part in _split_candidate_parts(candidate_answer):
-        label = _part_to_label(part, query)
-        if not label:
-            return None
-        mapped.append(label)
-    if not mapped:
-        return None
-    return canonicalize_label_answer(query, "#".join(mapped))
-
-
-def _is_completion_without_options(query: QuestionQuery | None) -> bool:
-    if query is None or query.options:
-        return False
-    normalized_type = (query.question_type or "").strip().lower()
-    title = (query.title or "").strip()
-    return (
-        normalized_type in {"completion", "blank", "fill", "填空", "填空题"}
-        or title.startswith("填空题")
-        or "____" in title
-        or "___" in title
-    )
-
-
-def _split_candidate_parts(candidate_answer: str) -> list[str]:
-    """通过各种常用分隔符切分候选答案文本。"""
-    return [
-        part.strip()
-        for part in re.split(r"[#;,，、；\n]+", candidate_answer)
-        if part.strip()
-    ]
-
-
-def _part_to_label(part: str, query: QuestionQuery) -> str | None:
-    """将切分后的单个答案子段转换为相对应的选项字母标签。"""
-    labels = ("A", "B", "C", "D", "E", "F")
-    compact = part.strip().upper()
-    # 如果已是单字符的合法选项标签直接返回
-    if re.fullmatch(r"[A-F]", compact) and labels.index(compact) < len(query.options):
-        return compact
-
-    # 若是具体文本，则尝试与选项做归一化文本匹配
-    normalized_part = _normalize_option_text(part)
-    for label, option in zip(labels, query.options, strict=False):
-        normalized_option = _normalize_option_text(option)
-        if normalized_part == normalized_option:
-            return label
-    return None
-
-
-def _answer_text_from_labels(candidate_answer: str, query: QuestionQuery) -> str | None:
-    """根据选项标签（如 "A#B"），反向拼接对应的题目选项文本。"""
-    labels = ("A", "B", "C", "D", "E", "F")
-    option_map = {
-        label: _strip_option_label(option)
-        for label, option in zip(labels, query.options, strict=False)
-    }
-    parts = [option_map.get(label) for label in candidate_answer.split("#")]
-    texts = [part for part in parts if part]
-    return "；".join(texts) if texts else None
-
-
-def _strip_option_label(option: str) -> str:
-    """剥离选项开头自带的类似 "A."、"B、" 等前缀标号。"""
-    return re.sub(r"^\s*[A-Fa-f][\.、．:：]\s*", "", option).strip()
-
-
-def _normalize_option_text(option: str) -> str:
-    """对选项文本进行清洗去空，用于文本匹配比对。"""
-    return re.sub(r"\s+", "", _strip_option_label(option)).lower()
-
-
-def _decode_chat_response(response_body: str) -> dict:
-    """对接口返回的数据体进行解码。
-
-    若内容是以 `data:` 开头的 SSE 事件流，则采用流式合并解析，否则直接解析为 JSON。
-    """
-    stripped = response_body.lstrip()
-    if stripped.startswith("data:"):
-        return _decode_streaming_chat_response(response_body)
-    return json.loads(response_body)
-
-
-def _decode_streaming_chat_response(response_body: str) -> dict:
-    """从流式 SSE 的多行文本块中解析并重组完整的对话生成结果。"""
-    content_parts: list[str] = []
-    for event_payload in _iter_sse_payloads(response_body):
-        if event_payload == "[DONE]":
-            continue
-        try:
-            chunk = json.loads(event_payload)
-        except json.JSONDecodeError:
-            continue
-        for choice in chunk.get("choices") or ():
-            delta = choice.get("delta") or {}
-            content = delta.get("content")
-            if content:
-                content_parts.append(str(content))
-            message = choice.get("message") or {}
-            message_content = message.get("content")
-            if message_content:
-                content_parts.append(str(message_content))
-
-    content = "".join(content_parts).strip()
-    if not content:
-        raise RuntimeError("streaming model response contained no answer content")
-    # 拼装回非流式的标准响应 JSON 字典格式
-    return {"choices": [{"message": {"content": content}}]}
-
-
-def _iter_sse_payloads(response_body: str) -> list[str]:
-    """遍历 SSE 响应，过滤并提取 `data:` 行后面的负载内容。"""
-    payloads: list[str] = []
-    current: list[str] = []
-    for raw_line in response_body.splitlines():
-        line = raw_line.strip()
-        if not line:
-            if current:
-                payloads.append("\n".join(current))
-                current = []
-            continue
-        if line.startswith(":"):  # 忽略注释行/心跳行
-            continue
-        if line.startswith("data:"):
-            current.append(line.removeprefix("data:").strip())
-    if current:
-        payloads.append("\n".join(current))
-    return payloads
-
-
-def _bool_from_env(value: str | None, *, default: bool) -> bool:
-    """从环境变量字符串解析布尔值。"""
-    if value is None or not value.strip():
-        return default
-    return value.strip().lower() not in {"0", "false", "no", "off"}
-
-
-def _int_from_env(value: str | None, *, default: int) -> int:
-    """从环境变量字符串解析正整数。"""
-    if value is None or not value.strip():
-        return default
-    try:
-        parsed = int(value)
-    except ValueError:
-        return default
-    return parsed if parsed > 0 else default
+# 为兼容现有测试与局部旧调用，保留最薄私有别名层。
+_decode_chat_response = decode_chat_response

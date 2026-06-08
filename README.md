@@ -6,7 +6,7 @@
 - `GET/POST /ocs/query`
 - `GET /configs/ocs-local-study-bank.json`
 
-服务端优先查本地题库，未命中时可选接入 OpenAI-compatible 大模型。
+服务端优先查本地题库，未命中时可选接入 OpenAI-compatible 大模型。运行时状态默认使用 SQLAlchemy + SQLite 持久化，并可选接入 Redis 处理会话和最近事件等高频状态。
 
 ## 安装
 
@@ -18,6 +18,19 @@ conda activate ai-study-qb
 ```
 
 ## 配置
+
+基础运行配置：
+
+```powershell
+$env:STQB_DATABASE_PATH="data/runtime/study-qb.sqlite3"
+$env:STQB_REDIS_URL="redis://127.0.0.1:6379/0"
+```
+
+也可以直接配置完整数据库 URL：
+
+```powershell
+$env:STQB_DATABASE_URL="sqlite:///data/runtime/study-qb.sqlite3"
+```
 
 可选模型配置放环境变量，不写进 OCS 配置：
 
@@ -31,7 +44,7 @@ $env:STQB_LLM_API_KEY="your-api-key"
 
 - [.env.example](.env.example)
 
-如果只用本地题库，可以不配置以上变量。
+如果只用本地题库，可以不配置模型变量；数据库默认回退到 SQLite 文件。
 
 ## 运行
 
@@ -50,7 +63,7 @@ $env:STQB_LLM_API_KEY="your-api-key"
 如果希望题库未命中时调用模型：
 
 ```powershell
-uvicorn study_qb_assistant.runtime:create_runtime_app --factory --host 127.0.0.1 --port 8765 --app-dir src
+.\scripts\run.ps1
 ```
 
 ## OCS 配置
@@ -89,4 +102,6 @@ python -m pytest tests -q
 
 - 提交仓库时不包含本地题库、运行日志、验证产物和私有密钥。
 - 项目内保留的是服务端实现和必要的开发/验证脚本，不提交临时用户脚本补丁。
+- 用户、平台配置、令牌、日志、钱包等运行时状态现在统一走 SQLAlchemy 存储。
+- 若配置了 `STQB_REDIS_URL`，会话与最近事件会优先使用 Redis；未配置时自动回退到内存实现。
 - 详细设计文档见 [docs](docs)。
