@@ -23,10 +23,17 @@ class HttpClientTests(unittest.TestCase):
 
     def test_request_text_uses_no_proxy_when_unset(self) -> None:
         """未配置代理时，应显式以无代理方式发送请求。"""
-        response = httpx.Response(200, text="ok", request=httpx.Request("GET", "https://example.test/"))
+        response = httpx.Response(
+            200, text="ok", request=httpx.Request("GET", "https://example.test/")
+        )
 
-        with patch.dict(os.environ, {}, clear=True), patch("httpx.request", return_value=response) as request:
-            text = request_text("GET", "https://example.test/", timeout=1, proxy_env="STQB_SEARCH_PROXY")
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("httpx.request", return_value=response) as request,
+        ):
+            text = request_text(
+                "GET", "https://example.test/", timeout=1, proxy_env="STQB_SEARCH_PROXY"
+            )
 
         self.assertEqual(text, "ok")
         request.assert_called_once()
@@ -35,7 +42,9 @@ class HttpClientTests(unittest.TestCase):
 
     def test_request_text_passes_proxy_when_set(self) -> None:
         """配置代理时，应交给 httpx 的 proxy 参数处理。"""
-        response = httpx.Response(200, text="ok", request=httpx.Request("GET", "https://example.test/"))
+        response = httpx.Response(
+            200, text="ok", request=httpx.Request("GET", "https://example.test/")
+        )
 
         with (
             patch.dict(os.environ, {"STQB_SEARCH_PROXY": "http://127.0.0.1:7890"}, clear=True),
@@ -47,7 +56,9 @@ class HttpClientTests(unittest.TestCase):
 
     def test_get_json_decodes_response_object(self) -> None:
         """GET JSON helper 应复用 request_text 并返回 JSON 字典。"""
-        response = httpx.Response(200, text='{"ok": true}', request=httpx.Request("GET", "https://example.test/"))
+        response = httpx.Response(
+            200, text='{"ok": true}', request=httpx.Request("GET", "https://example.test/")
+        )
 
         with patch.dict(os.environ, {}, clear=True), patch("httpx.request", return_value=response):
             payload = get_json("https://example.test/", timeout=1, proxy_env="STQB_SEARCH_PROXY")
@@ -64,7 +75,9 @@ class HttpClientTests(unittest.TestCase):
 
         with patch.dict(os.environ, {}, clear=True), patch("httpx.request", return_value=response):
             with self.assertRaises(HttpClientError) as raised:
-                request_text("GET", "https://example.test/", timeout=1, proxy_env="STQB_SEARCH_PROXY")
+                request_text(
+                    "GET", "https://example.test/", timeout=1, proxy_env="STQB_SEARCH_PROXY"
+                )
 
         self.assertEqual(raised.exception.status_code, 503)
         self.assertIn("service down", str(raised.exception))

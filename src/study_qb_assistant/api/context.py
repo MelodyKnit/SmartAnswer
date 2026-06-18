@@ -12,6 +12,7 @@ from ..answering import AnswerService
 from ..auth import AuthError, AuthService
 from ..platform import PlatformService
 from ..search import LocalQuestionIndex
+from ..storage.question_repository import IndexQuestionRepository, SqlAlchemyQuestionRepository
 
 SESSION_COOKIE = "stqb_session"
 PROTECTED_PATHS = {"/query", "/ocs/query", "/status", "/debug/recent"}
@@ -30,6 +31,23 @@ def get_auth_service(request: Request) -> AuthService:
 def get_platform_service(request: Request) -> PlatformService:
     """读取当前应用挂载的平台服务。"""
     return request.app.state.platform
+
+
+def get_question_repository(
+    request: Request,
+) -> IndexQuestionRepository | SqlAlchemyQuestionRepository:
+    """读取题库管理仓储。
+
+    后期路由拆分后题库管理依赖 repository 形态；当前运行时主数据仍在
+    `LocalQuestionIndex` 中，因此默认按当前 lookup 构造索引适配器。
+    """
+
+    repository = getattr(request.app.state, "question_repository", None)
+    if repository is not None:
+        return repository
+    lookup = get_lookup_service(request)
+    index = lookup.index if isinstance(lookup, AnswerService) else lookup
+    return IndexQuestionRepository(index)
 
 
 def is_auth_required(request: Request) -> bool:
@@ -53,12 +71,45 @@ def require_roles(request: Request, roles: Iterable[str]) -> JSONResponse | None
     return None
 
 
+def require_permissions(request: Request, permissions: Iterable[str]) -> JSONResponse | None:
+    """校验当前用户是否具备指定权限。"""
+
+    user = current_user(request)
+    if user is None:
+        return unauthorized_response("请先登录")
+    if user["role"] == "superadmin":
+        return None
+    required = {item for item in permissions if item}
+    if not required:
+        return None
+    platform = get_platform_service(request)
+    owned = platform.role_permissions(str(user["role"]))
+    if not required.issubset(owned):
+        return forbidden_response("权限不足")
+    return None
+
+
 def guard_protected_request(request: Request) -> JSONResponse | None:
     """对受保护的数据接口执行统一鉴权。"""
     if not is_auth_required(request) or request.url.path not in PROTECTED_PATHS:
         return None
-    if request.url.path == "/ocs/query" and bearer_authorized(request):
-        return None
+    if request.url.path == "/ocs/query":
+        token = authorization_bearer(request)
+        if token and token in ocs_api_keys():
+            return None
+        if token:
+            platform = get_platform_service(request)
+            auth = get_auth_service(request)
+            try:
+                token_info = platform.resolve_token(token)
+            except AuthError as exc:
+                return auth_error_response(exc)
+            if (
+                token_info is not None
+                and auth.resolve_user_by_id(token_info["user_id"]) is not None
+            ):
+                return None
+        return unauthorized_response("请提供有效 API Key")
     if current_user(request) is not None:
         return None
     return unauthorized_response("请先登录")

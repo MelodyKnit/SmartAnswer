@@ -63,6 +63,10 @@ class CanonicalQuestionRecord:
         Returns:
             dict: 包含题目所有字段的字典，且 tuple 被转换为 list。
         """
+        status = self.metadata.get("status") or self.metadata.get("ai_status") or self.source_split
+        confidence = self.metadata.get("confidence") or self.metadata.get("ai_confidence") or "0"
+        created_at = self.metadata.get("created_at") or self.metadata.get("ai_created_at") or "0"
+        updated_at = self.metadata.get("updated_at") or self.metadata.get("ai_updated_at") or "0"
         return {
             "question_id": self.question_id,
             "title_raw": self.title_raw,
@@ -80,6 +84,10 @@ class CanonicalQuestionRecord:
             "source_record_path": self.source_record_path,
             "passage": self.passage,
             "metadata": self.metadata,
+            "status": status or "active",
+            "confidence": _float_metadata(confidence),
+            "created_at": _float_metadata(created_at),
+            "updated_at": _float_metadata(updated_at),
         }
 
     @classmethod
@@ -220,3 +228,11 @@ class ModelAnswer:
     explanation: str | None
     confidence: float
 
+
+def _float_metadata(value: object) -> float:
+    """安全解析题库 metadata 中的浮点字段。"""
+
+    try:
+        return float(str(value or "0"))
+    except (TypeError, ValueError):
+        return 0.0

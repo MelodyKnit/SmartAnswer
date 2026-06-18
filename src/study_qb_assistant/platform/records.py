@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 
@@ -19,6 +20,9 @@ class ApiTokenRecord:
     created_at: float
     last_used_at: float = 0.0
     usage_count: int = 0
+    quota_limit: int = -1
+    reject_low_confidence: bool = False
+    min_answer_confidence: float = 0.0
 
     def to_dict(self) -> dict:
         return {
@@ -31,6 +35,10 @@ class ApiTokenRecord:
             "created_at": self.created_at,
             "last_used_at": self.last_used_at,
             "usage_count": self.usage_count,
+            "quota_limit": self.quota_limit,
+            "quota_used": self.usage_count,
+            "reject_low_confidence": self.reject_low_confidence,
+            "min_answer_confidence": self.min_answer_confidence,
         }
 
     @classmethod
@@ -45,6 +53,9 @@ class ApiTokenRecord:
             created_at=float(payload.get("created_at") or time.time()),
             last_used_at=float(payload.get("last_used_at") or 0.0),
             usage_count=int(payload.get("usage_count") or 0),
+            quota_limit=int(payload.get("quota_limit", -1)),
+            reject_low_confidence=bool(payload.get("reject_low_confidence") or False),
+            min_answer_confidence=float(payload.get("min_answer_confidence") or 0.0),
         )
 
 
@@ -63,6 +74,7 @@ class UsageLogRecord:
     confidence: float
     points_cost: int
     provider: str
+    elapsed_ms: float
     created_at: float
 
     def to_dict(self) -> dict:
@@ -78,6 +90,7 @@ class UsageLogRecord:
             "confidence": self.confidence,
             "points_cost": self.points_cost,
             "provider": self.provider,
+            "elapsed_ms": self.elapsed_ms,
             "created_at": self.created_at,
         }
 
@@ -95,6 +108,7 @@ class UsageLogRecord:
             confidence=float(payload.get("confidence") or 0.0),
             points_cost=int(payload.get("points_cost") or 0),
             provider=str(payload.get("provider") or ""),
+            elapsed_ms=float(payload.get("elapsed_ms") or 0.0),
             created_at=float(payload.get("created_at") or time.time()),
         )
 
@@ -112,6 +126,12 @@ class FeedbackRecord:
     image_urls: tuple[str, ...]
     status: str
     created_at: float
+    category: str = "answer"
+    admin_note: str = ""
+    corrected_answer: str = ""
+    reward_points: int = 0
+    handled_by: str = ""
+    handled_at: float = 0.0
 
     def to_dict(self) -> dict:
         return {
@@ -124,6 +144,12 @@ class FeedbackRecord:
             "image_urls": list(self.image_urls),
             "status": self.status,
             "created_at": self.created_at,
+            "category": self.category,
+            "admin_note": self.admin_note,
+            "corrected_answer": self.corrected_answer,
+            "reward_points": self.reward_points,
+            "handled_by": self.handled_by,
+            "handled_at": self.handled_at,
         }
 
     @classmethod
@@ -138,27 +164,12 @@ class FeedbackRecord:
             image_urls=tuple(str(url) for url in payload.get("image_urls") or ()),
             status=str(payload.get("status") or "open"),
             created_at=float(payload.get("created_at") or time.time()),
-        )
-
-
-@dataclass(slots=True)
-class WalletProfileRecord:
-    """用户钱包档案。"""
-
-    user_id: str
-    subscription_expires_at: float = 0.0
-
-    def to_dict(self) -> dict:
-        return {
-            "user_id": self.user_id,
-            "subscription_expires_at": self.subscription_expires_at,
-        }
-
-    @classmethod
-    def from_dict(cls, payload: dict) -> "WalletProfileRecord":
-        return cls(
-            user_id=str(payload["user_id"]),
-            subscription_expires_at=float(payload.get("subscription_expires_at") or 0.0),
+            category=str(payload.get("category") or "answer"),
+            admin_note=str(payload.get("admin_note") or ""),
+            corrected_answer=str(payload.get("corrected_answer") or ""),
+            reward_points=int(payload.get("reward_points") or 0),
+            handled_by=str(payload.get("handled_by") or ""),
+            handled_at=float(payload.get("handled_at") or 0.0),
         )
 
 
@@ -170,7 +181,6 @@ class RedeemCodeRecord:
     code: str
     kind: str
     points: int
-    subscription_days: int
     max_uses: int
     used_uses: int
     status: str
@@ -184,7 +194,6 @@ class RedeemCodeRecord:
             "code": self.code,
             "kind": self.kind,
             "points": self.points,
-            "subscription_days": self.subscription_days,
             "max_uses": self.max_uses,
             "used_uses": self.used_uses,
             "status": self.status,
@@ -200,7 +209,6 @@ class RedeemCodeRecord:
             code=str(payload["code"]),
             kind=str(payload.get("kind") or "points"),
             points=int(payload.get("points") or 0),
-            subscription_days=int(payload.get("subscription_days") or 0),
             max_uses=int(payload.get("max_uses") or 1),
             used_uses=int(payload.get("used_uses") or 0),
             status=str(payload.get("status") or "active"),
@@ -219,7 +227,6 @@ class WalletOrderRecord:
     username: str
     kind: str
     points_delta: int
-    subscription_days: int
     source: str
     source_id: str | None
     status: str
@@ -233,7 +240,6 @@ class WalletOrderRecord:
             "username": self.username,
             "kind": self.kind,
             "points_delta": self.points_delta,
-            "subscription_days": self.subscription_days,
             "source": self.source,
             "source_id": self.source_id,
             "status": self.status,
@@ -249,7 +255,6 @@ class WalletOrderRecord:
             username=str(payload["username"]),
             kind=str(payload.get("kind") or "points"),
             points_delta=int(payload.get("points_delta") or 0),
-            subscription_days=int(payload.get("subscription_days") or 0),
             source=str(payload.get("source") or ""),
             source_id=(str(payload["source_id"]) if payload.get("source_id") else None),
             status=str(payload.get("status") or "completed"),
@@ -298,57 +303,6 @@ class NotificationRecord:
 
 
 @dataclass(slots=True)
-class IntegrationRecord:
-    """第三方接入点记录。"""
-
-    integration_id: str
-    name: str
-    platform: str
-    base_url: str
-    token_id: str | None
-    status: str
-    description: str
-    created_at: float
-    updated_at: float
-    last_test_at: float = 0.0
-    last_test_status: str = "unknown"
-    last_error: str = ""
-
-    def to_dict(self) -> dict:
-        return {
-            "integration_id": self.integration_id,
-            "name": self.name,
-            "platform": self.platform,
-            "base_url": self.base_url,
-            "token_id": self.token_id,
-            "status": self.status,
-            "description": self.description,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-            "last_test_at": self.last_test_at,
-            "last_test_status": self.last_test_status,
-            "last_error": self.last_error,
-        }
-
-    @classmethod
-    def from_dict(cls, payload: dict) -> "IntegrationRecord":
-        return cls(
-            integration_id=str(payload["integration_id"]),
-            name=str(payload.get("name") or ""),
-            platform=str(payload.get("platform") or "generic"),
-            base_url=str(payload.get("base_url") or ""),
-            token_id=(str(payload["token_id"]) if payload.get("token_id") else None),
-            status=str(payload.get("status") or "active"),
-            description=str(payload.get("description") or ""),
-            created_at=float(payload.get("created_at") or time.time()),
-            updated_at=float(payload.get("updated_at") or time.time()),
-            last_test_at=float(payload.get("last_test_at") or 0.0),
-            last_test_status=str(payload.get("last_test_status") or "unknown"),
-            last_error=str(payload.get("last_error") or ""),
-        )
-
-
-@dataclass(slots=True)
 class ImportScriptRecord:
     """导入脚本记录。"""
 
@@ -361,6 +315,12 @@ class ImportScriptRecord:
     status: str
     created_at: float
     updated_at: float
+    description: str = ""
+    requires_token: bool = True
+    tags: tuple[str, ...] = ()
+    builtin: bool = False
+    is_default: bool = False
+    ocs_config: tuple[dict, ...] = ()
 
     def to_dict(self) -> dict:
         return {
@@ -373,6 +333,12 @@ class ImportScriptRecord:
             "status": self.status,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "description": self.description,
+            "requires_token": self.requires_token,
+            "tags": list(self.tags),
+            "builtin": self.builtin,
+            "is_default": self.is_default,
+            "ocs_config": list(self.ocs_config),
         }
 
     @classmethod
@@ -380,62 +346,113 @@ class ImportScriptRecord:
         return cls(
             script_id=str(payload["script_id"]),
             name=str(payload.get("name") or ""),
-            integration_id=(str(payload["integration_id"]) if payload.get("integration_id") else None),
+            integration_id=(
+                str(payload["integration_id"]) if payload.get("integration_id") else None
+            ),
             token_id=(str(payload["token_id"]) if payload.get("token_id") else None),
             target=str(payload.get("target") or "ocs"),
             content=str(payload.get("content") or ""),
             status=str(payload.get("status") or "active"),
             created_at=float(payload.get("created_at") or time.time()),
             updated_at=float(payload.get("updated_at") or time.time()),
+            description=str(payload.get("description") or ""),
+            requires_token=bool(payload.get("requires_token", True)),
+            tags=tuple(str(item) for item in payload.get("tags") or ()),
+            builtin=bool(payload.get("builtin", False)),
+            is_default=bool(payload.get("is_default", False)),
+            ocs_config=tuple(dict(item) for item in payload.get("ocs_config") or ()),
         )
 
 
 @dataclass(slots=True)
-class QuotaPackageRecord:
-    """额度套餐记录。"""
+class LlmModelRecord:
+    """大模型接入配置记录。"""
 
-    package_id: str
+    model_id: str
     name: str
-    kind: str
-    points: int
-    subscription_days: int
-    price: float
+    base_url: str
+    model: str
+    api_key: str
+    role: str
+    priority: int
+    stream: bool
+    max_completion_tokens: int
+    timeout_seconds: float
     status: str
-    description: str
-    sort_order: int
     created_at: float
     updated_at: float
 
-    def to_dict(self) -> dict:
+    def to_dict(self, *, reveal_secret: bool = False) -> dict:
+        """转换为前端可消费的字典，默认隐藏 API Key。"""
+
         return {
-            "package_id": self.package_id,
+            "model_id": self.model_id,
             "name": self.name,
-            "kind": self.kind,
-            "points": self.points,
-            "subscription_days": self.subscription_days,
-            "price": self.price,
+            "base_url": self.base_url,
+            "model": self.model,
+            "api_key": self.api_key if reveal_secret else ("******" if self.api_key else ""),
+            "api_key_configured": bool(self.api_key),
+            "role": self.role,
+            "priority": self.priority,
+            "stream": self.stream,
+            "max_completion_tokens": self.max_completion_tokens,
+            "timeout_seconds": self.timeout_seconds,
             "status": self.status,
-            "description": self.description,
-            "sort_order": self.sort_order,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
 
-    @classmethod
-    def from_dict(cls, payload: dict) -> "QuotaPackageRecord":
-        return cls(
-            package_id=str(payload["package_id"]),
-            name=str(payload.get("name") or ""),
-            kind=str(payload.get("kind") or "points"),
-            points=int(payload.get("points") or 0),
-            subscription_days=int(payload.get("subscription_days") or 0),
-            price=float(payload.get("price") or 0.0),
-            status=str(payload.get("status") or "active"),
-            description=str(payload.get("description") or ""),
-            sort_order=int(payload.get("sort_order") or 0),
-            created_at=float(payload.get("created_at") or time.time()),
-            updated_at=float(payload.get("updated_at") or time.time()),
-        )
+
+@dataclass(slots=True)
+class LlmCallTraceRecord:
+    """大模型调用追溯记录。"""
+
+    trace_id: str
+    request_id: str
+    phase: str
+    model_id: str
+    model_name: str
+    base_url: str
+    provider: str
+    question_title: str
+    prompt: str
+    evidence: str
+    response_text: str
+    candidate_answer: str | None
+    confidence: float
+    ok: bool
+    error: str
+    elapsed_ms: float
+    created_at: float
+
+    def to_dict(self) -> dict:
+        """转换为前端调用追溯字典。"""
+
+        try:
+            evidence = json.loads(self.evidence or "[]")
+        except json.JSONDecodeError:
+            evidence = []
+        if not isinstance(evidence, list):
+            evidence = []
+        return {
+            "trace_id": self.trace_id,
+            "request_id": self.request_id,
+            "phase": self.phase,
+            "model_id": self.model_id,
+            "model_name": self.model_name,
+            "base_url": self.base_url,
+            "provider": self.provider,
+            "question_title": self.question_title,
+            "prompt": self.prompt,
+            "evidence": evidence,
+            "response_text": self.response_text,
+            "candidate_answer": self.candidate_answer,
+            "confidence": self.confidence,
+            "ok": self.ok,
+            "error": self.error,
+            "elapsed_ms": self.elapsed_ms,
+            "created_at": self.created_at,
+        }
 
 
 @dataclass(slots=True)

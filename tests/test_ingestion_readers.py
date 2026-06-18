@@ -14,7 +14,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 # 将项目源文件目录 src 添加到 Python 路径中，以便能够正确导入项目模块
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = PROJECT_ROOT / "src"
@@ -34,11 +33,13 @@ class IngestionReaderTests(unittest.TestCase):
 
     def test_cmmlu_reader_maps_expected_fields(self) -> None:
         """测试 CMMLU 数据集读取器，验证字段和元数据是否正确映射。
-        
+
         通过读取预置的 `anatomy.csv` 数据，检查包括题目类型、原始答案、
         学科分类、数据集版本、许可协议等字段是否符合期望。
         """
-        source_path = PROJECT_ROOT / "data" / "raw" / "cmmlu-upstream" / "data" / "dev" / "anatomy.csv"
+        source_path = (
+            PROJECT_ROOT / "data" / "raw" / "cmmlu-upstream" / "data" / "dev" / "anatomy.csv"
+        )
 
         # 迭代获取第一条记录
         record = next(iter_cmmlu_records(source_path))
@@ -54,7 +55,7 @@ class IngestionReaderTests(unittest.TestCase):
 
     def test_m3ke_reader_maps_expected_fields(self) -> None:
         """测试 M3KE 数据集读取器，验证 JSONL 格式的字段解析。
-        
+
         通过读取高等数学（dev）样本，校验原始选项的个数、解析出来的学科名和分类标记。
         """
         source_path = (
@@ -80,7 +81,7 @@ class IngestionReaderTests(unittest.TestCase):
 
     def test_agieval_reader_maps_expected_fields(self) -> None:
         """测试 AGIEval 数据集读取器，验证高考物理真题的解析规范化。
-        
+
         检查元数据字段中是否正确保留了具体的高考真题卷来源信息。
         """
         source_path = (
@@ -115,7 +116,7 @@ class IngestionReaderTests(unittest.TestCase):
 
     def test_agieval_reader_normalizes_list_answers(self) -> None:
         """测试 AGIEval 读取器在遇到列表格式答案时的规整化行为。
-        
+
         对于一些多选题，数据集提供的标签是一个列表（例如 ["A", "B"]）。
         需要将其规范化为井号拼接的字符串（如 "A#B"），以便系统统一存储和对比。
         """

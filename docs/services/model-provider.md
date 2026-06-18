@@ -16,8 +16,8 @@
 
 实现文件：
 
-- [providers/base.py](../src/study_qb_assistant/providers/base.py)
-- [providers/openai_compatible.py](../src/study_qb_assistant/providers/openai_compatible.py)
+- [llm/providers/base.py](../src/study_qb_assistant/llm/providers/base.py)
+- [llm/providers/openai_compatible.py](../src/study_qb_assistant/llm/providers/openai_compatible.py)
 - [http_client.py](../src/study_qb_assistant/http_client.py) 包装了 `httpx`，用于处理超时、可选的代理支持、JSON 解码和 HTTP 状态错误。
 
 模型提供商返回：
@@ -44,10 +44,9 @@
 - `STQB_BAIDU_SEARCH_API_KEY`：百度千帆 AI 搜索 API 密钥
 - `STQB_SEARCH_PROXY`：用于网页搜索请求的可选 HTTP/HTTPS 代理，例如 `http://127.0.0.1:7890`
 - `STQB_LLM_PROXY`：用于模型提供商请求的可选 HTTP/HTTPS 代理
-- `STQB_AI_CACHE_ENABLED`：默认为 `true`；仅在多次一致后才持久化高置信度的 AI 答案
-- `STQB_AI_CACHE_PATH`：可选的 AI 学习库 JSONL 路径；默认为 `data\normalized\ai-learned.jsonl`
-- `STQB_AI_CACHE_MIN_CONFIDENCE`：默认为 `0.95`
-- `STQB_AI_CACHE_MIN_CONFIRMATIONS`：默认为 `2`
+- `STQB_LLM_CACHE_ENABLED`：默认为 `true`；仅在多次一致后才持久化高置信度的 AI 答案
+- `STQB_LLM_CACHE_MIN_CONFIDENCE`：默认为 `0.95`
+- `STQB_LLM_CACHE_MIN_CONFIRMATIONS`：默认为 `2`
 - `STQB_ANSWER_RULES_PATH`：可选的本地规则文件路径；未配置时默认禁用规则文件机制
 
 任何 API 密钥都不应写入项目文件中。
@@ -83,8 +82,8 @@
 当相比于离线推理，更看重答案质量且本地硬件使用率较低时，请使用此模式。配置的端点必须暴露兼容 OpenAI 的 `/chat/completions` API。
 
 ```powershell
-$env:STQB_LLM_BASE_URL="https://classbot.top/v1"
-$env:STQB_LLM_MODEL="gpt-5.4"
+$env:STQB_LLM_BASE_URL="https://api.example.com/v1"
+$env:STQB_LLM_MODEL="your-model-name"
 $env:STQB_LLM_API_KEY="your-api-key"
 .\scripts\run.ps1
 ```
@@ -175,14 +174,14 @@ $env:STQB_WEB_SEARCH_PROVIDER="google,baidu"
 禁用 AI 答案学习功能：
 
 ```powershell
-$env:STQB_AI_CACHE_ENABLED="false"
+$env:STQB_LLM_CACHE_ENABLED="false"
 ```
 
 收紧晋升条件：
 
 ```powershell
-$env:STQB_AI_CACHE_MIN_CONFIDENCE="0.98"
-$env:STQB_AI_CACHE_MIN_CONFIRMATIONS="3"
+$env:STQB_LLM_CACHE_MIN_CONFIDENCE="0.98"
+$env:STQB_LLM_CACHE_MIN_CONFIRMATIONS="3"
 ```
 
 默认的学习库路径为 `data\normalized\ai-learned.jsonl`。每一行都是一条具有 `source_name: AIGenerated`、`ai_generated` 和 `auto_learned` 标签以及 AI 状态元数据的 `CanonicalQuestionRecord` 记录。当启用了基于模型支持的学习路径时，旧的 `data\runtime\ai-answer-cache.json` 条目将被迁移至此 JSONL 格式中。
@@ -207,15 +206,15 @@ $env:STQB_ANSWER_RULES_PATH="configs\\my-answer-rules.json"
 - 即使置信度较低，模型兜底响应仍可返回；低置信度目前影响审核和 AI 库晋升，不影响是否输出 OCS 兼容的答案负载。
 - AI 学习库响应被标记为 `resolution_mode: ai_cache`。
 - 提供商发生失败时返回结构化的 `MODEL_ERROR` 响应。
-- API 密钥仅从环境变量中读取。
+- API 密钥优先从后台模型/联网搜索配置读取，环境变量作为部署级回退；前端读取配置时只返回 `*_configured` 标记，不回显明文密钥。
 - 当配置了网页搜索时，搜索网页片段会被记录以供本地排障，但搜索凭证会被脱敏屏蔽。
 
 ## 10. 验证通过的真实提供商
 
-ClassBot/OpenAI 兼容提供商已通过以下配置进行了实测：
+OpenAI 兼容提供商链路已通过私有测试提供商实测。提交到仓库的示例统一使用占位配置：
 
-- 基础 URL：`https://classbot.top/v1`
-- 模型：`gpt-5.4`
+- 基础 URL：`https://api.example.com/v1`
+- 模型：`your-model-name`
 - 端点：`/chat/completions`
 - 响应模式：流式服务器发送事件（Server-Sent Events）
 

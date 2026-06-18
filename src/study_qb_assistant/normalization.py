@@ -57,4 +57,3 @@ def normalize_options(values: tuple[str, ...]) -> tuple[str, ...]:
         tuple[str, ...]: 标准化后的选项元组。
     """
     return tuple(normalize_option(value) for value in values if normalize_option(value))
-

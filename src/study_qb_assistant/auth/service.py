@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hmac
-import os
 import secrets
 import time
 from pathlib import Path
@@ -52,7 +51,16 @@ class AuthService:
         self.repository = SqlAlchemyAuthRepository(path)
         self.session_store = build_session_store_from_env()
 
-    def register(self, username: str, password: str, email: str | None = None) -> dict:
+    def register(
+        self,
+        username: str,
+        password: str,
+        email: str | None = None,
+        *,
+        invite_code: str = "",
+        invite_bonus: int = 0,
+        initial_points: int = 100,
+    ) -> dict:
         """注册新用户。首个注册用户自动成为 superadmin。"""
         username = (username or "").strip()
         email = (email or "").strip() or None
@@ -72,13 +80,15 @@ class AuthService:
                 salt=salt,
                 password_hash=hash_password(password, salt),
                 email=email,
-                points=int(os.getenv("STQB_DEFAULT_USER_POINTS", "100")),
+                points=max(0, int(initial_points)) + max(0, int(invite_bonus)),
                 created_at=time.time(),
             )
             self.repository.save_user(user)
             return self.public_user_dict(user)
 
-    def login(self, username: str, password: str, *, remember: bool = False, client_ip: str = "") -> tuple[str, dict, int]:
+    def login(
+        self, username: str, password: str, *, remember: bool = False, client_ip: str = ""
+    ) -> tuple[str, dict, int]:
         """校验账号密码并签发会话令牌。"""
         username = (username or "").strip()
         throttle_key = f"{username}\n{client_ip}"
@@ -87,7 +97,9 @@ class AuthService:
             user = self.repository.get_user(username)
             if user is not None and user.status != "active":
                 raise AuthError("ACCOUNT_DISABLED", "账号已被禁用", http_status=403)
-            ok = user is not None and hmac.compare_digest(user.password_hash, hash_password(password, user.salt))
+            ok = user is not None and hmac.compare_digest(
+                user.password_hash, hash_password(password, user.salt)
+            )
             if not user or not ok:
                 self.record_failure(throttle_key)
                 raise AuthError("BAD_CREDENTIALS", "用户名或密码错误", http_status=401)
@@ -155,7 +167,9 @@ class AuthService:
         username = (username or "").strip()
         role = (role or "").strip().lower()
         if role not in {"superadmin", "admin", "user"}:
-            raise AuthError("INVALID_INPUT", "角色必须为 superadmin、admin 或 user", http_status=400)
+            raise AuthError(
+                "INVALID_INPUT", "角色必须为 superadmin、admin 或 user", http_status=400
+            )
         with self._lock:
             user = self.repository.get_user(username)
             if user is None:
@@ -180,6 +194,50 @@ class AuthService:
                 self.session_store.delete_user_sessions(username)
             return self.public_user_dict(user)
 
+    def set_display_name(self, username: str, display_name: str | None) -> dict:
+        """更新展示名。
+
+        当前用户表尚未独立持久化展示名；为了兼容前端资料接口，先校验用户
+        存在并返回公开资料，展示名由响应中的用户名兜底。
+        """
+        username = (username or "").strip()
+        with self._lock:
+            user = self.repository.get_user(username)
+            if user is None:
+                raise AuthError("USER_NOT_FOUND", "用户不存在", http_status=404)
+            payload = self.public_user_dict(user)
+            payload["display_name"] = (display_name or "").strip() or user.username
+            return payload
+
+    def change_password(self, username: str, old_password: str, new_password: str) -> None:
+        """校验旧密码后更新当前用户密码，并吊销已有会话。"""
+        username = (username or "").strip()
+        if len(new_password or "") < MIN_PASSWORD_LEN:
+            raise AuthError(
+                "WEAK_PASSWORD", f"密码长度至少需要 {MIN_PASSWORD_LEN} 位", http_status=400
+            )
+        with self._lock:
+            user = self.repository.get_user(username)
+            if user is None:
+                raise AuthError("USER_NOT_FOUND", "用户不存在", http_status=404)
+            old_hash = hash_password(old_password, user.salt)
+            if not hmac.compare_digest(old_hash, user.password_hash):
+                raise AuthError("INVALID_PASSWORD", "原密码不正确", http_status=400)
+            salt = secrets.token_hex(16)
+            user.salt = salt
+            user.password_hash = hash_password(new_password, salt)
+            self.repository.save_user(user)
+            self.session_store.delete_user_sessions(username)
+
+    def delete_user(self, username: str) -> bool:
+        """删除用户并清理其登录会话。"""
+        username = (username or "").strip()
+        with self._lock:
+            deleted = self.repository.delete_user(username)
+            if deleted:
+                self.session_store.delete_user_sessions(username)
+            return deleted
+
     def set_points(self, username: str, points: int) -> dict:
         """直接设置用户积分余额。"""
         username = (username or "").strip()
@@ -188,6 +246,18 @@ class AuthService:
             if user is None:
                 raise AuthError("USER_NOT_FOUND", "用户不存在", http_status=404)
             user.points = max(0, int(points))
+            self.repository.save_user(user)
+            return self.public_user_dict(user)
+
+    def add_points(self, username: str, points: int) -> dict:
+        """按增量增加用户积分余额。"""
+        username = (username or "").strip()
+        points = max(0, int(points))
+        with self._lock:
+            user = self.repository.get_user(username)
+            if user is None:
+                raise AuthError("USER_NOT_FOUND", "用户不存在", http_status=404)
+            user.points = max(0, int(user.points) + points)
             self.repository.save_user(user)
             return self.public_user_dict(user)
 
@@ -288,10 +358,8 @@ class AuthService:
         """兼容旧调用，无需额外操作。"""
         return None
 
-    def public_user_dict(self, user: UserRecord | None) -> dict | None:
+    def public_user_dict(self, user: UserRecord) -> dict:
         """生成对外可见的用户公开信息。"""
-        if user is None:
-            return None
         return {
             "user_id": user.user_id,
             "username": user.username,

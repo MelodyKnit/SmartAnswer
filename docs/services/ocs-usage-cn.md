@@ -76,8 +76,8 @@ conda activate ai-study-qb
 通用 OpenAI 兼容配置：
 
 ```powershell
-$env:STQB_LLM_BASE_URL="https://classbot.top/v1"
-$env:STQB_LLM_MODEL="gpt-5.4"
+$env:STQB_LLM_BASE_URL="https://api.example.com/v1"
+$env:STQB_LLM_MODEL="your-model-name"
 $env:STQB_LLM_API_KEY="your-api-key"
 .\scripts\run.ps1
 ```
@@ -126,12 +126,12 @@ $env:STQB_BAIDU_SEARCH_API_KEY="your-baidu-ai-search-api-key"
 
 搜索增强默认使用 `duckduckgo`，不需要密钥（key）；如果网络不稳定或不想联网，可设置 `STQB_WEB_SEARCH_PROVIDER="none"`。本地题库仍然优先；本地没命中时先调用搜索 API 获取证据片段，再把证据和题目一起交给大模型作答，用于降低模型凭记忆幻觉。搜索失败会进入短期冷却，避免每道题都卡在同一个不可达搜索源上。
 
-AI 自动沉淀题库默认开启，但不会把模型第一次回答直接当题库复用：
+LLM 自动沉淀题库默认开启，但不会把模型第一次回答直接当题库复用：
 
 ```powershell
-$env:STQB_AI_CACHE_ENABLED="true"
-$env:STQB_AI_CACHE_MIN_CONFIDENCE="0.95"
-$env:STQB_AI_CACHE_MIN_CONFIRMATIONS="2"
+$env:STQB_LLM_CACHE_ENABLED="true"
+$env:STQB_LLM_CACHE_MIN_CONFIDENCE="0.95"
+$env:STQB_LLM_CACHE_MIN_CONFIRMATIONS="2"
 ```
 
 AI 学习结果默认写入 `data\normalized\ai-learned.jsonl`，格式与普通题库一致，来源标为 `AIGenerated`，并带有 `ai_generated`、`auto_learned`、`status:*` 等标签。第一次高置信模型答案会先记为 `pending`（待处理），同题同选项后续再次得到相同答案才晋升为 `trusted`（已信任）；只有 `trusted` 才会进入本地检索并以 `resolution_mode: ai_cache` 返回。若模型对同一题给出冲突答案，该条记录会进入 `conflict`（冲突），不会被用于自动答题。旧版 `data\runtime\ai-answer-cache.json` 会在启用模型学习时作为兼容来源迁移。

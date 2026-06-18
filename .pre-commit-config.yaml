@@ -1,0 +1,29 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: ruff check
+        language: system
+        types_or: [python, pyi]
+
+      - id: mypy-backend
+        name: mypy backend
+        entry: mypy src/study_qb_assistant
+        language: system
+        pass_filenames: false
+        types_or: [python, pyi]
+
+      - id: pytest-backend
+        name: pytest backend
+        entry: pytest -q
+        language: system
+        pass_filenames: false
+        types_or: [python, pyi]
+
+      - id: website-build
+        name: website build
+        entry: npm run --prefix src/website build
+        language: system
+        pass_filenames: false
+        files: ^src/website/

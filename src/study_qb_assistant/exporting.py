@@ -29,7 +29,9 @@ class ExportSummary:
     source_counts: dict[str, int]
 
 
-def write_jsonl(records: Iterable[CanonicalQuestionRecord], output_path: str | Path) -> ExportSummary:
+def write_jsonl(
+    records: Iterable[CanonicalQuestionRecord], output_path: str | Path
+) -> ExportSummary:
     """将标准题目记录写入本地 JSONL 文件并返回导出摘要统计。
 
     每一行都是一条独立的、按字段排序的 JSON 对象。如果目标文件夹不存在，将自动创建。
@@ -76,4 +78,3 @@ def write_export_manifest(summary: ExportSummary, manifest_path: str | Path) -> 
         # 写入格式化且排序好的 JSON 清单文件
         json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
         handle.write("\n")
-

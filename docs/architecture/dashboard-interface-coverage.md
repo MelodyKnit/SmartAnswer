@@ -20,8 +20,7 @@
 - API Key 管理
 - 导入脚本
 - 使用记录
-- 接入管理
-- 额度套餐
+- 兑换管理
 - 用户管理
 - 角色权限
 - 系统配置
@@ -45,7 +44,7 @@
 - 系统配置
   - `GET /system-config`
   - `PATCH /system-config`
-- 钱包/额度流水
+- 钱包/积分流水与兑换码
   - `GET /wallet/me`
   - `GET /wallet/orders`
   - `POST /wallet/grants`
@@ -63,24 +62,16 @@
   - `GET /notifications`
   - `POST /notifications/{notification_id}/read`
   - `POST /notifications/read-all`
-- 接入管理
-  - `GET /integrations`
-  - `POST /integrations`
-  - `GET /integrations/{integration_id}`
-  - `PATCH /integrations/{integration_id}`
-  - `DELETE /integrations/{integration_id}`
-  - `POST /integrations/{integration_id}/test`
-  - `GET /integrations/{integration_id}/status`
 - 导入脚本
   - `GET /import-scripts`
   - `POST /import-scripts/generate`
   - `GET /import-scripts/{script_id}`
   - `DELETE /import-scripts/{script_id}`
-- 额度套餐
-  - `GET /quota-packages`
-  - `POST /quota-packages`
-  - `PATCH /quota-packages/{package_id}`
-  - `DELETE /quota-packages/{package_id}`
+- 兑换管理
+  - `GET /wallet/redeem-codes`
+  - `POST /wallet/redeem-codes`
+  - `GET /wallet/changes`
+  - `POST /wallet/grants`
 - 角色权限
   - `GET /roles`
   - `GET /roles/{role_id}/permissions`
@@ -94,11 +85,8 @@
   - 当前返回的是后端可计算聚合数据
   - 还没有真正的前端组件级字段约束版本化
 - 排行统计
-  - 当前默认按接入点/Token 维度聚合
+  - 当前默认按调用来源/Token 维度聚合
   - 后续可扩展更丰富的维度
-- 接入测试
-  - 当前以配置完整性和状态为主
-  - 还不是外部协议级深度探测
 - 导入脚本
   - 当前已支持生成和查询
   - 后续可继续扩展模板类型
@@ -114,8 +102,8 @@
 
 - 基础账号、令牌、使用记录、钱包、系统配置：已覆盖
 - 工作台聚合、排行、消息中心：已覆盖
-- 接入管理、导入脚本：已覆盖
-- 套餐目录、角色权限：已覆盖
+- 导入脚本：已覆盖；接入管理已下线，不再作为独立功能
+- 兑换管理、角色权限：已覆盖
 
 也就是说，截图里的主要功能区块，现在都已经存在对应后端接口。
 
@@ -128,9 +116,8 @@
 重点覆盖：
 
 - 创建 Token
-- 创建接入点并测试
 - 生成导入脚本
-- 创建套餐
+- 创建积分兑换码
 - 更新角色权限
 - 获取工作台聚合
 - 获取排行
@@ -142,6 +129,5 @@
 
 - 前后端字段对齐
 - 分页、筛选、排序细化
-- 更真实的接入测试逻辑
 - 消息规则自动化生成
-- 套餐与权限的更细粒度业务规则
+- 兑换码与权限的更细粒度业务规则

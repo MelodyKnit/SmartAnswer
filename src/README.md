@@ -1,21 +1,21 @@
-# 源码布局
+# Source Layout
 
-未来的实现代码应该存放在这里。
+Future implementation code should live here.
 
-建议的划分：
+Suggested split:
 
 ```text
 src/
   api/
   domain/
-  providers/
+  llm/providers/
   retrieval/
   ingestion/
   schemas/
 ```
 
-准则：
+Guidelines:
 
-- 将传输逻辑与检索和提供商（provider）模块隔离开来
-- 确保提供商适配器隐藏在稳定的接口后面
-- 确保模式（schema）定义明确且可重用
+- keep transport logic out of retrieval and provider modules
+- keep provider adapters behind stable interfaces
+- keep schema definitions explicit and reusable

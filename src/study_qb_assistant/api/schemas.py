@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class QueryPayload(BaseModel):
@@ -28,6 +28,7 @@ class RegisterPayload(BaseModel):
     username: str = ""
     password: str = ""
     email: str | None = None
+    invite_code: str = ""
 
 
 class LoginPayload(BaseModel):
@@ -64,6 +65,9 @@ class TokenCreatePayload(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     description: str = ""
+    quota_limit: int = -1
+    reject_low_confidence: bool = False
+    min_answer_confidence: float = 0.0
 
 
 class BillingPayload(BaseModel):
@@ -86,6 +90,32 @@ class UserUpdatePayload(BaseModel):
     status: str | None = None
 
 
+class UsersDeletePayload(BaseModel):
+    """管理员批量删除用户的参数。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    usernames: list[str] | tuple[str, ...] = ()
+
+
+class ProfileUpdatePayload(BaseModel):
+    """当前用户更新个人资料的参数。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    display_name: str | None = None
+    email: str | None = None
+
+
+class PasswordChangePayload(BaseModel):
+    """当前用户修改密码的参数。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    old_password: str = ""
+    new_password: str = ""
+
+
 class FeedbackPayload(BaseModel):
     """答题反馈提交参数。"""
 
@@ -95,6 +125,18 @@ class FeedbackPayload(BaseModel):
     title: str = ""
     content: str = ""
     image_urls: list[str] | tuple[str, ...] = ()
+    category: str = "answer"
+
+
+class FeedbackResolvePayload(BaseModel):
+    """管理员处理反馈时使用的参数。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    status: str = "resolved"
+    admin_note: str = ""
+    corrected_answer: str = ""
+    reward_points: int = 0
 
 
 class SystemConfigPayload(BaseModel):
@@ -102,44 +144,108 @@ class SystemConfigPayload(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    llm_base_url: str | None = None
-    llm_model: str | None = None
-    llm_api_key: str | None = None
-    llm_stream: str | None = None
+    smart_proto_enabled: str | None = None
+    custom_proto_header: str | None = None
+    default_user_points: str | None = None
+    invite_bonus_points: str | None = None
+    manual_grant_default_points: str | None = None
+    redeem_code_default_points: str | None = None
+
+
+class LlmRuntimeConfigPayload(BaseModel):
+    """LLM 答题运行时配置更新参数。"""
+
+    model_config = ConfigDict(extra="ignore")
+
     llm_fallback: str | None = None
     llm_explain: str | None = None
+    allow_known_rules: str | None = None
+    no_local_bank_mode: str | None = None
+    search_first: str | None = None
+    self_consistency_repeats: str | None = None
     web_search_provider: str | None = None
+    web_search_configs: str | None = None
     search_proxy: str | None = None
     llm_proxy: str | None = None
     google_search_api_key: str | None = None
     google_search_cx: str | None = None
     baidu_search_api_key: str | None = None
-    ai_cache_enabled: str | None = None
-    ai_cache_min_confidence: str | None = None
-    ai_cache_min_confirmations: str | None = None
+    llm_cache_enabled: str | None = None
+    llm_cache_min_confidence: str | None = None
+    llm_cache_min_confirmations: str | None = None
+
+
+class LlmModelCreatePayload(BaseModel):
+    """新增大模型配置参数。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    name: str = ""
+    base_url: str = ""
+    model: str = ""
+    api_key: str = ""
+    role: str = "backup"
+    priority: int = 100
+    stream: bool = True
+    max_completion_tokens: int = 700
+    timeout_seconds: float = 30.0
+    status: str = "active"
+
+
+class LlmModelUpdatePayload(BaseModel):
+    """更新大模型配置参数。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    name: str | None = None
+    base_url: str | None = None
+    model: str | None = None
+    api_key: str | None = None
+    role: str | None = None
+    priority: int | None = None
+    stream: bool | None = None
+    max_completion_tokens: int | None = None
+    timeout_seconds: float | None = None
+    status: str | None = None
 
 
 class RedeemCodePayload(BaseModel):
     """创建兑换码时使用的参数。"""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
 
     kind: str = "points"
     points: int = 0
-    subscription_days: int = 0
     max_uses: int = 1
     expires_at: float = 0.0
+
+    @field_validator("kind")
+    @classmethod
+    def points_only_kind(cls, value: str) -> str:
+        """兑换码只保留积分类型，旧订阅类型请求直接拒绝。"""
+
+        if (value or "points").strip() != "points":
+            raise ValueError("兑换码类型仅支持 points")
+        return "points"
 
 
 class WalletGrantPayload(BaseModel):
     """管理员手动发放钱包权益的参数。"""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
 
     username: str = ""
     kind: str = "points"
     points: int = 0
-    subscription_days: int = 0
+
+    @field_validator("kind")
+    @classmethod
+    def points_only_kind(cls, value: str) -> str:
+        """钱包手动发放只保留积分类型。"""
+
+        if (value or "points").strip() != "points":
+            raise ValueError("钱包发放类型仅支持 points")
+        return "points"
 
 
 class WalletRedeemPayload(BaseModel):
@@ -158,57 +264,32 @@ class NotificationReadPayload(BaseModel):
     read: bool = True
 
 
-class IntegrationCreatePayload(BaseModel):
-    """创建接入点参数。"""
-
-    model_config = ConfigDict(extra="ignore")
-
-    name: str = ""
-    platform: str = "generic"
-    base_url: str = ""
-    token_id: str | None = None
-    status: str = "active"
-    description: str = ""
-
-
-class IntegrationUpdatePayload(BaseModel):
-    """更新接入点参数。"""
-
-    model_config = ConfigDict(extra="ignore")
-
-    name: str | None = None
-    platform: str | None = None
-    base_url: str | None = None
-    token_id: str | None = None
-    status: str | None = None
-    description: str | None = None
-
-
 class ImportScriptGeneratePayload(BaseModel):
     """生成导入脚本参数。"""
 
     model_config = ConfigDict(extra="ignore")
 
     name: str = ""
-    integration_id: str | None = None
     token_id: str | None = None
     target: str = "ocs"
     include_test_snippet: bool = True
 
 
-class QuotaPackagePayload(BaseModel):
-    """额度套餐创建或更新参数。"""
+class ImportScriptCreatePayload(BaseModel):
+    """创建导入脚本模板参数。"""
 
     model_config = ConfigDict(extra="ignore")
 
     name: str = ""
-    kind: str = "points"
-    points: int = 0
-    subscription_days: int = 0
-    price: float = 0.0
-    status: str = "active"
+    target: str = "ocs"
     description: str = ""
-    sort_order: int = 0
+    script_template: str = ""
+    content: str = ""
+    config_items: list[dict] = []
+    requires_token: bool = True
+    tags: list[str] | tuple[str, ...] = ()
+    is_default: bool = False
+    status: str = "active"
 
 
 class RolePermissionPayload(BaseModel):
@@ -217,3 +298,20 @@ class RolePermissionPayload(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     permissions: list[str] | tuple[str, ...] = ()
+
+
+class QuestionUpdatePayload(BaseModel):
+    """题库记录状态与答案更新参数。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    title_raw: str | None = None
+    question_type: str | None = None
+    options_raw: list[str] | tuple[str, ...] | None = None
+    answer_raw: str | None = None
+    status: str | None = None
+    answer: str | None = None
+    answer_text: str | None = None
+    explanation: str | None = None
+    subject: str | None = None
+    tags: list[str] | tuple[str, ...] | None = None

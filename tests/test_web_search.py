@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import unittest
@@ -22,10 +23,11 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from study_qb_assistant.models import ModelAnswer, QuestionQuery  # noqa: E402
-from study_qb_assistant.providers.search_augmented import SearchAugmentedModelProvider  # noqa: E402
-from study_qb_assistant.providers.web_search import (  # noqa: E402
+from study_qb_assistant.llm.orchestration import SearchAugmentedModelProvider  # noqa: E402
+from study_qb_assistant.llm.providers.web_search import (  # noqa: E402
     CompositeWebSearchProvider,
     WebSearchResult,
+    build_search_provider,
     build_search_provider_from_env,
     build_search_query,
 )
@@ -33,6 +35,7 @@ from study_qb_assistant.providers.web_search import (  # noqa: E402
 
 class FakeSearchProvider:
     """单元测试专用的模拟搜索提供者。"""
+
     provider_name = "fake-search"
 
     def search(self, query: QuestionQuery, *, top_k: int = 5) -> tuple[WebSearchResult, ...]:
@@ -57,6 +60,7 @@ class FakeSearchProvider:
 
 class FailingSearchProvider:
     """专门用于模拟网络超时或异常故障的搜索引擎提供者。"""
+
     provider_name = "failing-search"
 
     def __init__(self) -> None:
@@ -79,6 +83,7 @@ class FailingSearchProvider:
 
 class FakeEvidenceModel:
     """模拟支持 RAG（检索增强生成）回答模式的大模型提供者。"""
+
     provider_name = "fake-model"
 
     def __init__(self) -> None:
@@ -119,7 +124,7 @@ class WebSearchTests(unittest.TestCase):
 
     def test_search_query_strips_ocs_prefix(self) -> None:
         """测试搜索查询转换器是否能剥离题型前缀以避免干扰搜索。
-        
+
         例如，应将 “单选题(1分)国家安全...” 里的 “单选题(1分)” 剥除。
         """
         query = QuestionQuery(
@@ -136,7 +141,7 @@ class WebSearchTests(unittest.TestCase):
 
     def test_search_augmented_provider_uses_evidence_method(self) -> None:
         """测试 RAG 编排提供者是否能正确调用模型的 `answer_with_evidence` 方法。
-        
+
         如果传入了搜索组件，应执行增强回答逻辑而不是普通逻辑。
         """
         model = FakeEvidenceModel()
@@ -162,9 +167,33 @@ class WebSearchTests(unittest.TestCase):
         with patch.dict(os.environ, {"STQB_WEB_SEARCH_PROVIDER": "none"}, clear=True):
             self.assertIsNone(build_search_provider_from_env())
 
+    def test_web_search_configs_build_keyed_provider(self) -> None:
+        """测试运行时联网搜索配置能用未脱敏密钥构建真实搜索适配器。"""
+        runtime_config = {
+            "web_search_configs": json.dumps(
+                [
+                    {
+                        "id": "search_google",
+                        "name": "Google",
+                        "provider": "google",
+                        "api_key": "google-secret",
+                        "cx": "cx-001",
+                        "status": "active",
+                    }
+                ],
+                ensure_ascii=False,
+            )
+        }
+
+        provider = build_search_provider(runtime_config=runtime_config)
+
+        self.assertIsInstance(provider, CompositeWebSearchProvider)
+        assert isinstance(provider, CompositeWebSearchProvider)
+        self.assertEqual(provider.providers[0].provider_name, "google-custom-search")
+
     def test_composite_search_cools_down_failing_provider(self) -> None:
         """测试当某个搜索数据源崩溃时，Composite 复合搜索引擎的冷却（避让）机制。
-        
+
         当发生异常时，不应该持续请求导致程序卡顿，而应当把该提供者临时冷却熔断，
         在冷却期内不再对其发起请求，直到冷却期结束后重试。
         """

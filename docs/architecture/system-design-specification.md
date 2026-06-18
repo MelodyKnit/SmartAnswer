@@ -28,19 +28,19 @@
 
 ```mermaid
 graph TD
-    Client[浏览器 OCS 插件 / 第三方客户端] -->|1. 携带 API Key 请求| Gateway[API 网关: local_server.py]
-    Gateway -->|2. 鉴权检验| Auth[用户认证与会话服务]
+    Client[浏览器 OCS 插件 / 第三方客户端] -->|1. 携带 API Key 请求| Gateway[API 网关: api/local_server.py + routes/]
+    Gateway -->|2. 鉴权检验| Auth[用户认证服务: auth/ + storage/]
     Gateway -->|3. 路由分发| AnswerService[答题决策中心: answering.py]
-    
-    AnswerService -->|Step A: 校验| AILearned[AI 自动沉淀题库: ai_answer_cache.py]
-    AnswerService -->|Step B: 规则拦截| Rules[高频公式匹配修复: answer_quality.py]
-    AnswerService -->|Step C: 本地查找| Index[本地物理题库索引: search.py]
-    AnswerService -->|Step D: 检索增强| RAG[RAG 推理编排器: search_augmented.py]
-    
-    RAG -->|D1. 搜索| WebSearch[网页搜索引擎集成: web_search.py]
-    RAG -->|D2. 推理| LLM[大模型推理驱动: openai_compatible.py]
-    
-    Index -->|读取| DB[(公开题库 + AI learned jsonl)]
+
+    AnswerService -->|Step A: 校验| AILearned[LLM 自动沉淀题库: llm/cache/]
+    AnswerService -->|Step B: 规则拦截| Rules[答案质量规则: answer_quality/]
+    AnswerService -->|Step C: 本地查找| Index[本地题库索引: search/]
+    AnswerService -->|Step D: 检索增强| RAG[RAG 推理编排器: llm/orchestration/search_augmented.py]
+
+    RAG -->|D1. 搜索| WebSearch[网页搜索集成: llm/providers/web_search*.py]
+    RAG -->|D2. 推理| LLM[OpenAI 兼容驱动: llm/providers/openai_compatible.py]
+
+    Index -->|读取| DB[(公开题库 JSONL + AI learned JSONL)]
 ```
 
 ---
@@ -62,7 +62,7 @@ sequenceDiagram
     actor Admin as 系统管理员
     actor User as 协作者 (新用户)
     participant Sys as 系统后端
-    
+
     Admin->>Sys: 1. 请求生成邀请码 (指定使用次数/有效期)
     Sys-->>Admin: 返回邀请码 (如 stqb_invite_8af3d1)
     Admin->>User: 2. 私下分发邀请码

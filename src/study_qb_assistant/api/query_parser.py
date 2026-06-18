@@ -12,9 +12,13 @@ def build_query_from_mapping(params: dict[str, list[str]]) -> QuestionQuery:
     """从类查询字符串字典构建标准题目查询对象。"""
     title = first_value(params, "title")
     question_type = first_value(params, "type") or "unknown"
-    options = sanitize_query_options(title, question_type, split_options(first_value(params, "options")))
+    options = sanitize_query_options(
+        title, question_type, split_options(first_value(params, "options"))
+    )
     request_id = first_value(params, "request_id") or None
-    return QuestionQuery(title=title, options=options, question_type=question_type, request_id=request_id)
+    return QuestionQuery(
+        title=title, options=options, question_type=question_type, request_id=request_id
+    )
 
 
 def build_query_from_payload(payload: QueryPayload | dict[str, Any]) -> QuestionQuery:
@@ -25,7 +29,9 @@ def build_query_from_payload(payload: QueryPayload | dict[str, Any]) -> Question
         title = str(payload.title or "")
         return QuestionQuery(
             title=title,
-            options=sanitize_query_options(title, str(question_type), options_from_raw(raw_options)),
+            options=sanitize_query_options(
+                title, str(question_type), options_from_raw(raw_options)
+            ),
             question_type=str(question_type),
             request_id=payload.request_id,
         )
@@ -86,7 +92,9 @@ def is_real_option(value: str) -> bool:
     return not any(marker in lowered for marker in noisy_markers)
 
 
-def sanitize_query_options(title: str, question_type: str, options: tuple[str, ...]) -> tuple[str, ...]:
+def sanitize_query_options(
+    title: str, question_type: str, options: tuple[str, ...]
+) -> tuple[str, ...]:
     """按题型清洗选项，避免填空题被错误选项污染。"""
     if is_completion_request(title, question_type):
         return ()

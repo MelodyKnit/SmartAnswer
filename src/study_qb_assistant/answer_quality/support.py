@@ -14,7 +14,13 @@ def is_judgement_query(query: QuestionQuery) -> bool:
     """判断当前查询是否为判断题。"""
     normalized_type = query.question_type.strip().lower()
     title = query.title.strip()
-    return normalized_type in {"judgement", "judge", "truefalse", "判断", "判断题"} or title.startswith("判断题")
+    return normalized_type in {
+        "judgement",
+        "judge",
+        "truefalse",
+        "判断",
+        "判断题",
+    } or title.startswith("判断题")
 
 
 def repair_judgement_answer(query: QuestionQuery, answer: ModelAnswer) -> ModelAnswer:
@@ -89,11 +95,7 @@ def labels_from_answer_text(query: QuestionQuery, answer_text: str | None) -> st
     labels = normalize_label_group(answer_text, query)
     if labels:
         return labels
-    parts = [
-        part.strip()
-        for part in re.split(r"[#;,，、；\n]+", answer_text)
-        if part.strip()
-    ]
+    parts = [part.strip() for part in re.split(r"[#;,，、；\n]+", answer_text) if part.strip()]
     if not parts:
         return None
     mapped: list[str] = []

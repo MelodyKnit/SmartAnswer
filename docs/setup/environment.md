@@ -1,6 +1,6 @@
 # 环境配置
 
-更新日期：`2026-06-07`
+更新日期：`2026-06-15`
 
 ## 1. 工具链决策
 
@@ -40,11 +40,23 @@ conda activate ai-study-qb
 python -m pytest tests -q
 ```
 
+提交前安装 Git hooks：
+
+```powershell
+pre-commit install
+```
+
+手动运行完整提交门禁：
+
+```powershell
+pre-commit run --all-files
+```
+
 当前验证的环境：
 
 - Conda 环境：`ai-study-qb`
 - 最终验证是在 `ai-study-qb` 环境中运行的
-- 最新结果：`61` 个单元测试通过，FastAPI 本地服务验证通过，以及模拟模型回退验证通过
+- 最新结果：`100` 个单元测试通过，后端 `ruff` / `mypy` 通过，前端 `npm run build` 通过
 
 ## 5. 运行时依赖
 
@@ -55,6 +67,7 @@ python -m pytest tests -q
 - `python-dotenv`：健壮的 `.env.local` 解析，同时保留现有的进程变量
 - `uvicorn`：FastAPI 本地服务的 ASGI 运行环境，支持开发热重载
 - `pytest`：项目测试运行器
+- `pre-commit`：提交前统一运行代码风格、类型与回归检查
 
 ## 6. 未来依赖策略
 
@@ -74,9 +87,8 @@ python -m pytest tests -q
 - `STQB_LLM_PROXY`
 - `STQB_WEB_SEARCH_PROVIDER`
 - `STQB_SEARCH_PROXY`
-- `STQB_AI_CACHE_ENABLED`
-- `STQB_AI_CACHE_PATH`
-- `STQB_AI_CACHE_MIN_CONFIDENCE`
-- `STQB_AI_CACHE_MIN_CONFIRMATIONS`
+- `STQB_LLM_CACHE_ENABLED`
+- `STQB_LLM_CACHE_MIN_CONFIDENCE`
+- `STQB_LLM_CACHE_MIN_CONFIRMATIONS`
 
 API 密钥特意不存储在项目文件中。默认的 AI 已学题库路径为 `data\normalized\ai-learned.jsonl`；它以常规的 `CanonicalQuestionRecord` JSONL 行格式存储 AI 生成的答案，并带有 `ai_generated` 和 `auto_learned` 标签。当启用基于模型学习的模式时，遗留的 `data\runtime\ai-answer-cache.json` 文件将作为兼容性迁移源进行读取。

@@ -1,0 +1,3 @@
+@import './style.css';
+
+/* 兼容 Vite 默认入口命名；真实设计令牌统一维护在 style.css。 */

@@ -8,10 +8,10 @@ from __future__ import annotations
 
 from ..models import ModelAnswer, QuestionQuery
 from .rules import (
-    compact_text,
+    compact_text as compact_text,
     configured_completion_rules,
     configured_option_rules,
-    is_completion_query,
+    is_completion_query as is_completion_query,
     known_completion_answer,
     known_option_answer,
     load_rules_payload,
@@ -21,10 +21,10 @@ from .support import (
     answer_with_labels,
     extract_explicit_labels,
     is_judgement_query,
-    judgement_answer,
-    judgement_signal,
+    judgement_answer as judgement_answer,
+    judgement_signal as judgement_signal,
     known_explanation,
-    label_for_answer_text,
+    label_for_answer_text as label_for_answer_text,
     labels_for_answer_texts,
     labels_from_answer_text,
     normalize_label_group,
@@ -59,7 +59,9 @@ def direct_known_answer(query: QuestionQuery) -> ModelAnswer | None:
             ModelAnswer(None, None, None, 0.0),
             known_labels,
             confidence=0.99,
-            explanation=known_explanation(answer_text_from_labels(query, known_labels) or known_labels),
+            explanation=known_explanation(
+                answer_text_from_labels(query, known_labels) or known_labels
+            ),
         )
 
     return None
@@ -89,7 +91,9 @@ def repair_model_answer(query: QuestionQuery, answer: ModelAnswer) -> ModelAnswe
                 answer,
                 explicit_labels,
                 confidence=max(answer.confidence, 0.9),
-                explanation=known_explanation(answer_text_from_labels(query, explicit_labels) or explicit_labels),
+                explanation=known_explanation(
+                    answer_text_from_labels(query, explicit_labels) or explicit_labels
+                ),
             )
 
     # 如果是判断题，进行特定规则的修复

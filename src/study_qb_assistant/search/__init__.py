@@ -1,17 +1,18 @@
 """基于标准化题目记录的本地轻量级检索索引。
 
 此模块提供 LocalQuestionIndex 类，支持在内存中对导入的标准 JSONL 题目记录进行
-精确匹配和基于编辑距离与选项重合度的模糊匹配检索。
+精确匹配和基于 n-gram 召回与 RapidFuzz 精排的模糊匹配检索。
 """
 
 from __future__ import annotations
 
-import difflib
 from pathlib import Path
 
+from ..auth import AuthError
+from ..exporting import write_jsonl
 from ..models import CanonicalQuestionRecord, QueryResult, QuestionQuery
-from ..normalization import normalize_options, normalize_text
-from .support import float_from_metadata, is_ai_record, read_jsonl_records, record_options_match
+from .matching import MatchCandidate, QuestionMatcher
+from .support import float_from_metadata, is_ai_record, read_jsonl_records
 
 
 class LocalQuestionIndex:
@@ -34,11 +35,7 @@ class LocalQuestionIndex:
         """
         self.records = records
         self.source_path = source_path
-        # 初始化精确匹配哈希表，键为标准化后的题干文本，值为拥有相同标准化题干的记录列表
-        self._exact: dict[str, list[CanonicalQuestionRecord]] = {}
-        for record in records:
-            key = normalize_text(record.title_raw)
-            self._exact.setdefault(key, []).append(record)
+        self._matcher = QuestionMatcher(records)
 
     @classmethod
     def from_jsonl(cls, path: str | Path) -> "LocalQuestionIndex":
@@ -59,7 +56,7 @@ class LocalQuestionIndex:
         """从多个标准化 JSONL 文件加载题库记录并创建统一索引。
 
         Args:
-            paths: 一个或多个 JSONL 路径。不存在的路径会被跳过，便于 AI 沉淀题库首次启动为空。
+            paths: 一个或多个 JSONL 路径。不存在的路径会被跳过，便于 LLM 沉淀题库首次启动为空。
 
         Returns:
             LocalQuestionIndex: 合并后的统一检索索引。
@@ -77,19 +74,83 @@ class LocalQuestionIndex:
     def add_or_replace(self, record: CanonicalQuestionRecord) -> None:
         """向当前内存索引追加或替换一条题库记录。
 
-        运行时 AI 自动沉淀题会通过此入口立即参与后续查询，无需重启服务。
+        运行时 LLM 自动沉淀题会通过此入口立即参与后续查询，无需重启服务。
         """
-        records = [existing for existing in self.records if existing.question_id != record.question_id]
+        records = [
+            existing for existing in self.records if existing.question_id != record.question_id
+        ]
         records.append(record)
         self.records = tuple(records)
-        self._rebuild_exact_index()
+        self._rebuild_match_index()
 
-    def _rebuild_exact_index(self) -> None:
-        """重建标准化题干的精确匹配索引。"""
-        self._exact = {}
+    def remove(self, question_id: str) -> None:
+        """从当前内存索引中移除一条题库记录。"""
+
+        self.records = tuple(
+            record for record in self.records if record.question_id != question_id
+        )
+        self._rebuild_match_index()
+
+    def replace_records(self, records: tuple[CanonicalQuestionRecord, ...]) -> None:
+        """用一批可信记录整体重建当前内存索引。"""
+
+        self.records = records
+        self._rebuild_match_index()
+
+    def update_record(self, question_id: str, values: dict[str, object]) -> CanonicalQuestionRecord:
+        """更新题库记录，并在源为 JSONL 文件时同步持久化。"""
+        updated: CanonicalQuestionRecord | None = None
+        next_records: list[CanonicalQuestionRecord] = []
         for record in self.records:
-            key = normalize_text(record.title_raw)
-            self._exact.setdefault(key, []).append(record)
+            if record.question_id != question_id:
+                next_records.append(record)
+                continue
+            payload = record.to_dict()
+            for key in {
+                "title_raw",
+                "question_type",
+                "answer_raw",
+                "explanation",
+                "subject",
+                "chapter",
+                "source_name",
+                "source_url",
+                "source_license",
+                "source_split",
+                "source_record_path",
+                "passage",
+            }:
+                if key in values:
+                    payload[key] = values[key]
+            if "options_raw" in values:
+                raw_options = values["options_raw"]
+                payload["options_raw"] = (
+                    tuple(str(item) for item in raw_options)
+                    if isinstance(raw_options, (list, tuple, set))
+                    else ()
+                )
+            if "tags" in values:
+                raw_tags = values["tags"]
+                payload["tags"] = (
+                    tuple(str(item) for item in raw_tags)
+                    if isinstance(raw_tags, (list, tuple, set))
+                    else ()
+                )
+            if "metadata" in values and isinstance(values["metadata"], dict):
+                payload["metadata"] = {str(k): str(v) for k, v in values["metadata"].items()}
+            updated = CanonicalQuestionRecord.from_dict(payload)
+            next_records.append(updated)
+        if updated is None:
+            raise AuthError("QUESTION_NOT_FOUND", "题目不存在", http_status=404)
+        self.records = tuple(next_records)
+        self._rebuild_match_index()
+        if self.source_path and Path(self.source_path).suffix.lower() == ".jsonl":
+            write_jsonl(self.records, self.source_path)
+        return updated
+
+    def _rebuild_match_index(self) -> None:
+        """重建本地高稳匹配索引。"""
+        self._matcher = QuestionMatcher(self.records)
 
     def status(self) -> dict:
         """获取关于已加载索引的非敏感统计和运行时诊断细节。
@@ -98,13 +159,16 @@ class LocalQuestionIndex:
             dict: 包含提供商名称、记录总数、源文件路径、涉及的数据源名称及授权许可列表。
         """
         sources = sorted({record.source_name for record in self.records})
-        licenses = sorted({record.source_license for record in self.records if record.source_license})
+        licenses = sorted(
+            {record.source_license for record in self.records if record.source_license}
+        )
         return {
             "provider": "local-normalized-jsonl",
             "record_count": len(self.records),
             "source_path": self.source_path,
             "source_names": sources,
             "source_licenses": licenses,
+            "match_index": self._matcher.status(),
         }
 
     def query(self, query: QuestionQuery, *, allow_fuzzy: bool = True) -> QueryResult:
@@ -132,19 +196,9 @@ class LocalQuestionIndex:
                 error_message="title is required",
             )
 
-        query_key = normalize_text(query.title)
-        # 优先执行 O(1) 的精确查找
-        exact_candidates = self._exact.get(query_key) or []
-        if exact_candidates:
-            exact_candidates = [
-                record
-                for record in exact_candidates
-                if not is_ai_record(record) or record_options_match(record, query)
-            ]
-        if exact_candidates:
-            # 如果命中了多个同题干题目（比如选项不同），基于选项匹配度进行优胜排序
-            record = self._rank_candidates(exact_candidates, query)[0]
-            return self._result_from_record(record, query, confidence=0.99, resolution_mode="exact_match")
+        exact_candidate = self._matcher.exact_match(query)
+        if exact_candidate is not None:
+            return self._result_from_match(exact_candidate, query, resolution_mode="exact_match")
 
         # 若精确查找未命中且不允许模糊匹配，则直接返回未找到
         if not allow_fuzzy:
@@ -161,70 +215,44 @@ class LocalQuestionIndex:
                 error_message="no trusted exact local match found",
             )
 
-        # 降级方案：遍历索引中所有记录进行相似度评分（模糊查找）
-        best_record: CanonicalQuestionRecord | None = None
-        best_score = 0.0
-        for record in self.records:
-            # AI 自动沉淀题依赖具体选项顺序，不能通过相似题干模糊复用。
-            if is_ai_record(record):
-                continue
-            score = self._score_record(record, query)
-            if score > best_score:
-                best_record = record
-                best_score = score
-
-        # 相似度阈值设定为 0.72，低于该分值则认为无法建立足够信任，返回未找到
-        if best_record is None or best_score < 0.72:
+        fuzzy_candidate = self._matcher.fuzzy_match(query)
+        if fuzzy_candidate is None:
             return QueryResult(
                 ok=False,
                 query=query,
                 candidate_answer=None,
                 answer_text=None,
                 explanation=None,
-                confidence=best_score,
+                confidence=0.0,
                 resolution_mode="not_found",
                 review_required=True,
                 error_code="NOT_FOUND",
                 error_message="no trusted local match found",
+                debug={"match_stage": "not_found"},
             )
 
+        return self._result_from_match(fuzzy_candidate, query, resolution_mode="fuzzy_match")
+
+    def _result_from_match(
+        self,
+        candidate: MatchCandidate,
+        query: QuestionQuery,
+        resolution_mode: str,
+    ) -> QueryResult:
+        """从匹配候选生成标准查询结果。"""
         return self._result_from_record(
-            best_record,
+            candidate.record,
             query,
-            confidence=round(best_score, 4),
-            resolution_mode="fuzzy_match",
+            confidence=candidate.confidence,
+            resolution_mode=resolution_mode,
+            debug={
+                "match_stage": candidate.match_stage,
+                "title_score": f"{candidate.title_score:.4f}",
+                "option_score": f"{candidate.option_score:.4f}",
+                "candidate_count": str(candidate.candidate_count),
+                "top_gap": f"{candidate.top_gap:.4f}",
+            },
         )
-
-    def _rank_candidates(
-        self, records: list[CanonicalQuestionRecord], query: QuestionQuery
-    ) -> list[CanonicalQuestionRecord]:
-        """对多个候选记录按选项匹配度得分从高到低进行排序。"""
-        return sorted(records, key=lambda record: self._option_score(record, query), reverse=True)
-
-    def _score_record(self, record: CanonicalQuestionRecord, query: QuestionQuery) -> float:
-        """为单条记录与查询条件计算综合匹配相似度评分。
-
-        综合分值由题干的编辑距离相似度（比重 82%）与选项重合度得分（比重 18%）加权得出。
-        """
-        # 使用 SequenceMatcher 计算题干字符级别的匹配比率
-        title_score = difflib.SequenceMatcher(
-            None, normalize_text(record.title_raw), normalize_text(query.title)
-        ).ratio()
-        option_score = self._option_score(record, query)
-        # 如果任何一方不包含选项信息，仅以题干相似度作为最终得分
-        if option_score == 0:
-            return title_score
-        # 加权求和：82% 题干匹配度 + 18% 选项匹配度
-        return (title_score * 0.82) + (option_score * 0.18)
-
-    def _option_score(self, record: CanonicalQuestionRecord, query: QuestionQuery) -> float:
-        """计算查询选项与记录选项的重合重度得分（交集大小除以并集大小，即 Jaccard 相似度）。"""
-        query_options = set(normalize_options(query.options))
-        record_options = set(normalize_options(record.options_raw))
-        if not query_options or not record_options:
-            return 0.0
-        overlap = query_options & record_options
-        return len(overlap) / max(len(query_options), len(record_options))
 
     def _result_from_record(
         self,
@@ -232,6 +260,7 @@ class LocalQuestionIndex:
         query: QuestionQuery,
         confidence: float,
         resolution_mode: str,
+        debug: dict[str, str] | None = None,
     ) -> QueryResult:
         """从匹配成功的 CanonicalQuestionRecord 结构体生成标准 QueryResult。"""
         answer_text = self._answer_text(record)
@@ -252,13 +281,16 @@ class LocalQuestionIndex:
             sources=(
                 {
                     "source_name": record.source_name,
-                    "source_type": "ai_generated_question_bank" if ai_generated_record else "qa_record",
+                    "source_type": (
+                        "ai_generated_question_bank" if ai_generated_record else "qa_record"
+                    ),
                     "source_id": record.question_id,
                     "source_url": record.source_url,
                     "source_license": record.source_license,
                     "score": confidence,
                 },
             ),
+            debug=debug or {},
         )
 
     def _answer_text(self, record: CanonicalQuestionRecord) -> str | None:

@@ -8,6 +8,13 @@
 
 HTTP 层使用 FastAPI 实现并由 uvicorn 运行。业务逻辑保留在检索 (retrieval)、解答 (answering)、模型提供商 (provider) 和身份验证 (auth) 模块中，以保持路由处理足够轻量。运行时状态默认使用 SQLAlchemy + SQLite 持久化；若配置 Redis，则会话和最近事件优先进入 Redis。大模型提供商是可选的，并且默认禁用。
 
+当前运行时索引装载策略：
+
+- 启动时仍会读取 `data/normalized/verified.jsonl` 与 `data/normalized/ai-learned.jsonl` 作为种子来源
+- 种子来源会先同步进数据库题库表
+- 当应用接入真实平台/鉴权服务时，运行时内存索引会再从数据库中的“可自动命中记录”重建
+- 因此，人工评审题、数据库修订题和可信 AI 题可以在不改动基础 JSONL 的情况下参与后续命中
+
 ## 2. 当前已实现的答案工作流
 
 当前运行时的工作流特意被记录为今天已存在的行为，而非未来的理想流程。
@@ -106,25 +113,15 @@ OCS 或 /query 请求
 - `GET /feedback`
 - `GET /wallet/me`
 - `GET /wallet/orders`
+- `GET /wallet/changes`
 - `POST /wallet/grants`
 - `GET /wallet/redeem-codes`
 - `POST /wallet/redeem-codes`
 - `POST /wallet/redeem`
-- `GET /integrations`
-- `POST /integrations`
-- `GET /integrations/{integration_id}`
-- `PATCH /integrations/{integration_id}`
-- `DELETE /integrations/{integration_id}`
-- `POST /integrations/{integration_id}/test`
-- `GET /integrations/{integration_id}/status`
 - `GET /import-scripts`
 - `POST /import-scripts/generate`
 - `GET /import-scripts/{script_id}`
 - `DELETE /import-scripts/{script_id}`
-- `GET /quota-packages`
-- `POST /quota-packages`
-- `PATCH /quota-packages/{package_id}`
-- `DELETE /quota-packages/{package_id}`
 - `GET /roles`
 - `GET /roles/{role_id}/permissions`
 - `PUT /roles/{role_id}/permissions`

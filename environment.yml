@@ -5,8 +5,18 @@ dependencies:
   - python=3.13
   - fastapi
   - httpx
+  - pip
   - pytest
   - python-dotenv
+  - rapidfuzz
+  - pre-commit
   - redis-py
+  - black
+  - ruff
+  - mypy
   - sqlalchemy
   - uvicorn
+  - pip:
+      - dulwich
+      - playwright
+      - psycopg[binary]

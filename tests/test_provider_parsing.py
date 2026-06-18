@@ -13,6 +13,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 # 将项目源文件目录 src 添加到 Python 路径中，以便能够正确导入项目模块
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -20,12 +21,12 @@ SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from study_qb_assistant.providers.openai_compatible import (  # noqa: E402
+from study_qb_assistant.llm.providers.openai_compatible import (  # noqa: E402
     OpenAICompatibleProvider,
     _decode_chat_response,
 )
-from study_qb_assistant.models import QuestionQuery  # noqa: E402
-from study_qb_assistant.api.local_server import _split_options  # noqa: E402
+from study_qb_assistant.models import ModelAnswer, QuestionQuery  # noqa: E402
+from study_qb_assistant.api.query_parser import split_options  # noqa: E402
 
 
 class ProviderParsingTests(unittest.TestCase):
@@ -47,7 +48,7 @@ class ProviderParsingTests(unittest.TestCase):
 
     def test_plain_text_model_answer_is_parsed_best_effort(self) -> None:
         """测试在模型未返回标准 JSON、只返回纯文本时，“尽力而为”提取出选项的解析逻辑。
-        
+
         验证在这种场景下，是否默认标记了较低的置信度。
         """
         provider = OpenAICompatibleProvider(base_url="http://example.test/v1", model="mock")
@@ -62,7 +63,7 @@ class ProviderParsingTests(unittest.TestCase):
 
     def test_streaming_chat_response_is_joined(self) -> None:
         """测试流式传输的 SSE 数据包解码拼接逻辑。
-        
+
         验证将零碎的 SSE `data: {...}` 流式数据块还原拼接为完整消息的逻辑。
         """
         # 构造一个模拟 of SSE 多行流数据负载
@@ -83,7 +84,7 @@ class ProviderParsingTests(unittest.TestCase):
 
     def test_option_text_array_is_normalized_to_ocs_multiple_answer(self) -> None:
         """测试在多选题下，大模型返回的列表选项名数组是否能被正确映射为井号拼接的索引字母。
-        
+
         若模型以具体文字数组形式返回 ["国家富强", "民族振兴", "人民幸福"]，
         适配器应通过在 options 数组中比对，将其转换映射为 "A#B#C"。
         """
@@ -138,8 +139,8 @@ class ProviderParsingTests(unittest.TestCase):
     def test_ocs_editor_noise_is_filtered_from_options(self) -> None:
         """测试富文本编辑器杂音过滤函数，验证是否过滤了诸如 `UEDITOR_CONFIG` 或 `UE.getEditor` 干扰项。"""
         # 模拟网页脚本噪音与有效选项混合的情况
-        options = _split_options(
-            '点击上传x#window.UEDITOR_CONFIG.initialFrameWidth = 730;#'
+        options = split_options(
+            "点击上传x#window.UEDITOR_CONFIG.initialFrameWidth = 730;#"
             "var editor1 = UE.getEditor('answerEditor1');#真实选项"
         )
 
@@ -179,6 +180,63 @@ class ProviderParsingTests(unittest.TestCase):
         self.assertIn("Question type: multiple", prompt)
         self.assertIn("A. 甲", prompt)
         self.assertIn("D. 丁", prompt)
+
+    def test_verify_answer_with_evidence_returns_structured_answer(self) -> None:
+        """测试证据复核接口仍然返回可解析的结构化答案。"""
+        provider = OpenAICompatibleProvider(base_url="http://example.test/v1", model="mock")
+
+        def fake_post_json(_self, url: str, payload: dict) -> dict:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"candidate_answer":"B","answer_text":"经济安全","explanation":"证据复核后确认。","confidence":0.99}'
+                        }
+                    }
+                ]
+            }
+
+        with patch.object(OpenAICompatibleProvider, "_post_json", fake_post_json):
+            answer = provider.verify_answer_with_evidence(
+                QuestionQuery(
+                    title="单选题(1分)国家安全工作应当坚持总体国家安全观，以()为基础。",
+                    options=("人民安全", "经济安全", "政治安全", "军事安全"),
+                    question_type="single",
+                ),
+                (),
+                ModelAnswer("A", "人民安全", "初次回答。", 0.4),
+            )
+
+        self.assertEqual(answer.candidate_answer, "B")
+        self.assertEqual(answer.answer_text, "经济安全")
+
+    def test_verify_answer_returns_structured_answer_without_evidence(self) -> None:
+        """测试无证据自检接口仍然返回可解析的结构化答案。"""
+        provider = OpenAICompatibleProvider(base_url="http://example.test/v1", model="mock")
+
+        def fake_post_json(_self, url: str, payload: dict) -> dict:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"candidate_answer":"C","answer_text":"经济安全","explanation":"复核后修正。","confidence":0.97}'
+                        }
+                    }
+                ]
+            }
+
+        with patch.object(OpenAICompatibleProvider, "_post_json", fake_post_json):
+            answer = provider.verify_answer(
+                QuestionQuery(
+                    title="单选题(1分)国家安全工作应当坚持总体国家安全观，以()为基础。",
+                    options=("人民安全", "政治安全", "经济安全", "军事安全"),
+                    question_type="single",
+                ),
+                ModelAnswer("B", "政治安全", "初次回答。", 0.4),
+            )
+
+        self.assertEqual(answer.candidate_answer, "C")
+        self.assertEqual(answer.answer_text, "经济安全")
 
 
 if __name__ == "__main__":

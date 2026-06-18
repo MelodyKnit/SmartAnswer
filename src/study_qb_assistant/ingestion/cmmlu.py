@@ -49,7 +49,9 @@ def iter_cmmlu_records(path: str | Path) -> Iterator[CanonicalQuestionRecord]:
                 title_raw=row["Question"].strip(),
                 question_type="single",  # CMMLU 数据集均为单项选择题
                 # 提取标准 A/B/C/D 四个选项并进行标准化去空处理
-                options_raw=tupled_options((row.get("A"), row.get("B"), row.get("C"), row.get("D"))),
+                options_raw=tupled_options(
+                    (row.get("A"), row.get("B"), row.get("C"), row.get("D"))
+                ),
                 answer_raw=(row.get("Answer") or "").strip() or None,
                 explanation=None,  # CMMLU 不带解析说明，设为 None
                 subject=subject,

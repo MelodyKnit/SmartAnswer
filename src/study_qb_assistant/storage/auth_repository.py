@@ -36,12 +36,24 @@ class SqlAlchemyAuthRepository:
 
     def save_user(self, record: UserRecord) -> None:
         with self.session_factory() as session:
-            entity = session.scalar(select(UserEntity).where(UserEntity.username == record.username))
+            entity = session.scalar(
+                select(UserEntity).where(UserEntity.username == record.username)
+            )
             if entity is None:
                 entity = UserEntity(username=record.username, user_id=record.user_id)
                 session.add(entity)
             self._apply_record(entity, record)
             session.commit()
+
+    def delete_user(self, username: str) -> bool:
+        """删除指定用户记录。"""
+        with self.session_factory() as session:
+            entity = session.scalar(select(UserEntity).where(UserEntity.username == username))
+            if entity is None:
+                return False
+            session.delete(entity)
+            session.commit()
+            return True
 
     def _apply_record(self, entity: UserEntity, record: UserRecord) -> None:
         entity.user_id = record.user_id

@@ -9,12 +9,12 @@ from pathlib import Path
 from fastapi import Request
 from starlette.responses import JSONResponse
 
-from ..adapters import to_ocs_response
+from ..adapters import to_ocs_low_confidence_response, to_ocs_response
 from ..answering import AnswerService
 from ..auth import AuthError, AuthService
 from ..models import QuestionQuery
 from ..platform import PlatformService
-from ..runtime_log import log_event, recent_events
+from ..logger import log_event, recent_events
 from ..search import LocalQuestionIndex
 from .context import authorization_bearer, current_user
 
@@ -39,14 +39,24 @@ def run_lookup(
     """执行查题主流程，并完成计费、日志与响应转换。"""
     started = time.time()
     result = lookup.query(query)
-    record_usage(platform, auth, request, query, result)
-    log_query(path, method, query, result, time.time() - started)
-    return JSONResponse(response_for_path(path, result))
+    elapsed_seconds = time.time() - started
+    token = record_usage(platform, auth, request, query, result, elapsed_seconds)
+    log_query(path, method, query, result, elapsed_seconds)
+    return JSONResponse(response_for_path(path, result, platform=platform, token=token))
 
 
-def response_for_path(path: str, result) -> dict:
+def response_for_path(
+    path: str,
+    result,
+    *,
+    platform: PlatformService | None = None,
+    token: dict | None = None,
+) -> dict:
     """按接口类型返回标准响应结构。"""
     if path == "/ocs/query":
+        threshold = low_confidence_threshold(platform, token)
+        if result.ok and threshold > 0 and float(result.confidence) < threshold:
+            return to_ocs_low_confidence_response(result, threshold=threshold)
         return to_ocs_response(result)
     return result.to_api_dict()
 
@@ -102,10 +112,25 @@ def log_query(path: str, method: str, query: QuestionQuery, result, elapsed_seco
         )
 
 
-def base_url_from_request(request: Request) -> str:
-    """根据请求头推导当前服务的基础 URL。"""
-    host = request.headers.get("Host") or "127.0.0.1:8765"
-    return f"http://{host}"
+def base_url_from_request(request: Request, platform: PlatformService | None = None) -> str:
+    """根据请求头与平台协议配置推导当前服务的基础 URL。"""
+    config = platform.get_system_config() if platform is not None else {}
+    host = (
+        request.headers.get("X-Forwarded-Host")
+        or request.headers.get("Host")
+        or "127.0.0.1:8765"
+    )
+    if str(config.get("smart_proto_enabled", "true")).lower() in {"0", "false", "no", "off"}:
+        proto = str(config.get("custom_proto_header") or "http").lower()
+    else:
+        proto = (
+            request.headers.get("X-Forwarded-Proto")
+            or request.url.scheme
+            or str(config.get("custom_proto_header") or "http")
+        ).lower()
+    if proto not in {"http", "https"}:
+        proto = "http"
+    return f"{proto}://{host}"
 
 
 def base_url_from_headers(headers) -> str:
@@ -137,24 +162,22 @@ def record_usage(
     request: Request,
     query: QuestionQuery,
     result,
-) -> None:
+    elapsed_seconds: float,
+) -> dict | None:
     """记录本次调用的积分消耗与审计日志。"""
     user = current_user(request)
     token = platform.resolve_token(authorization_bearer(request))
     if user is None and token is None:
-        return
+        return None
     if user is None and token is not None:
         user = auth.resolve_user_by_id(token["user_id"])
     if user is None:
-        return
-    if platform.has_active_subscription(str(user["user_id"])):
+        return token
+    points_cost = platform.calculate_points_cost(str(result.resolution_mode))
+    try:
+        auth.consume_points(str(user["username"]), points_cost)
+    except AuthError:
         points_cost = 0
-    else:
-        points_cost = platform.calculate_points_cost(str(result.resolution_mode))
-        try:
-            auth.consume_points(str(user["username"]), points_cost)
-        except AuthError:
-            points_cost = 0
     platform.record_usage(
         user_id=str(user["user_id"]),
         username=str(user["username"]),
@@ -166,7 +189,37 @@ def record_usage(
         confidence=float(result.confidence),
         provider=str(result.debug.get("provider") or ""),
         points_cost=points_cost,
+        elapsed_ms=round(max(0.0, elapsed_seconds) * 1000, 2),
     )
+    return token
+
+
+def low_confidence_threshold(
+    platform: PlatformService | None, token: dict | None
+) -> float:
+    """读取当前 API Key 是否要求拒绝低置信度答案。"""
+
+    if not token or not bool(token.get("reject_low_confidence")):
+        return 0.0
+    threshold = float_value(token.get("min_answer_confidence"), default=0.0)
+    if threshold > 0:
+        return min(max(threshold, 0.0), 1.0)
+    if platform is None:
+        return 0.95
+    runtime_config = platform.get_llm_runtime_config()
+    return min(
+        max(float_value(runtime_config.get("llm_cache_min_confidence"), default=0.95), 0.0),
+        1.0,
+    )
+
+
+def float_value(value: object, *, default: float) -> float:
+    """安全解析浮点数。"""
+
+    try:
+        return float(str(value))
+    except (TypeError, ValueError):
+        return default
 
 
 def count_by_key(items: list[dict], key: str) -> dict[str, int]:
@@ -180,7 +233,7 @@ def count_by_key(items: list[dict], key: str) -> dict[str, int]:
 
 def build_daily_trend(logs: list[dict], days: int) -> list[dict]:
     """按天聚合查询次数与积分消耗。"""
-    buckets: dict[str, dict[str, int]] = {}
+    buckets: dict[str, dict[str, object]] = {}
     now = time.time()
     for offset in range(days):
         day_ts = now - ((days - offset - 1) * 86400)
@@ -190,8 +243,10 @@ def build_daily_trend(logs: list[dict], days: int) -> list[dict]:
         day = time.strftime("%Y-%m-%d", time.localtime(float(log["created_at"])))
         if day not in buckets:
             continue
-        buckets[day]["query_count"] += 1
-        buckets[day]["points_used"] += int(log["points_cost"])
+        buckets[day]["query_count"] = int(str(buckets[day]["query_count"])) + 1
+        buckets[day]["points_used"] = int(str(buckets[day]["points_used"])) + int(
+            log["points_cost"]
+        )
     return list(buckets.values())
 
 

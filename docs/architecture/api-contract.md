@@ -262,9 +262,17 @@
 
 ```json
 {
-  "description": "我的 OCS"
+  "description": "我的 OCS",
+  "reject_low_confidence": false,
+  "min_answer_confidence": 0.0
 }
 ```
+
+说明：
+
+- `reject_low_confidence` 默认为 `false`，保持旧 API Key 行为兼容。
+- `min_answer_confidence` 为 `0.0` 时使用系统默认信任线；设置为 `0.8` 等值时，该 API Key 会拒绝低于阈值的 OCS 自动回填。
+- 被拒绝的低置信度 OCS 响应返回 `code=1`、`message=低信任度答案未作答`，`data.answer=null`，并在 `data.ai.error_code` 中标记 `LOW_CONFIDENCE_ANSWER`。
 
 响应：
 
@@ -276,7 +284,9 @@
     "token_id": "t_001",
     "key_mask": "sk_stqb_xx...abcd",
     "description": "我的 OCS",
-    "status": "active"
+    "status": "active",
+    "reject_low_confidence": false,
+    "min_answer_confidence": 0.0
   },
   "ocs_config": {
     "name": "Local Study Question Bank",
@@ -291,6 +301,33 @@
 #### `POST /tokens/{token_id}/revoke`
 
 吊销当前用户自己的 API 令牌。
+
+### 4.3.1 题库管理
+
+#### `GET /questions`
+
+- 角色：`admin` / `superadmin`
+- 权限：`questions:read`
+- 数据源：数据库题库表，而不是当前进程内存索引。
+- 查询参数：
+  - `keyword`：搜索题干、选项、答案、解析、来源、标签和 AI 元数据答案文本。
+  - `type`：题型筛选。
+  - `source`：来源筛选。
+  - `status`：状态筛选，支持 `active`、`trusted`、`low_confidence`、`pending`、`conflict`。
+  - `page` / `limit`：分页。
+
+#### `PATCH /questions/{question_id}`
+
+- 角色：`admin` / `superadmin`
+- 权限：`questions:write`
+- 用于编辑题干、选项、答案、解析等题库字段。
+- 状态为 `active` / `trusted` 的记录会同步进入运行时本地索引；`low_confidence`、`pending`、`conflict` 等记录只在题库管理可见，不自动命中作答。
+
+#### `POST /questions/reindex`
+
+- 角色：`admin` / `superadmin`
+- 权限：`questions:write`
+- 从数据库重新构建当前进程内存索引，只载入 `active` 与 `trusted` 记录。
 
 ### 4.4 积分计费
 
@@ -315,6 +352,16 @@
 }
 ```
 
+#### `GET /points-policy`
+
+- 角色：`admin` / `superadmin`
+- 权限：`billing:read`
+- 返回前端表单需要展示或预填的积分策略：
+  - `default_user_points`
+  - `invite_bonus_points`
+  - `manual_grant_default_points`
+  - `redeem_code_default_points`
+
 ### 4.5 系统配置
 
 #### `GET /system-config`
@@ -327,21 +374,14 @@
 
 - 角色：仅 `superadmin`
 - 支持字段：
-  - `llm_base_url`
-  - `llm_model`
-  - `llm_api_key`
-  - `llm_stream`
-  - `llm_fallback`
-  - `llm_explain`
-  - `web_search_provider`
-  - `search_proxy`
-  - `llm_proxy`
-  - `google_search_api_key`
-  - `google_search_cx`
-  - `baidu_search_api_key`
-  - `ai_cache_enabled`
-  - `ai_cache_min_confidence`
-  - `ai_cache_min_confirmations`
+  - `default_user_points`
+  - `invite_bonus_points`
+  - `manual_grant_default_points`
+  - `redeem_code_default_points`
+  - `smart_proto_enabled`
+  - `custom_proto_header`
+
+大模型推理、联网搜索和 LLM 学习缓存配置统一通过 `/llm-runtime-config` 维护，系统配置页不再展示这些字段。
 
 响应包含：
 
@@ -349,23 +389,24 @@
 {
   "ok": true,
   "config": {
-    "llm_base_url": "https://classbot.top/v1",
-    "llm_model": "gpt-5.4",
-    "llm_api_key_configured": true
+    "smart_proto_enabled": "true",
+    "custom_proto_header": "http",
+    "default_user_points": "100",
+    "invite_bonus_points": "0",
+    "manual_grant_default_points": "100",
+    "redeem_code_default_points": "50"
   },
   "reload_required": false
 }
 ```
 
-### 4.6 钱包
+### 4.6 钱包与积分兑换
 
 #### `GET /wallet/me`
 
 返回当前用户钱包摘要：
 
 - `points`
-- `subscription_active`
-- `subscription_expires_at`
 
 #### `GET /wallet/orders`
 
@@ -382,7 +423,7 @@
 #### `POST /wallet/grants`
 
 - 角色：`admin` / `superadmin`
-- 用于手动充值 / 订阅发放
+- 用于手动发放积分
 
 请求：
 
@@ -394,16 +435,6 @@
 }
 ```
 
-或：
-
-```json
-{
-  "username": "alice",
-  "kind": "subscription",
-  "subscription_days": 30
-}
-```
-
 #### `GET /wallet/redeem-codes`
 
 - 角色：`admin` / `superadmin`
@@ -412,7 +443,7 @@
 #### `POST /wallet/redeem-codes`
 
 - 角色：`admin` / `superadmin`
-- 创建兑换码
+- 创建积分兑换码
 
 请求：
 
@@ -424,20 +455,10 @@
 }
 ```
 
-或：
-
-```json
-{
-  "kind": "subscription",
-  "subscription_days": 30,
-  "max_uses": 1
-}
-```
-
 #### `POST /wallet/redeem`
 
 - 角色：登录用户
-- 使用兑换码兑换额度
+- 使用兑换码兑换积分
 
 请求：
 
@@ -461,6 +482,7 @@
 
 - `user` 只能查看自己的日志
 - `admin` / `superadmin` 可查看所有用户日志
+- 每条日志包含 `elapsed_ms`，表示服务端查题链路耗时（毫秒），旧历史记录可能为 `0.0`
 
 ### 4.8 反馈
 
@@ -518,6 +540,10 @@
 - `notifications_preview`
 - `service_status`
 
+说明：
+
+- `overview.avg_response_seconds` 由今日 `usage_logs.elapsed_ms > 0` 的真实样本计算，保留两位小数；没有真实样本时返回 `0.0`
+
 ### 4.11 排行统计
 
 #### `GET /dashboard/rankings`
@@ -559,12 +585,11 @@
 
 #### `POST /import-scripts/generate`
 
-根据接入点和模板生成导入脚本。
+根据 Token 与目标平台生成导入脚本。
 
 请求建议字段：
 
 - `name`
-- `integration_id`
 - `token_id`
 - `target`
 - `include_test_snippet`
@@ -577,55 +602,54 @@
 
 删除脚本记录。
 
-### 4.14 接入管理
+### 4.14 大模型运行配置
 
-#### `GET /integrations`
+#### `GET /llm-runtime-config`
 
-返回接入点列表。
+- 角色：`admin`、`superadmin`
+- 权限：`llm:read`
+- 返回大模型答题、联网搜索和 LLM 学习缓存运行配置。
+- `web_search_configs` 返回 JSON 字符串数组；其中单个搜索引擎的 `api_key` 不会返回给前端，只返回 `api_key_configured` 表示是否已保存密钥。
 
-#### `POST /integrations`
+#### `PATCH /llm-runtime-config`
 
-创建接入点。
+- 角色：仅 `superadmin`
+- 权限：`llm:write`
+- 支持字段：
+  - `llm_fallback`
+  - `llm_explain`
+  - `allow_known_rules`
+  - `no_local_bank_mode`
+  - `search_first`
+  - `self_consistency_repeats`
+  - `web_search_provider`
+  - `web_search_configs`
+  - `search_proxy`
+  - `llm_proxy`
+  - `google_search_api_key`
+  - `google_search_cx`
+  - `baidu_search_api_key`
+  - `llm_cache_enabled`
+  - `llm_cache_min_confidence`
+  - `llm_cache_min_confirmations`
+- `web_search_configs` 用于维护联网搜索引擎列表；编辑已有配置时若 `api_key` 留空且 `api_key_configured=true`，后端保留原密钥，运行时内部仍使用未脱敏配置构建搜索 provider。
 
-#### `GET /integrations/{integration_id}`
+#### AI 答题沉淀规则
 
-返回接入点详情。
+- LLM fallback 只要返回结构化答案内容，就会写入数据库题库表，题库管理可见。
+- `confidence >= llm_cache_min_confidence` 且答案通过安全校验时，状态为 `trusted`，可进入本地索引并在后续自动命中。
+- 低于信任线的答案状态为 `low_confidence`，题库管理可见，但不进入自动命中索引，下次仍允许继续走 AI 兜底。
+- `no_local_bank_mode` 只控制是否读取本地题库，不阻止 AI 答题记录落库。
 
-#### `PATCH /integrations/{integration_id}`
+### 4.15 接入管理
 
-更新接入点。
+接入管理功能已下线，后端不再注册 `/integrations` 系列接口。导入脚本仍通过 `/import-scripts` 管理，普通用户复制 OCS 接入配置使用 `/tokens/import-script`。
 
-#### `DELETE /integrations/{integration_id}`
+### 4.16 兑换管理
 
-删除接入点。
+管理员通过前端 `/redeem-management` 使用现有钱包接口管理积分兑换码、手动发放积分并查看全平台积分流水。后端不再提供 `/quota-packages` 套餐目录接口。
 
-#### `POST /integrations/{integration_id}/test`
-
-测试当前接入配置。
-
-#### `GET /integrations/{integration_id}/status`
-
-返回接入点状态、最近错误与最近调用摘要。
-
-### 4.15 套餐目录
-
-#### `GET /quota-packages`
-
-返回套餐目录。
-
-#### `POST /quota-packages`
-
-创建套餐。
-
-#### `PATCH /quota-packages/{package_id}`
-
-更新套餐。
-
-#### `DELETE /quota-packages/{package_id}`
-
-下架套餐。
-
-### 4.16 角色权限
+### 4.17 角色权限
 
 #### `GET /roles`
 

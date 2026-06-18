@@ -1,0 +1,181 @@
+@import 'tailwindcss';
+
+/* 暗色模式由 <html> 上的 .dark 类驱动（支持 亮色/暗色/跟随系统 三态） */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * 答题接入管理平台 · 设计令牌
+ * 运行时变量（--c-*）在 :root / .dark 两套主题下给出实际色值，
+ * 再由 @theme inline 映射成 Tailwind 工具类（bg-canvas / text-ink / border-line ...），
+ * 因此所有页面无需改类名即可自动随主题切换。
+ */
+:root {
+  /* 品牌色（亮色主题） */
+  --c-brand-50: #eef2ff;
+  --c-brand-100: #e0e7ff;
+  --c-brand-200: #c7d2fe;
+  --c-brand-300: #a5b4fc;
+  --c-brand-400: #818cf8;
+  --c-brand-500: #6366f1;
+  --c-brand-600: #4f6ef7;
+  --c-brand-700: #4338ca;
+
+  --c-accent-500: #3b82f6;
+  --c-accent-600: #2563eb;
+
+  --c-success: #22c55e;
+  --c-warning: #f59e0b;
+  --c-danger: #ef4444;
+
+  /* 语义中性色（亮色主题） */
+  --c-canvas: #f4f6fb;
+  --c-card: #ffffff;
+  --c-card-soft: #f8fafc;
+  --c-line: #eceef3;
+  --c-line-strong: #dfe3ec;
+  --c-ink: #1f2330;
+  --c-ink-soft: #5b6275;
+  --c-ink-muted: #9aa1b2;
+
+  --radius-card: 16px;
+  --shadow-card: 0 1px 2px rgba(31, 35, 48, 0.04), 0 8px 24px rgba(31, 35, 48, 0.05);
+  --shadow-float: 0 12px 32px rgba(79, 110, 247, 0.18);
+}
+
+/* 暗色主题：覆盖语义中性色与品牌浅色，保证深色背景下的层次与对比度 */
+.dark {
+  --c-brand-50: #1e2148;
+  --c-brand-100: #262a5a;
+  --c-brand-200: #313674;
+  --c-brand-300: #4853a0;
+
+  --c-canvas: #0f1117;
+  --c-card: #171a23;
+  --c-card-soft: #1d212c;
+  --c-line: #262a36;
+  --c-line-strong: #333847;
+  --c-ink: #e8eaf0;
+  --c-ink-soft: #a8aec0;
+  --c-ink-muted: #6b7185;
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-float: 0 12px 32px rgba(0, 0, 0, 0.45);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-brand-50: var(--c-brand-50);
+  --color-brand-100: var(--c-brand-100);
+  --color-brand-200: var(--c-brand-200);
+  --color-brand-300: var(--c-brand-300);
+  --color-brand-400: var(--c-brand-400);
+  --color-brand-500: var(--c-brand-500);
+  --color-brand-600: var(--c-brand-600);
+  --color-brand-700: var(--c-brand-700);
+  --color-accent-500: var(--c-accent-500);
+  --color-accent-600: var(--c-accent-600);
+  --color-success: var(--c-success);
+  --color-warning: var(--c-warning);
+  --color-danger: var(--c-danger);
+  --color-canvas: var(--c-canvas);
+  --color-card: var(--c-card);
+  --color-card-soft: var(--c-card-soft);
+  --color-line: var(--c-line);
+  --color-line-strong: var(--c-line-strong);
+  --color-ink: var(--c-ink);
+  --color-ink-soft: var(--c-ink-soft);
+  --color-ink-muted: var(--c-ink-muted);
+
+  --font-sans:
+    'Inter', 'Noto Sans SC', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background: var(--c-canvas);
+  color: var(--c-ink);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* Element Plus 主色对齐品牌色（亮/暗共用） */
+:root {
+  --el-color-primary: #4f6ef7;
+  --el-color-primary-light-3: #7d92fa;
+  --el-color-primary-light-5: #a5b4fc;
+  --el-color-primary-light-7: #c7d2fe;
+  --el-color-primary-light-8: #dbe2fe;
+  --el-color-primary-light-9: #eef2ff;
+  --el-color-primary-dark-2: #4338ca;
+  --el-border-radius-base: 10px;
+  --el-font-family: var(--font-sans);
+}
+
+/* 通用卡片 */
+.app-card {
+  background: var(--c-card);
+  border: 1px solid var(--c-line);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+}
+
+/* 滚动条 */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--c-line-strong);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+/* 路由切换淡入 */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.18s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+/* 移动端：弹窗按视口宽度自适应，避免固定宽度溢出 */
+@media (max-width: 640px) {
+  .el-dialog {
+    width: 92vw !important;
+    max-width: 92vw !important;
+  }
+  .el-message-box {
+    width: 88vw !important;
+    max-width: 88vw !important;
+  }
+}
+
+/* 移动端抽屉遮罩淡入 */
+.drawer-fade-enter-active,
+.drawer-fade-leave-active {
+  transition: opacity 0.2s ease;
+}
+.drawer-fade-enter-from,
+.drawer-fade-leave-to {
+  opacity: 0;
+}
+.drawer-slide-enter-active,
+.drawer-slide-leave-active {
+  transition: transform 0.22s ease;
+}
+.drawer-slide-enter-from,
+.drawer-slide-leave-to {
+  transform: translateX(-100%);
+}

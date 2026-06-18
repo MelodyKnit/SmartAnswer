@@ -1,4 +1,4 @@
-"""平台钱包、订阅与兑换码业务辅助。"""
+"""平台钱包与积分兑换码业务辅助。"""
 
 from __future__ import annotations
 
@@ -6,31 +6,22 @@ import secrets
 import time
 
 from ..auth import AuthError
-from .records import RedeemCodeRecord, WalletOrderRecord, WalletProfileRecord
+from .records import RedeemCodeRecord, WalletOrderRecord
 
 
 def wallet_summary_payload(
-    wallet_profiles: dict[str, WalletProfileRecord],
     *,
     user_id: str,
     username: str,
     points: int,
 ) -> dict:
-    """汇总用户钱包与订阅状态。"""
-    profile = wallet_profiles.get(user_id) or WalletProfileRecord(user_id=user_id)
+    """汇总用户钱包状态。"""
+
     return {
         "user_id": user_id,
         "username": username,
         "points": points,
-        "subscription_active": profile.subscription_expires_at > time.time(),
-        "subscription_expires_at": profile.subscription_expires_at,
     }
-
-
-def has_active_subscription_profile(wallet_profiles: dict[str, WalletProfileRecord], user_id: str) -> bool:
-    """判断用户当前是否拥有有效订阅。"""
-    profile = wallet_profiles.get(user_id)
-    return bool(profile and profile.subscription_expires_at > time.time())
 
 
 def create_redeem_code_entry(
@@ -39,20 +30,19 @@ def create_redeem_code_entry(
     created_by: str,
     kind: str,
     points: int = 0,
-    subscription_days: int = 0,
     max_uses: int = 1,
     expires_at: float = 0.0,
 ) -> dict:
-    """创建积分或订阅兑换码。"""
-    if kind not in {"points", "subscription"}:
-        raise AuthError("INVALID_INPUT", "兑换码类型必须为 points 或 subscription", http_status=400)
+    """创建积分兑换码。"""
+
+    if kind != "points":
+        raise AuthError("INVALID_INPUT", "兑换码类型仅支持 points", http_status=400)
     code = "rc_" + secrets.token_urlsafe(10)
     redeem = RedeemCodeRecord(
         code_id=secrets.token_hex(12),
         code=code,
-        kind=kind,
+        kind="points",
         points=max(0, int(points)),
-        subscription_days=max(0, int(subscription_days)),
         max_uses=max(1, int(max_uses)),
         used_uses=0,
         status="active",
@@ -66,11 +56,13 @@ def create_redeem_code_entry(
 
 def list_redeem_code_entries(redeem_codes: dict[str, RedeemCodeRecord]) -> list[dict]:
     """列出全部兑换码。"""
-    return [code.to_dict() for code in sorted(redeem_codes.values(), key=lambda item: item.created_at, reverse=True)]
+    return [
+        code.to_dict()
+        for code in sorted(redeem_codes.values(), key=lambda item: item.created_at, reverse=True)
+    ]
 
 
 def grant_wallet_entry(
-    wallet_profiles: dict[str, WalletProfileRecord],
     wallet_orders: list[WalletOrderRecord],
     *,
     user_id: str,
@@ -78,38 +70,31 @@ def grant_wallet_entry(
     created_by: str,
     kind: str,
     points: int = 0,
-    subscription_days: int = 0,
     source: str = "manual_credit",
     source_id: str | None = None,
 ) -> dict:
-    """手动发放积分或订阅权益，并写入钱包流水。"""
-    if kind not in {"points", "subscription"}:
-        raise AuthError("INVALID_INPUT", "钱包类型必须为 points 或 subscription", http_status=400)
-    profile = wallet_profiles.get(user_id) or WalletProfileRecord(user_id=user_id)
-    wallet_profiles[user_id] = profile
+    """手动发放积分，并写入钱包流水。"""
+
+    if kind != "points":
+        raise AuthError("INVALID_INPUT", "钱包类型仅支持 points", http_status=400)
     order = WalletOrderRecord(
         order_id=secrets.token_hex(12),
         user_id=user_id,
         username=username,
-        kind=kind,
-        points_delta=max(0, int(points)) if kind == "points" else 0,
-        subscription_days=max(0, int(subscription_days)) if kind == "subscription" else 0,
+        kind="points",
+        points_delta=max(0, int(points)),
         source=source,
         source_id=source_id,
         status="completed",
         created_by=created_by,
         created_at=time.time(),
     )
-    if kind == "subscription" and order.subscription_days > 0:
-        start = max(profile.subscription_expires_at, time.time())
-        profile.subscription_expires_at = start + (order.subscription_days * 86400)
     wallet_orders.append(order)
     return order.to_dict()
 
 
 def redeem_code_entry(
     redeem_codes: dict[str, RedeemCodeRecord],
-    wallet_profiles: dict[str, WalletProfileRecord],
     wallet_orders: list[WalletOrderRecord],
     *,
     code: str,
@@ -135,14 +120,12 @@ def redeem_code_entry(
     if redeem.used_uses >= redeem.max_uses:
         redeem.status = "exhausted"
     return grant_wallet_entry(
-        wallet_profiles,
         wallet_orders,
         user_id=user_id,
         username=username,
         created_by=created_by,
         kind=redeem.kind,
         points=redeem.points,
-        subscription_days=redeem.subscription_days,
         source="redeem_code",
         source_id=redeem.code_id,
     )

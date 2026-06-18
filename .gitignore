@@ -38,6 +38,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+src/study_qb_assistant/api/static/
 
 # --- 测试与代码静态分析缓存 ---
 .pytest_cache/

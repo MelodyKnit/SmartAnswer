@@ -6,6 +6,9 @@
     "method": "get",
     "type": "GM_xmlhttpRequest",
     "contentType": "json",
+    "headers": {
+      "Authorization": "Bearer {{TOKEN}}"
+    },
     "data": {
       "title": "${title}",
       "options": "${options}",

@@ -53,7 +53,9 @@ class UserRecord:
             email=(str(payload["email"]) if payload.get("email") else None),
             points=int(payload.get("points") or int(os.getenv("STQB_DEFAULT_USER_POINTS", "100"))),
             created_at=float(payload.get("created_at") or time.time()),
-            reset_token_hash=(str(payload["reset_token_hash"]) if payload.get("reset_token_hash") else None),
+            reset_token_hash=(
+                str(payload["reset_token_hash"]) if payload.get("reset_token_hash") else None
+            ),
             reset_expires_at=float(payload.get("reset_expires_at") or 0.0),
         )
 

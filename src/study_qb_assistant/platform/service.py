@@ -2,29 +2,77 @@
 
 from __future__ import annotations
 
+import json
 import secrets
 import time
 from pathlib import Path
 from threading import RLock
 
 from ..auth import AuthError
+from ..llm.config import service as llm_config_service
 from ..storage.platform_repository import SqlAlchemyPlatformRepository
-from .config import SYSTEM_CONFIG_ENV_MAP, SYSTEM_CONFIG_KEYS, SYSTEM_CONFIG_SECRET_KEYS
+from .config import (
+    LLM_RUNTIME_CONFIG_KEYS,
+    LLM_RUNTIME_ENV_MAP,
+    SYSTEM_CONFIG_DEFAULTS,
+    SYSTEM_CONFIG_ENV_MAP,
+    SYSTEM_CONFIG_KEYS,
+    SYSTEM_CONFIG_SECRET_KEYS,
+)
 from .records import (
     ApiTokenRecord,
     FeedbackRecord,
     ImportScriptRecord,
-    IntegrationRecord,
+    LlmCallTraceRecord,
     NotificationRecord,
-    QuotaPackageRecord,
     RedeemCodeRecord,
     RolePermissionRecord,
     UsageLogRecord,
     WalletOrderRecord,
-    WalletProfileRecord,
+)
+from .import_script_catalog import (
+    get_import_script_template,
+    load_import_script_templates,
+    render_import_script,
 )
 from .storage import hash_token, mask_token, public_token_dict
-from .wallet_ops import has_active_subscription_profile, wallet_summary_payload
+from .wallet_ops import wallet_summary_payload
+
+
+DEFAULT_ROLE_PERMISSIONS: dict[str, tuple[str, ...]] = {
+    "superadmin": (
+        "dashboard:all",
+        "users:write",
+        "roles:read",
+        "roles:write",
+        "system:read",
+        "system:write",
+        "billing:read",
+        "billing:write",
+        "wallet:changes:read",
+        "wallet:changes:write",
+        "import-scripts:read",
+        "import-scripts:write",
+        "questions:read",
+        "questions:write",
+        "llm:read",
+        "llm:write",
+    ),
+    "admin": (
+        "dashboard:all",
+        "users:write",
+        "roles:read",
+        "billing:read",
+        "wallet:changes:read",
+        "wallet:changes:write",
+        "import-scripts:read",
+        "import-scripts:write",
+        "questions:read",
+        "questions:write",
+        "llm:read",
+    ),
+    "user": ("dashboard:self", "tokens:self", "feedback:self"),
+}
 
 
 class PlatformService:
@@ -40,7 +88,21 @@ class PlatformService:
         self._lock = RLock()
         self.repository = SqlAlchemyPlatformRepository(path)
 
-    def create_token(self, *, user_id: str, description: str = "") -> tuple[str, dict]:
+    @staticmethod
+    def default_system_config() -> dict[str, str]:
+        """返回平台系统配置默认值。"""
+
+        return dict(SYSTEM_CONFIG_DEFAULTS)
+
+    def create_token(
+        self,
+        *,
+        user_id: str,
+        description: str = "",
+        quota_limit: int = -1,
+        reject_low_confidence: bool = False,
+        min_answer_confidence: float = 0.0,
+    ) -> tuple[str, dict]:
         """为指定用户创建新的 API 令牌。"""
         with self._lock:
             raw = "sk_stqb_" + secrets.token_urlsafe(24)
@@ -52,6 +114,9 @@ class PlatformService:
                 description=description.strip(),
                 status="active",
                 created_at=time.time(),
+                quota_limit=int(quota_limit),
+                reject_low_confidence=bool(reject_low_confidence),
+                min_answer_confidence=normalized_confidence(min_answer_confidence),
             )
             self.repository.save_token(record)
             return raw, public_token_dict(record)
@@ -59,7 +124,45 @@ class PlatformService:
     def list_tokens(self, *, user_id: str) -> list[dict]:
         """列出指定用户的全部 API 令牌。"""
         with self._lock:
-            return [public_token_dict(token) for token in self.repository.list_tokens(user_id=user_id)]
+            return [
+                public_token_dict(token) for token in self.repository.list_tokens(user_id=user_id)
+            ]
+
+    def token_import_script(
+        self,
+        *,
+        user_id: str,
+        base_url: str,
+        token_id: str | None = None,
+        template_id: str | None = None,
+    ) -> dict:
+        """为普通用户即时生成导入脚本和 OCS 题库配置。"""
+        tokens = self.repository.list_tokens(user_id=user_id)
+        if not tokens:
+            raise AuthError("TOKEN_REQUIRED", "请先创建密钥", http_status=404)
+        if token_id is None and len(tokens) > 1:
+            return {
+                "mode": "select_token",
+                "token_options": [public_token_dict(token) for token in tokens],
+            }
+        selected = (
+            tokens[0]
+            if token_id is None
+            else next((token for token in tokens if token.token_id == token_id), None)
+        )
+        if selected is None:
+            raise AuthError("TOKEN_NOT_FOUND", "令牌不存在", http_status=404)
+        template = get_import_script_template(template_id)
+        rendered = render_import_script(template, base_url)
+        return {
+            "mode": "direct",
+            "token_id": selected.token_id,
+            "token_option": public_token_dict(selected),
+            "script": rendered["content"],
+            "ocs_config": rendered["ocs_config"],
+            "template_id": template.template_id,
+            "requires_local_secret": True,
+        }
 
     def revoke_token(self, *, user_id: str, token_id: str) -> dict:
         """吊销用户自己的 API 令牌。"""
@@ -71,6 +174,36 @@ class PlatformService:
             self.repository.save_token(token)
             return public_token_dict(token)
 
+    def update_token(
+        self,
+        *,
+        user_id: str,
+        token_id: str,
+        description: str = "",
+        quota_limit: int = -1,
+        reject_low_confidence: bool = False,
+        min_answer_confidence: float = 0.0,
+    ) -> dict:
+        """更新用户自己的 API 令牌配置。"""
+        with self._lock:
+            token = self.repository.get_token(token_id)
+            if token is None or token.user_id != user_id:
+                raise AuthError("TOKEN_NOT_FOUND", "令牌不存在", http_status=404)
+            token.description = description.strip()
+            token.quota_limit = int(quota_limit)
+            token.reject_low_confidence = bool(reject_low_confidence)
+            token.min_answer_confidence = normalized_confidence(min_answer_confidence)
+            self.repository.save_token(token)
+            return public_token_dict(token)
+
+    def delete_token(self, *, user_id: str, token_id: str) -> None:
+        """删除用户自己的 API 令牌。"""
+        with self._lock:
+            token = self.repository.get_token(token_id)
+            if token is None or token.user_id != user_id:
+                raise AuthError("TOKEN_NOT_FOUND", "令牌不存在", http_status=404)
+            self.repository.delete_token(token_id)
+
     def resolve_token(self, raw_token: str | None) -> dict | None:
         """解析原始 Bearer 令牌，并记录最后使用时间。"""
         with self._lock:
@@ -79,6 +212,8 @@ class PlatformService:
             token = self.repository.find_token_by_hash(hash_token(raw_token))
             if token is None or token.status != "active":
                 return None
+            if token.quota_limit >= 0 and token.usage_count >= token.quota_limit:
+                raise AuthError("TOKEN_QUOTA_EXCEEDED", "API Key 调用额度已用完", http_status=401)
             token.last_used_at = time.time()
             token.usage_count += 1
             self.repository.save_token(token)
@@ -87,9 +222,9 @@ class PlatformService:
     def get_billing(self) -> dict:
         """读取当前积分计费配置。"""
         with self._lock:
-            current = {"local_hit": 1, "web_search": 2, "llm_fallback": 3}
-            current.update(self.repository.get_settings("billing", keys=set(current.keys())))
-            return {key: max(0, int(value)) for key, value in current.items()}
+            defaults = {"local_hit": 1, "web_search": 2, "llm_fallback": 3}
+            stored = self.repository.get_settings("billing", keys=set(defaults.keys()))
+            return {key: max(0, int(stored.get(key, default))) for key, default in defaults.items()}
 
     def set_billing(self, values: dict[str, int]) -> dict:
         """更新积分计费配置。"""
@@ -99,7 +234,9 @@ class PlatformService:
                 raise AuthError("INVALID_INPUT", f"不支持的积分项目: {key}", http_status=400)
             current[key] = max(0, int(value))
         with self._lock:
-            self.repository.replace_settings("billing", {key: str(value) for key, value in current.items()})
+            self.repository.replace_settings(
+                "billing", {key: str(value) for key, value in current.items()}
+            )
         return current
 
     def calculate_points_cost(self, resolution_mode: str) -> int:
@@ -111,22 +248,51 @@ class PlatformService:
             return billing["local_hit"]
         return billing["web_search"]
 
+    def system_points_value(self, key: str) -> int:
+        """读取非负整数型积分策略配置。"""
+
+        if key not in SYSTEM_CONFIG_KEYS:
+            raise AuthError("INVALID_INPUT", f"不支持的系统配置项: {key}", http_status=400)
+        raw = self.repository.get_settings("system_config", keys={key})
+        value = raw.get(key, SYSTEM_CONFIG_DEFAULTS.get(key, "0"))
+        try:
+            return max(0, int(str(value or "0").strip() or "0"))
+        except ValueError as exc:
+            raise AuthError("INVALID_INPUT", f"{key} 必须为非负整数", http_status=400) from exc
+
+    def get_default_user_points(self) -> int:
+        """返回新注册用户初始积分。"""
+
+        return self.system_points_value("default_user_points")
+
+    def get_invite_bonus(self) -> int:
+        """返回注册邀请码奖励积分。"""
+
+        return self.system_points_value("invite_bonus_points")
+
+    def get_points_policy(self) -> dict[str, int]:
+        """返回前端表单需要展示或预填的积分策略。"""
+
+        return {
+            "default_user_points": self.get_default_user_points(),
+            "invite_bonus_points": self.get_invite_bonus(),
+            "manual_grant_default_points": self.system_points_value(
+                "manual_grant_default_points"
+            ),
+            "redeem_code_default_points": self.system_points_value(
+                "redeem_code_default_points"
+            ),
+        }
+
     def wallet_summary(self, *, user_id: str, username: str, points: int) -> dict:
-        """汇总用户钱包与订阅状态。"""
+        """汇总用户钱包积分状态。"""
+
         with self._lock:
-            profile = self.repository.get_wallet_profile(user_id) or WalletProfileRecord(user_id=user_id)
             return wallet_summary_payload(
-                {user_id: profile},
                 user_id=user_id,
                 username=username,
                 points=points,
             )
-
-    def has_active_subscription(self, user_id: str) -> bool:
-        """判断用户当前是否拥有有效订阅。"""
-        with self._lock:
-            profile = self.repository.get_wallet_profile(user_id)
-            return has_active_subscription_profile({user_id: profile} if profile else {}, user_id)
 
     def record_usage(
         self,
@@ -141,6 +307,7 @@ class PlatformService:
         confidence: float,
         provider: str,
         points_cost: int,
+        elapsed_ms: float = 0.0,
     ) -> dict:
         """记录一次查题调用的审计日志。"""
         record = UsageLogRecord(
@@ -155,19 +322,48 @@ class PlatformService:
             confidence=confidence,
             points_cost=points_cost,
             provider=provider,
+            elapsed_ms=elapsed_ms,
             created_at=time.time(),
         )
         with self._lock:
             self.repository.save_usage_log(record)
         return record.to_dict()
 
-    def list_usage_logs(self, *, username: str | None = None, keyword: str = "", limit: int = 100) -> list[dict]:
+    def list_usage_logs(
+        self,
+        *,
+        username: str | None = None,
+        token_id: str = "",
+        keyword: str = "",
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict]:
         """按用户与关键词筛选使用日志。"""
         with self._lock:
             return [
                 item.to_dict()
-                for item in self.repository.list_usage_logs(username=username, keyword=keyword, limit=limit)
+                for item in self.repository.list_usage_logs(
+                    username=username,
+                    token_id=token_id,
+                    keyword=keyword,
+                    limit=limit,
+                    offset=offset,
+                )
             ]
+
+    def count_usage_logs(
+        self, *, username: str | None = None, token_id: str = "", keyword: str = ""
+    ) -> int:
+        """统计使用日志数量。"""
+
+        return len(
+            self.list_usage_logs(
+                username=username,
+                token_id=token_id,
+                keyword=keyword,
+                limit=5000,
+            )
+        )
 
     def create_feedback(
         self,
@@ -178,6 +374,7 @@ class PlatformService:
         title: str,
         content: str,
         image_urls: tuple[str, ...],
+        category: str = "answer",
     ) -> dict:
         """创建一条错题反馈记录。"""
         record = FeedbackRecord(
@@ -190,15 +387,99 @@ class PlatformService:
             image_urls=tuple(url.strip() for url in image_urls if url.strip()),
             status="open",
             created_at=time.time(),
+            category=category or "answer",
         )
         with self._lock:
             self.repository.save_feedback(record)
         return record.to_dict()
 
-    def list_feedbacks(self, *, username: str | None = None, limit: int = 100) -> list[dict]:
+    def list_feedbacks(
+        self,
+        *,
+        username: str | None = None,
+        status: str = "",
+        category: str = "",
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict]:
         """按用户过滤反馈列表。"""
         with self._lock:
-            return [item.to_dict() for item in self.repository.list_feedbacks(username=username, limit=limit)]
+            records = [
+                item.to_dict()
+                for item in self.repository.list_feedbacks(
+                    username=username,
+                    limit=max(1, min(int(limit) + max(0, int(offset)), 5000)),
+                )
+            ]
+        if status:
+            records = [item for item in records if item.get("status") == status]
+        if category:
+            records = [item for item in records if item.get("category") == category]
+        return records[max(0, int(offset)) : max(0, int(offset)) + max(1, int(limit))]
+
+    def count_feedbacks(
+        self,
+        *,
+        username: str | None = None,
+        status: str = "",
+        category: str = "",
+    ) -> int:
+        """统计反馈数量。"""
+
+        return len(
+            self.list_feedbacks(
+                username=username,
+                status=status,
+                category=category,
+                limit=5000,
+            )
+        )
+
+    def resolve_feedback(
+        self,
+        feedback_id: str,
+        *,
+        handled_by: str,
+        status: str = "resolved",
+        admin_note: str = "",
+        corrected_answer: str = "",
+        reward_points: int = 0,
+    ) -> tuple[dict, int]:
+        """处理用户反馈并返回奖励积分。
+
+        奖励积分按反馈记录中的累计奖励值补差额，避免管理员重复保存时重复发放。
+        """
+        normalized_status = (status or "resolved").strip().lower()
+        if normalized_status not in {"open", "processing", "resolved", "rejected"}:
+            raise AuthError("INVALID_FEEDBACK_STATUS", "反馈状态不合法", http_status=400)
+        normalized_reward_points = max(0, int(reward_points))
+        now = time.time()
+        with self._lock:
+            existing = self.repository.get_feedback(feedback_id)
+            if existing is None:
+                raise AuthError("FEEDBACK_NOT_FOUND", "反馈不存在", http_status=404)
+            stored_reward_points = (
+                max(existing.reward_points, normalized_reward_points)
+                if normalized_status == "resolved"
+                else existing.reward_points
+            )
+            record = self.repository.update_feedback_resolution(
+                feedback_id,
+                status=normalized_status,
+                admin_note=admin_note.strip(),
+                corrected_answer=corrected_answer.strip(),
+                reward_points=stored_reward_points,
+                handled_by=handled_by,
+                handled_at=now,
+            )
+            if record is None:
+                raise AuthError("FEEDBACK_NOT_FOUND", "反馈不存在", http_status=404)
+        granted = (
+            max(0, record.reward_points - existing.reward_points)
+            if normalized_status == "resolved"
+            else 0
+        )
+        return record.to_dict(), granted
 
     def create_notification(
         self,
@@ -224,17 +505,32 @@ class PlatformService:
             self.repository.save_notification(record)
         return record.to_dict()
 
-    def list_notifications(self, *, user_id: str | None = None, status: str = "", limit: int = 20) -> list[dict]:
+    def list_notifications(
+        self, *, user_id: str | None = None, status: str = "", limit: int = 20
+    ) -> list[dict]:
         """列出消息中心通知。"""
         with self._lock:
-            return [item.to_dict() for item in self.repository.list_notifications(user_id=user_id, status=status, limit=limit)]
+            return [
+                item.to_dict()
+                for item in self.repository.list_notifications(
+                    user_id=user_id, status=status, limit=limit
+                )
+            ]
 
-    def mark_notification_read(self, notification_id: str, *, read: bool = True) -> dict:
+    def mark_notification_read(
+        self,
+        notification_id: str,
+        *,
+        user_id: str | None = None,
+        read: bool = True,
+    ) -> dict:
         """标记单条消息的已读状态。"""
         with self._lock:
             record = self.repository.get_notification(notification_id)
             if record is None:
                 raise AuthError("NOTIFICATION_NOT_FOUND", "消息不存在", http_status=404)
+            if record.user_id not in {None, user_id}:
+                raise AuthError("NOTIFICATION_FORBIDDEN", "无权操作该消息", http_status=403)
             record.read = bool(read)
             self.repository.save_notification(record)
             return record.to_dict()
@@ -243,7 +539,9 @@ class PlatformService:
         """批量标记消息为已读。"""
         count = 0
         with self._lock:
-            for record in self.repository.list_notifications(user_id=user_id, status="unread", limit=500):
+            for record in self.repository.list_notifications(
+                user_id=user_id, status="unread", limit=500
+            ):
                 record.read = True
                 self.repository.save_notification(record)
                 count += 1
@@ -255,19 +553,18 @@ class PlatformService:
         created_by: str,
         kind: str,
         points: int = 0,
-        subscription_days: int = 0,
         max_uses: int = 1,
         expires_at: float = 0.0,
     ) -> dict:
-        """创建积分或订阅兑换码。"""
-        if kind not in {"points", "subscription"}:
-            raise AuthError("INVALID_INPUT", "兑换码类型必须为 points 或 subscription", http_status=400)
+        """创建积分兑换码。"""
+
+        if kind != "points":
+            raise AuthError("INVALID_INPUT", "兑换码类型仅支持 points", http_status=400)
         record = RedeemCodeRecord(
             code_id=secrets.token_hex(12),
             code="rc_" + secrets.token_urlsafe(10),
-            kind=kind,
+            kind="points",
             points=max(0, int(points)),
-            subscription_days=max(0, int(subscription_days)),
             max_uses=max(1, int(max_uses)),
             used_uses=0,
             status="active",
@@ -292,32 +589,26 @@ class PlatformService:
         created_by: str,
         kind: str,
         points: int = 0,
-        subscription_days: int = 0,
         source: str = "manual_credit",
         source_id: str | None = None,
     ) -> dict:
-        """手动发放积分或订阅权益，并写入钱包流水。"""
-        if kind not in {"points", "subscription"}:
-            raise AuthError("INVALID_INPUT", "钱包类型必须为 points 或 subscription", http_status=400)
+        """手动发放积分，并写入钱包流水。"""
+
+        if kind != "points":
+            raise AuthError("INVALID_INPUT", "钱包类型仅支持 points", http_status=400)
         with self._lock:
-            profile = self.repository.get_wallet_profile(user_id) or WalletProfileRecord(user_id=user_id)
             order = WalletOrderRecord(
                 order_id=secrets.token_hex(12),
                 user_id=user_id,
                 username=username,
-                kind=kind,
-                points_delta=max(0, int(points)) if kind == "points" else 0,
-                subscription_days=max(0, int(subscription_days)) if kind == "subscription" else 0,
+                kind="points",
+                points_delta=max(0, int(points)),
                 source=source,
                 source_id=source_id,
                 status="completed",
                 created_by=created_by,
                 created_at=time.time(),
             )
-            if kind == "subscription" and order.subscription_days > 0:
-                start = max(profile.subscription_expires_at, time.time())
-                profile.subscription_expires_at = start + (order.subscription_days * 86400)
-                self.repository.save_wallet_profile(profile)
             self.repository.save_wallet_order(order)
             return order.to_dict()
 
@@ -355,140 +646,183 @@ class PlatformService:
                 created_by=created_by,
                 kind=redeem.kind,
                 points=redeem.points,
-                subscription_days=redeem.subscription_days,
                 source="redeem_code",
                 source_id=redeem.code_id,
             )
 
-    def list_wallet_orders(self, *, username: str | None = None, limit: int = 100) -> list[dict]:
-        """按用户过滤钱包流水。"""
-        with self._lock:
-            return [item.to_dict() for item in self.repository.list_wallet_orders(username=username, limit=limit)]
-
-    def list_integrations(self) -> list[dict]:
-        """列出全部接入点。"""
-        with self._lock:
-            return [item.to_dict() for item in self.repository.list_integrations()]
-
-    def get_integration(self, integration_id: str) -> dict | None:
-        """读取单个接入点。"""
-        with self._lock:
-            record = self.repository.get_integration(integration_id)
-            return record.to_dict() if record else None
-
-    def create_integration(
+    def list_wallet_orders(
         self,
         *,
-        name: str,
-        platform: str,
-        base_url: str,
-        token_id: str | None,
-        status: str,
-        description: str,
-    ) -> dict:
-        """创建接入点。"""
-        now = time.time()
-        record = IntegrationRecord(
-            integration_id=secrets.token_hex(12),
-            name=name.strip(),
-            platform=(platform or "generic").strip(),
-            base_url=base_url.strip(),
-            token_id=token_id,
-            status=(status or "active").strip(),
-            description=description.strip(),
-            created_at=now,
-            updated_at=now,
+        username: str | None = None,
+        kind: str = "",
+        source: str = "",
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict]:
+        """按用户过滤钱包流水。"""
+        with self._lock:
+            return [
+                item.to_dict()
+                for item in self.repository.list_wallet_orders(
+                    username=username,
+                    kind=kind,
+                    source=source,
+                    limit=limit,
+                    offset=offset,
+                )
+            ]
+
+    def list_wallet_changes(
+        self,
+        *,
+        username: str | None = None,
+        kind: str = "",
+        source: str = "",
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict]:
+        """列出钱包变更流水，供管理端分页查看。"""
+
+        return self.list_wallet_orders(
+            username=username,
+            kind=kind,
+            source=source,
+            limit=limit,
+            offset=offset,
         )
-        with self._lock:
-            self.repository.save_integration(record)
-        return record.to_dict()
 
-    def update_integration(self, integration_id: str, values: dict[str, object]) -> dict:
-        """更新接入点。"""
-        with self._lock:
-            record = self.repository.get_integration(integration_id)
-            if record is None:
-                raise AuthError("INTEGRATION_NOT_FOUND", "接入点不存在", http_status=404)
-            for key, value in values.items():
-                if value is None:
-                    continue
-                if key == "token_id":
-                    setattr(record, key, value)
-                else:
-                    setattr(record, key, str(value).strip())
-            record.updated_at = time.time()
-            self.repository.save_integration(record)
-            return record.to_dict()
+    def count_wallet_orders(
+        self,
+        *,
+        username: str | None = None,
+        kind: str = "",
+        source: str = "",
+    ) -> int:
+        """统计钱包流水数量。"""
 
-    def delete_integration(self, integration_id: str) -> bool:
-        """删除接入点。"""
-        with self._lock:
-            return self.repository.delete_integration(integration_id)
-
-    def test_integration(self, integration_id: str) -> dict:
-        """测试接入点配置。"""
-        with self._lock:
-            record = self.repository.get_integration(integration_id)
-            if record is None:
-                raise AuthError("INTEGRATION_NOT_FOUND", "接入点不存在", http_status=404)
-            ok = bool(record.base_url and record.status == "active")
-            record.last_test_at = time.time()
-            record.last_test_status = "success" if ok else "failed"
-            record.last_error = "" if ok else "base_url missing or integration disabled"
-            self.repository.save_integration(record)
-            return {
-                "ok": ok,
-                "integration": record.to_dict(),
-                "message": "连接测试成功" if ok else "接入配置不完整或已禁用",
-            }
+        return len(
+            self.list_wallet_orders(
+                username=username,
+                kind=kind,
+                source=source,
+                limit=5000,
+            )
+        )
 
     def list_import_scripts(self) -> list[dict]:
         """列出全部导入脚本。"""
+        builtin_scripts = []
+        for template in load_import_script_templates():
+            item = render_import_script(template, "")
+            item["builtin"] = True
+            item["status"] = "active"
+            item["created_at"] = 0
+            item["updated_at"] = 0
+            builtin_scripts.append(item)
         with self._lock:
-            return [item.to_dict() for item in self.repository.list_import_scripts()]
+            custom_scripts = [item.to_dict() for item in self.repository.list_import_scripts()]
+        return [*builtin_scripts, *custom_scripts]
 
-    def get_import_script(self, script_id: str) -> dict | None:
+    def get_import_script(self, script_id: str, *, base_url: str = "") -> dict | None:
         """读取单个导入脚本。"""
+        try:
+            template = get_import_script_template(script_id)
+        except KeyError:
+            template = None
+        if template is not None:
+            payload = render_import_script(template, base_url)
+            payload["builtin"] = True
+            payload["status"] = "active"
+            payload["created_at"] = 0
+            payload["updated_at"] = 0
+            return payload
         with self._lock:
             record = self.repository.get_import_script(script_id)
-            return record.to_dict() if record else None
+            if record is None:
+                return None
+            payload = record.to_dict()
+            if base_url:
+                payload["base_url"] = base_url
+            return payload
+
+    def create_import_script(
+        self,
+        *,
+        name: str,
+        target: str,
+        content: str = "",
+        description: str = "",
+        script_template: str = "",
+        config_items: tuple[dict, ...] | list[dict] = (),
+        requires_token: bool = True,
+        tags: tuple[str, ...] | list[str] = (),
+        is_default: bool = False,
+        status: str = "active",
+        created_by: str = "",
+    ) -> dict:
+        """创建并保存导入脚本模板。"""
+        now = time.time()
+        script_content = content or script_template
+        record = ImportScriptRecord(
+            script_id=secrets.token_hex(12),
+            name=(name or "导入脚本").strip(),
+            integration_id=None,
+            token_id=None,
+            target=(target or "ocs").strip(),
+            content=script_content,
+            status=(status or "active").strip(),
+            created_at=now,
+            updated_at=now,
+            description=description.strip(),
+            requires_token=bool(requires_token),
+            tags=tuple(str(item).strip() for item in tags if str(item).strip()),
+            builtin=False,
+            is_default=bool(is_default),
+            ocs_config=tuple(dict(item) for item in config_items),
+        )
+        with self._lock:
+            self.repository.save_import_script(record)
+        return record.to_dict()
 
     def generate_import_script(
         self,
         *,
         name: str,
-        integration_id: str | None,
         token_id: str | None,
         target: str,
         include_test_snippet: bool,
     ) -> dict:
         """生成并保存导入脚本。"""
-        integration = self.repository.get_integration(integration_id) if integration_id else None
         token = self.repository.get_token(token_id) if token_id else None
         content_lines = [
             f"// {name or '导入脚本'}",
             f"// target: {target}",
         ]
-        if integration is not None:
-            content_lines.append(f"const baseUrl = '{integration.base_url}';")
         if token is not None:
             content_lines.append(f"const tokenId = '{token.token_id}';")
             content_lines.append(f"// token: {token.key_mask}")
         content_lines.append("export const config = { enabled: true };")
         if include_test_snippet:
-            content_lines.append("export function testConnection() { return Promise.resolve(true); }")
+            content_lines.append(
+                "export function testConnection() { return Promise.resolve(true); }"
+            )
         content = "\n".join(content_lines)
         now = time.time()
         record = ImportScriptRecord(
             script_id=secrets.token_hex(12),
             name=(name or "导入脚本").strip(),
-            integration_id=integration_id,
+            integration_id=None,
             token_id=token_id,
             target=(target or "ocs").strip(),
             content=content,
             status="active",
             created_at=now,
             updated_at=now,
+            description=f"{name or '导入脚本'} 自动生成模板",
+            requires_token=True,
+            tags=("generated", target or "ocs"),
+            builtin=False,
+            is_default=False,
         )
         with self._lock:
             self.repository.save_import_script(record)
@@ -496,87 +830,212 @@ class PlatformService:
 
     def delete_import_script(self, script_id: str) -> bool:
         """删除导入脚本。"""
+        try:
+            get_import_script_template(script_id)
+        except KeyError:
+            pass
+        else:
+            raise AuthError("BUILTIN_SCRIPT_READONLY", "内置导入脚本不能删除", http_status=400)
         with self._lock:
-            return self.repository.delete_import_script(script_id)
+            removed = self.repository.delete_import_script(script_id)
+        if not removed:
+            raise AuthError("SCRIPT_NOT_FOUND", "导入脚本不存在", http_status=404)
+        return True
 
-    def list_quota_packages(self) -> list[dict]:
-        """列出额度套餐。"""
-        with self._lock:
-            return [item.to_dict() for item in self.repository.list_quota_packages()]
+    def list_llm_models(self, *, reveal_secret: bool = False) -> list[dict]:
+        """列出所有大模型配置。"""
 
-    def create_quota_package(
+        return llm_config_service.list_llm_models(
+            self.repository,
+            self._lock,
+            reveal_secret=reveal_secret,
+        )
+
+    def get_llm_model(self, model_id: str, *, reveal_secret: bool = False) -> dict:
+        """读取单个大模型配置。"""
+
+        return llm_config_service.get_llm_model(
+            self.repository,
+            self._lock,
+            model_id,
+            reveal_secret=reveal_secret,
+        )
+
+    def create_llm_model(
         self,
         *,
         name: str,
-        kind: str,
-        points: int,
-        subscription_days: int,
-        price: float,
-        status: str,
-        description: str,
-        sort_order: int,
+        base_url: str,
+        model: str,
+        api_key: str = "",
+        role: str = "backup",
+        priority: int = 100,
+        stream: bool = True,
+        max_completion_tokens: int = 700,
+        timeout_seconds: float = 30.0,
+        status: str = "active",
     ) -> dict:
-        """创建额度套餐。"""
-        now = time.time()
-        record = QuotaPackageRecord(
-            package_id=secrets.token_hex(12),
-            name=name.strip(),
-            kind=(kind or "points").strip(),
-            points=max(0, int(points)),
-            subscription_days=max(0, int(subscription_days)),
-            price=max(0.0, float(price)),
-            status=(status or "active").strip(),
-            description=description.strip(),
-            sort_order=int(sort_order),
-            created_at=now,
-            updated_at=now,
+        """新增大模型配置。"""
+
+        return llm_config_service.create_llm_model(
+            self.repository,
+            self._lock,
+            name=name,
+            base_url=base_url,
+            model=model,
+            api_key=api_key,
+            role=role,
+            priority=priority,
+            stream=stream,
+            max_completion_tokens=max_completion_tokens,
+            timeout_seconds=timeout_seconds,
+            status=status,
         )
-        with self._lock:
-            self.repository.save_quota_package(record)
-        return record.to_dict()
 
-    def update_quota_package(self, package_id: str, values: dict[str, object]) -> dict:
-        """更新额度套餐。"""
-        with self._lock:
-            record = self.repository.get_quota_package(package_id)
-            if record is None:
-                raise AuthError("PACKAGE_NOT_FOUND", "套餐不存在", http_status=404)
-            for key, value in values.items():
-                if value is None:
-                    continue
-                if key in {"points", "subscription_days", "sort_order"}:
-                    setattr(record, key, int(value))
-                elif key == "price":
-                    setattr(record, key, float(value))
-                else:
-                    setattr(record, key, str(value).strip())
-            record.updated_at = time.time()
-            self.repository.save_quota_package(record)
-            return record.to_dict()
+    def update_llm_model(self, model_id: str, values: dict) -> dict:
+        """更新大模型配置。"""
 
-    def delete_quota_package(self, package_id: str) -> bool:
-        """删除额度套餐。"""
+        return llm_config_service.update_llm_model(
+            self.repository,
+            self._lock,
+            model_id,
+            values,
+        )
+
+    def delete_llm_model(self, model_id: str) -> bool:
+        """删除大模型配置。"""
+
+        return llm_config_service.delete_llm_model(self.repository, self._lock, model_id)
+
+    def active_llm_models(self):
+        """返回可参与主备链的大模型配置。"""
+
+        return llm_config_service.active_llm_models(self.repository, self._lock)
+
+    def save_llm_call_trace(self, payload: dict) -> None:
+        """落库一条 LLM 调用追溯，失败不影响答题主流程。"""
+
+        try:
+            record = LlmCallTraceRecord(
+                trace_id=str(payload.get("trace_id") or secrets.token_hex(12)),
+                request_id=str(payload.get("request_id") or ""),
+                phase=str(payload.get("phase") or ""),
+                model_id=str(payload.get("model_id") or payload.get("model_name") or ""),
+                model_name=str(payload.get("model_name") or payload.get("model_id") or ""),
+                base_url=str(payload.get("base_url") or ""),
+                provider=str(payload.get("provider") or ""),
+                question_title=str(payload.get("question_title") or ""),
+                prompt=str(payload.get("prompt") or payload.get("question_title") or ""),
+                evidence=json.dumps(payload.get("evidence") or [], ensure_ascii=False),
+                response_text=str(payload.get("response_text") or payload.get("response") or ""),
+                candidate_answer=(
+                    str(payload["candidate_answer"]) if payload.get("candidate_answer") else None
+                ),
+                confidence=float(payload.get("confidence") or 0.0),
+                ok=bool(payload.get("ok", True)),
+                error=str(payload.get("error") or ""),
+                elapsed_ms=float(payload.get("elapsed_ms") or payload.get("latency_ms") or 0.0),
+                created_at=float(payload.get("created_at") or time.time()),
+            )
+            self.repository.save_llm_call_trace(record)
+        except Exception:
+            return
+
+    def list_llm_call_traces(
+        self,
+        *,
+        request_id: str = "",
+        model_id: str = "",
+        phase: str = "",
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict]:
+        """按条件分页读取 LLM 调用追溯。"""
+
         with self._lock:
-            return self.repository.delete_quota_package(package_id)
+            return [
+                item.to_dict()
+                for item in self.repository.list_llm_call_traces(
+                    request_id=request_id,
+                    model_id=model_id,
+                    phase=phase,
+                    limit=limit,
+                    offset=offset,
+                )
+            ]
+
+    def count_llm_call_traces(
+        self,
+        *,
+        request_id: str = "",
+        model_id: str = "",
+        phase: str = "",
+    ) -> int:
+        """统计 LLM 调用追溯数量。"""
+
+        with self._lock:
+            return self.repository.count_llm_call_traces(
+                request_id=request_id,
+                model_id=model_id,
+                phase=phase,
+            )
+
+    def llm_call_stats(self) -> list[dict]:
+        """按模型聚合 LLM 调用统计。"""
+
+        with self._lock:
+            return self.repository.llm_call_stats()
+
+    def project_update_status(self, *, refresh_remote: bool = False) -> dict:
+        """返回项目更新状态。
+
+        为避免在 Web 请求里执行不透明的远程 Git 操作，当前只提供安全状态占位。
+        """
+
+        return {
+            "available": False,
+            "refresh_remote": bool(refresh_remote),
+            "current_version": "local",
+            "latest_version": "local",
+            "message": "当前部署未配置在线更新源，请通过代码仓库和部署流程更新。",
+        }
+
+    def apply_project_update(self) -> dict:
+        """拒绝在运行时直接执行项目更新。"""
+
+        raise AuthError(
+            "PROJECT_UPDATE_UNCONFIGURED",
+            "当前部署未配置安全的在线更新流程",
+            http_status=400,
+        )
 
     def list_role_permissions(self) -> list[dict]:
         """列出角色权限矩阵。"""
-        defaults = {
-            "superadmin": ("dashboard:all", "users:write", "roles:write", "system:write"),
-            "admin": ("dashboard:all", "users:write", "billing:read"),
-            "user": ("dashboard:self", "tokens:self", "feedback:self"),
-        }
         with self._lock:
             existing = {item.role_id: item for item in self.repository.get_role_permissions()}
             result: list[RolePermissionRecord] = []
-            for role_id, permissions in defaults.items():
+            allowed = self.allowed_role_permissions()
+            for role_id, permissions in DEFAULT_ROLE_PERMISSIONS.items():
+                record = existing.get(
+                    role_id,
+                    RolePermissionRecord(
+                        role_id=role_id, permissions=permissions, updated_at=0.0
+                    ),
+                )
                 result.append(
-                    existing.get(
-                        role_id,
-                        RolePermissionRecord(role_id=role_id, permissions=permissions, updated_at=0.0),
+                    RolePermissionRecord(
+                        role_id=record.role_id,
+                        permissions=tuple(item for item in record.permissions if item in allowed),
+                        updated_at=record.updated_at,
                     )
                 )
             return [item.to_dict() for item in result]
+
+    @staticmethod
+    def allowed_role_permissions() -> set[str]:
+        """返回当前系统真实生效的权限白名单。"""
+
+        return {item for values in DEFAULT_ROLE_PERMISSIONS.values() for item in values}
 
     def get_role_permissions(self, role_id: str) -> dict:
         """读取单个角色的权限矩阵。"""
@@ -586,28 +1045,50 @@ class PlatformService:
             raise AuthError("ROLE_NOT_FOUND", "角色不存在", http_status=404)
         return record
 
+    def role_permissions(self, role_id: str) -> set[str]:
+        """返回指定角色的权限集合。"""
+
+        record = self.get_role_permissions(role_id)
+        return set(record.get("permissions") or ())
+
     def set_role_permissions(self, role_id: str, permissions: tuple[str, ...]) -> dict:
         """更新角色权限矩阵。"""
+        if role_id not in DEFAULT_ROLE_PERMISSIONS:
+            raise AuthError("ROLE_NOT_FOUND", "角色不存在", http_status=404)
+        normalized = tuple(str(item).strip() for item in permissions if str(item).strip())
+        invalid = sorted(set(normalized) - self.allowed_role_permissions())
+        if invalid:
+            raise AuthError(
+                "INVALID_PERMISSION",
+                f"权限项不存在: {', '.join(invalid)}",
+                http_status=400,
+            )
         with self._lock:
-            self.repository.set_role_permissions(role_id, tuple(str(item).strip() for item in permissions if str(item).strip()), time.time())
+            self.repository.set_role_permissions(
+                role_id,
+                normalized,
+                time.time(),
+            )
         return self.get_role_permissions(role_id)
 
-    def dashboard_rankings(self, *, days: int = 1, limit: int = 10, dimension: str = "integration") -> list[dict]:
+    def dashboard_rankings(
+        self,
+        *,
+        days: int = 1,
+        limit: int = 10,
+        dimension: str = "provider",
+        username: str | None = None,
+    ) -> list[dict]:
         """构造工作台排行统计。"""
-        logs = self.list_usage_logs(limit=5000)
+        logs = self.list_usage_logs(username=username, limit=5000)
         since = time.time() - max(1, min(days, 365)) * 86400
         scoped = [log for log in logs if float(log["created_at"]) >= since]
         counters: dict[str, int] = {}
-        token_map = {}
-        if dimension == "integration":
-            for item in self.list_integrations():
-                if item.get("token_id"):
-                    token_map[str(item["token_id"])] = str(item["name"])
         for log in scoped:
-            if dimension == "integration":
-                label = token_map.get(str(log.get("token_id") or ""), str(log.get("provider") or "未归类接入"))
-            elif dimension == "question_type":
+            if dimension == "question_type":
                 label = str(log.get("question_type") or "unknown")
+            elif dimension == "provider":
+                label = str(log.get("provider") or "unknown")
             else:
                 label = str(log.get("username") or "unknown")
             counters[label] = counters.get(label, 0) + 1
@@ -617,36 +1098,116 @@ class PlatformService:
             for index, (label, count) in enumerate(ranked[: max(1, min(limit, 50))])
         ]
 
-    def dashboard_workbench(self, *, user_id: str, username: str, points: int) -> dict:
+    def dashboard_workbench(
+        self, *, user_id: str, username: str, points: int, role: str = "user"
+    ) -> dict:
         """构造工作台首页聚合数据。"""
         logs = self.list_usage_logs(username=username, limit=1000)
         today = time.time() - 86400
         today_logs = [log for log in logs if float(log["created_at"]) >= today]
-        success_rate = 100.0 if not today_logs else round(
-            sum(1 for log in today_logs if log.get("resolution_mode") != "model_error") / len(today_logs) * 100,
-            1,
+        success_rate = (
+            100.0
+            if not today_logs
+            else round(
+                sum(1 for log in today_logs if log.get("resolution_mode") != "model_error")
+                / len(today_logs)
+                * 100,
+                1,
+            )
         )
-        avg_response = 0.82
+        elapsed_samples = [
+            float(log.get("elapsed_ms") or 0.0)
+            for log in today_logs
+            if float(log.get("elapsed_ms") or 0.0) > 0
+        ]
+        avg_response = (
+            round(sum(elapsed_samples) / len(elapsed_samples) / 1000, 2)
+            if elapsed_samples
+            else 0.0
+        )
         distribution: dict[str, int] = {}
         for log in today_logs:
             question_type = str(log.get("question_type") or "unknown")
             distribution[question_type] = distribution.get(question_type, 0) + 1
         notifications = self.list_notifications(user_id=user_id, limit=5)
         wallet = self.wallet_summary(user_id=user_id, username=username, points=points)
-        ranking_preview = self.dashboard_rankings(days=1, limit=5, dimension="integration")
+        is_admin = role in {"admin", "superadmin"}
+        ranking_preview = self.dashboard_rankings(
+            days=1,
+            limit=5,
+            dimension="provider",
+            username=None if is_admin else username,
+        )
+        quick_actions = (
+            [
+                {
+                    "key": "create_api_key",
+                    "label": "创建API Key",
+                    "path": "/tokens",
+                    "action": "navigate",
+                    "requires_role": "user",
+                },
+                {
+                    "key": "copy_import_script",
+                    "label": "复制导入脚本",
+                    "path": "/tokens",
+                    "action": "copy_import_script",
+                    "requires_role": "user",
+                },
+                {
+                    "key": "interface_status",
+                    "label": "接口状态",
+                    "path": "/status",
+                    "action": "navigate",
+                    "requires_role": "user",
+                },
+                {
+                    "key": "usage_logs",
+                    "label": "使用记录",
+                    "path": "/usage-logs",
+                    "action": "navigate",
+                    "requires_role": "user",
+                },
+                {
+                    "key": "wallet",
+                    "label": "我的钱包",
+                    "path": "/wallet",
+                    "action": "navigate",
+                    "requires_role": "user",
+                },
+            ]
+            if not is_admin
+            else [
+                {
+                    "key": "create_api_key",
+                    "label": "创建API Key",
+                    "path": "/tokens",
+                    "action": "navigate",
+                    "requires_role": "user",
+                },
+                {
+                    "key": "generate_script",
+                    "label": "生成导入脚本",
+                    "path": "/import-scripts",
+                    "action": "navigate",
+                    "requires_role": "admin",
+                },
+                {
+                    "key": "interface_status",
+                    "label": "接口状态",
+                    "path": "/status",
+                    "action": "navigate",
+                    "requires_role": "user",
+                },
+            ]
+        )
         return {
             "hero": {
                 "title": "答题接入平台 全新上线",
                 "subtitle": "更稳定的接口服务，更便捷的接入体验，助力平台高效接入答题能力",
                 "badges": ["高可用保障", "快速接入", "安全合规"],
             },
-            "quick_actions": [
-                {"key": "create_api_key", "label": "创建API Key", "path": "/tokens"},
-                {"key": "generate_script", "label": "生成导入脚本", "path": "/import-scripts"},
-                {"key": "test_integration", "label": "测试连接", "path": "/integrations"},
-                {"key": "integration_manage", "label": "接入管理", "path": "/integrations"},
-                {"key": "interface_status", "label": "接口状态", "path": "/status"},
-            ],
+            "quick_actions": quick_actions,
             "overview": {
                 "today_calls": len(today_logs),
                 "success_rate": success_rate,
@@ -657,11 +1218,7 @@ class PlatformService:
             "question_distribution": distribution,
             "ranking_preview": ranking_preview,
             "notifications_preview": notifications,
-            "service_status": {
-                "api": "ok",
-                "search_provider": self.get_system_config().get("web_search_provider", ""),
-                "llm_model": self.get_system_config().get("llm_model", ""),
-            },
+            "service_status": self._dashboard_service_status(),
         }
 
     def _daily_trend(self, logs: list[dict], days: int) -> list[dict]:
@@ -676,10 +1233,23 @@ class PlatformService:
                 buckets[key] += 1
         return [{"date": key, "count": value} for key, value in buckets.items()]
 
+    def _dashboard_service_status(self) -> dict[str, str]:
+        """返回工作台服务状态摘要。"""
+
+        runtime_config = self.get_llm_runtime_config()
+        active_models = self.active_llm_models()
+        primary_model = next((item for item in active_models if item.role == "primary"), None)
+        first_model = primary_model or (active_models[0] if active_models else None)
+        return {
+            "api": "ok",
+            "search_provider": str(runtime_config.get("web_search_provider") or ""),
+            "llm_model": first_model.model if first_model else "",
+        }
+
     def get_system_config(self) -> dict:
         """读取系统运行配置，并对敏感项只暴露是否已配置。"""
         with self._lock:
-            raw = {key: "" for key in SYSTEM_CONFIG_KEYS}
+            raw = {key: SYSTEM_CONFIG_DEFAULTS.get(key, "") for key in SYSTEM_CONFIG_KEYS}
             raw.update(self.repository.get_settings("system_config", keys=set(SYSTEM_CONFIG_KEYS)))
             payload: dict[str, str | bool] = {}
             for key, value in raw.items():
@@ -689,13 +1259,60 @@ class PlatformService:
                     payload[key] = value
             return payload
 
+    def get_llm_runtime_config(self, *, reveal_secret: bool = False) -> dict:
+        """读取统一后的 LLM 答题运行时配置。"""
+
+        llm_config_service.migrate_legacy_llm_settings(
+            self.repository,
+            default_system_config=self.default_system_config(),
+        )
+        return llm_config_service.get_llm_runtime_config(
+            self.repository,
+            self._lock,
+            reveal_secret=reveal_secret,
+        )
+
+    def set_llm_runtime_config(self, values: dict[str, object]) -> dict:
+        """更新统一后的 LLM 答题运行时配置。"""
+
+        llm_config_service.migrate_legacy_llm_settings(
+            self.repository,
+            default_system_config=self.default_system_config(),
+        )
+        return llm_config_service.set_llm_runtime_config(
+            self.repository,
+            self._lock,
+            values,
+        )
+
+    def llm_runtime_env(self) -> dict[str, str]:
+        """把统一后的 LLM 答题配置转换为环境变量。"""
+
+        raw = self.repository.get_settings(
+            "llm_runtime_config",
+            keys=set(LLM_RUNTIME_CONFIG_KEYS),
+        )
+        return {
+            env_key: str(raw.get(config_key) or "").strip()
+            for config_key, env_key in LLM_RUNTIME_ENV_MAP.items()
+            if str(raw.get(config_key) or "").strip()
+        }
+
     def set_system_config(self, values: dict[str, object]) -> dict:
         """更新系统运行配置。"""
         normalized: dict[str, str] = {}
         for key, value in values.items():
             if key not in SYSTEM_CONFIG_KEYS:
                 raise AuthError("INVALID_INPUT", f"不支持的系统配置项: {key}", http_status=400)
-            normalized[key] = "" if value is None else str(value).strip()
+            text = "" if value is None else str(value).strip()
+            if key.endswith("_points"):
+                try:
+                    text = str(max(0, int(text or "0")))
+                except ValueError as exc:
+                    raise AuthError(
+                        "INVALID_INPUT", f"{key} 必须为非负整数", http_status=400
+                    ) from exc
+            normalized[key] = text
         with self._lock:
             self.repository.set_settings("system_config", normalized)
         return self.get_system_config()
@@ -703,8 +1320,19 @@ class PlatformService:
     def runtime_env(self) -> dict[str, str]:
         """把平台配置转换为运行时环境变量映射。"""
         raw = self.repository.get_settings("system_config", keys=set(SYSTEM_CONFIG_KEYS))
-        return {
+        env = {
             env_key: str(raw.get(config_key) or "").strip()
             for config_key, env_key in SYSTEM_CONFIG_ENV_MAP.items()
             if str(raw.get(config_key) or "").strip()
         }
+        env.update(self.llm_runtime_env())
+        return env
+
+
+def normalized_confidence(value: object) -> float:
+    """把用户配置的置信度阈值归一化到 0 到 1。"""
+
+    try:
+        return min(max(float(str(value or "0")), 0.0), 1.0)
+    except (TypeError, ValueError):
+        return 0.0

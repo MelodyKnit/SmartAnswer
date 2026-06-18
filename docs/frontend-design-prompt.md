@@ -16,8 +16,8 @@
 ## 1. 项目背景与现状（必须先读）
 
 - 后端：此条为历史前端任务约束，已被当前 FastAPI 迁移目标取代；现行后端 HTTP 层以 `src/study_qb_assistant/api/local_server.py` 的 FastAPI 应用为准，运行时由 uvicorn 提供。
-- 前端：单文件 `src/study_qb_assistant/api/static/index.html`（HTML+CSS+原生 JS，无构建步骤），由后端 `/`、`/dashboard` 路由直接读取返回。
-- 服务入口：`scripts/serve_local.py`，默认 `127.0.0.1:8765`。
+- 前端：此条为历史任务背景，当前已演进为 `src/website` 下的 Vue 3 + Vite 前端；涉及页面与字段联调时，应以现行 `src/website` 实现和 FastAPI 契约为准，而不是回退到无构建单文件方案。
+- 服务入口：`scripts/run.ps1` / `scripts/run.sh`（uvicorn 加载 `study_qb_assistant.runtime:create_runtime_app`），默认 `127.0.0.1:8765`。
 - 现有控制台已有：侧边栏导航、管理员/学生“角色切换”（**仅前端 class 切换，无真实鉴权**）、题库检索测试、API 密钥管理（localStorage 模拟）、推理配置、实时日志。
 - 现有 CORS 为 `Access-Control-Allow-Origin: *`。
 
@@ -31,16 +31,17 @@
      "service": "study-question-bank-assistant",
      "lookup": { "provider": "local-normalized-jsonl", "record_count": 123, "source_path": "...", "source_names": [], "source_licenses": [] },
      "model": { "configured": true, "provider": "openai-compatible", "fallback_enabled": true, "explain_local_matches": false, "model": "qwen2.5:7b", "stream": true, "max_completion_tokens": 700, "search_enabled": true, "search_provider": "web-search" },
-     "ai_answer_cache": { "enabled": true, "path": "...", "entry_count": 10, "statuses": {"trusted": 3, "pending": 5, "conflict": 2}, "min_confidence": 0.95, "min_confirmations": 2 }
+     "llm_answer_cache": { "enabled": true, "path": "...", "entry_count": 10, "statuses": {"trusted": 3, "pending": 5, "conflict": 2}, "min_confidence": 0.95, "min_confirmations": 2 }
    }
    ```
    - 现有前端错误地读 `data.index_records_loaded`（应为 `data.lookup.record_count`）、`data.llm_fallback_enabled`（应为 `data.model.fallback_enabled`）、`data.llm_model`（应为 `data.model.model`）、`data.llm_base_url`（后端**不返回** base_url，需移除或改用 `data.model.provider`）、`data.web_search_provider`（应为 `data.model.search_provider`）、`data.explain_local_matches`（应为 `data.model.explain_local_matches`）。
-   - “待审核数”可用 `data.ai_answer_cache.statuses.pending`；“本地题库量”用 `data.lookup.record_count`。
+   - “待审核数”可用 `data.llm.cache.statuses.pending`；“本地题库量”用 `data.lookup.record_count`。
    - “本地命中率”后端目前**无此字段**，不要再写死 94.2%，要么从 `/debug/recent` 事件里统计 resolution_mode 占比，要么显示“暂无数据”。
 
 2. `/debug/recent` 真实返回：`{ "ok": true, "events": [ { "ts": "2026-06-07T10:14:00+00:00", "event": "query", "title": "...", "answer": "B", "resolution_mode": "exact_match", "confidence": 0.99, "elapsed_ms": 3.2, "path": "/query", ... } ] }`
    - 每个事件是**扁平**结构：时间字段是 `ev.ts`（ISO 字符串，不是 `ev.timestamp` 秒级数字），类型是 `ev.event`（不是 `ev.event_type`），查询详情字段（`title`/`answer`/`resolution_mode`/`elapsed_ms`）直接在事件对象顶层，**不在** `ev.payload` 下。
    - 现有前端读 `ev.timestamp`、`ev.event_type`、`ev.payload.*` 全部错误，必须改对。
+   - 该接口当前仅允许 `admin` / `superadmin` 且需具备 `system:read` 权限，不应再假定普通用户可读取它来拼首页统计。
 
 3. `/query` 真实返回（`QueryResult.to_api_dict`）：
    ```json
@@ -86,10 +87,10 @@
 ## 4. 技术约束
 
 - 历史约束中的“后端限用标准库”已不再适用于当前 FastAPI 服务；密码哈希仍使用 `hashlib.pbkdf2_hmac`（加随机 `salt`，迭代≥200000）并禁止明文存储。
-- 前端保持**无构建**：纯 HTML+CSS+原生 JS。登录/注册可作为独立 HTML 文件（如 `static/login.html`、`static/register.html`），也可单页内路由切换，自行权衡，但都由后端静态返回。
+- 历史任务中的“前端无构建、纯 HTML+原生 JS”约束已失效；当前项目以前后端分离的 `Vue 3 + Vite` 前端为准。涉及登录、注册、控制台和字段联调时，应继续沿用 `src/website` 现有组件化实现，不再回退到单文件静态页方案。
 - 会话 token：推荐用后端签发的随机 token（`secrets.token_urlsafe`）存服务端内存/文件，前端存储优先 `Cookie`（`HttpOnly` 由后端 set-cookie 更安全）；若用 `localStorage` 要在代码注释里写明 XSS 风险。**不要把密码或长期密钥放进 URL 参数**。
 - 用户与平台状态当前已迁移到 `SQLAlchemy + SQLite`，默认数据库文件为 `data/runtime/study-qb.sqlite3`；若配置 `STQB_REDIS_URL`，会话与最近事件优先使用 Redis。不要再新增基于 `users.json` 的新逻辑。
-- 安全收尾：现有 CORS `*` 在带鉴权后是风险，登录态接口应收紧为同源或 `127.0.0.1`；不要在日志里打印密码/token（`runtime_log.py` 已有脱敏，扩展其敏感词即可）。
+- 安全收尾：不要在日志里打印密码/token（`logger` 包已有脱敏，扩展其敏感词即可）；`/debug/recent` 属于管理员调试接口，不可作为普通用户数据来源。
 - 不破坏现有逻辑：`AnswerService` / `LocalQuestionIndex` / `to_ocs_response` / OCS 配置生成等不得改坏；OCS 查询接口 `/ocs/query` 给浏览器脚本用，**鉴权方式要可配置**（见 §5.3），默认不要让现有无 token 的 OCS 客户端直接全挂。
 
 ---
@@ -147,6 +148,6 @@
 
 ## 8. 实现注意
 
-- 先读这些文件再动手：`src/study_qb_assistant/api/local_server.py`、`src/study_qb_assistant/api/static/index.html`、`src/study_qb_assistant/runtime_log.py`、`src/study_qb_assistant/ai_answer_cache.py`（参考原子写/Lock 风格）、`scripts/serve_local.py`、`src/study_qb_assistant/answering.py` 的 `status()`。
+- 先读这些文件再动手：`src/study_qb_assistant/api/local_server.py`、`src/study_qb_assistant/api/static/index.html`、`src/study_qb_assistant/logger/`、`src/study_qb_assistant/llm/cache/`（参考原子写/Lock 风格）、`scripts/run.ps1` / `scripts/run.sh`、`src/study_qb_assistant/answering.py` 的 `status()`。
 - 小步改、可回滚；不要顺手重构无关代码。
 - 任何破坏性或高风险操作（删库、改安全控制）前先停下说明。

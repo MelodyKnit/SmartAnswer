@@ -1,107 +1,133 @@
 # StudyQuestionBankAssistant
 
-本项目是一个本地题库检索服务，提供：
+This workspace is for a local question-bank and LLM study assistant. The current implementation provides a local HTTP service, normalized public benchmark question indexes, an OpenAI-compatible model provider, and an OCS-style source configuration.
 
-- `GET/POST /query`
-- `GET/POST /ocs/query`
-- `GET /configs/ocs-local-study-bank.json`
+## Goal
 
-服务端优先查本地题库，未命中时可选接入 OpenAI-compatible 大模型。运行时状态默认使用 SQLAlchemy + SQLite 持久化，并可选接入 Redis 处理会话和最近事件等高频状态。
+Build a stable, self-hostable foundation for:
 
-## 安装
+- question-bank ingestion
+- retrieval over structured or semi-structured question data
+- local or hosted OpenAI-compatible LLM answer generation with explanation and citation
+- manual review before any downstream use
 
-推荐使用 Conda：
+## Boundary
+
+This workspace is organized for compliant study and review scenarios. The intended output is a retrievable knowledge service and local assistant, not an auto-submit or exam-bypass workflow.
+
+## Current Status
+
+- dedicated project workspace and rules are established
+- public source research and source verification are documented
+- CMMLU and AGIEval MCQ were normalized into local JSONL indexes
+- local `/query` and OCS-style `/ocs/query` endpoints are implemented
+- OCS-style config is available as a static file and from the running service
+- OpenAI-compatible model fallback and explanation mode are implemented
+- unit, export, service, config-client, and mock-model acceptance checks pass
+
+## Preferred Architecture Direction
+
+The implemented path is a custom Python local service with pluggable sources and an OpenAI-compatible model provider. This avoids coupling the OCS config to any single model runtime.
+
+Recommended model options:
+
+1. Cloud OpenAI-compatible API
+   Best for answer quality and low local hardware requirements.
+2. Local OpenAI-compatible runtime such as Ollama, LM Studio, or vLLM
+   Best when privacy, offline use, or local control matters more.
+3. MaxKB or FastGPT integration later
+   Useful if a web admin UI and large-scale QA import workflow become more important than a lightweight service.
+
+## Documentation Map
+
+- Research notes: [docs/research.md](docs/research.md)
+- Architecture: [docs/architecture.md](docs/architecture.md)
+- API contract: [docs/api-contract.md](docs/api-contract.md)
+- Data sources: [docs/data-sources.md](docs/data-sources.md)
+- Normalized indexes: [docs/normalized-indexes.md](docs/normalized-indexes.md)
+- Source verification: [docs/source-verification.md](docs/source-verification.md)
+- Ingestion mapping: [docs/ingestion-mapping.md](docs/ingestion-mapping.md)
+- Stack decision: [docs/stack-decision.md](docs/stack-decision.md)
+- Environment setup: [docs/environment.md](docs/environment.md)
+- Local service: [docs/local-service.md](docs/local-service.md)
+- Model provider: [docs/model-provider.md](docs/model-provider.md)
+- External client adapter: [docs/external-client-adapter.md](docs/external-client-adapter.md)
+- OCS-style adapter: [docs/ocs-adapter.md](docs/ocs-adapter.md)
+- OCS usage runbook: [docs/ocs-usage-cn.md](docs/ocs-usage-cn.md)
+- Acceptance workflow: [docs/acceptance.md](docs/acceptance.md)
+- Delivery status: [docs/delivery-status.md](docs/delivery-status.md)
+- Implementation plan: [docs/implementation-plan.md](docs/implementation-plan.md)
+
+## Current Working Commands
+
+Create and activate the project environment:
 
 ```powershell
 conda env create -f environment.yml
 conda activate ai-study-qb
 ```
 
-## 配置
-
-基础运行配置：
+Copy local environment variables and fill your own secrets:
 
 ```powershell
-$env:STQB_DATABASE_PATH="data/runtime/study-qb.sqlite3"
-$env:STQB_REDIS_URL="redis://127.0.0.1:6379/0"
+Copy-Item .env.example .env
 ```
 
-也可以直接配置完整数据库 URL：
-
-```powershell
-$env:STQB_DATABASE_URL="sqlite:///data/runtime/study-qb.sqlite3"
-```
-
-可选模型配置放环境变量，不写进 OCS 配置：
-
-```powershell
-$env:STQB_LLM_BASE_URL="https://classbot.top/v1"
-$env:STQB_LLM_MODEL="gpt-5.4"
-$env:STQB_LLM_API_KEY="your-api-key"
-```
-
-也可以参考示例环境 file：
-
-- [.env.example](.env.example)
-
-如果只用本地题库，可以不配置模型变量；数据库默认回退到 SQLite 文件。
-
-## 运行
-
-启动服务：
+Start the FastAPI service:
 
 ```powershell
 .\scripts\run.ps1
 ```
 
-开发模式热重载：
+Development mode with reload:
 
 ```powershell
 .\scripts\run-dev.ps1
 ```
 
-如果希望题库未命中时调用模型：
+Bash equivalents are also available:
+
+```bash
+./scripts/run.sh
+./scripts/run-dev.sh
+```
+
+Enable an OpenAI-compatible model provider in `.env`:
+
+```dotenv
+STQB_LLM_BASE_URL=https://api.example.com/v1
+STQB_LLM_MODEL=your-model-name
+STQB_LLM_API_KEY=your-api-key
+```
+
+Run backend validation:
 
 ```powershell
-.\scripts\run.ps1
+pytest -q
+ruff check src tests
+mypy src\study_qb_assistant
 ```
 
-## OCS 配置
+Run frontend validation:
 
-运行后可直接在 OCS 中使用：
-
-- [configs/ocs-local-study-bank.json](configs/ocs-local-study-bank.json)
-
-或从接口获取：
-
-```text
-http://127.0.0.1:8765/configs/ocs-local-study-bank.json
+```powershell
+cd src\website
+npm install
+npm run build
 ```
 
-## 验证
+Install and run commit hooks:
 
-健康检查：
+```powershell
+pre-commit install
+pre-commit run --all-files
+```
+
+Quick API smoke checks:
 
 ```powershell
 Invoke-RestMethod -Uri "http://127.0.0.1:8765/healthz"
-```
-
-查看运行状态：
-
-```powershell
 Invoke-RestMethod -Uri "http://127.0.0.1:8765/status"
+Invoke-RestMethod -Uri "http://127.0.0.1:8765/configs/ocs-local-study-bank.json"
+Invoke-RestMethod -Uri "http://127.0.0.1:8765/ocs/query?title=示例题&type=single"
 ```
-
-运行测试：
-
-```powershell
-python -m pytest tests -q
-```
-
-## 说明
-
-- 提交仓库时不包含本地题库、运行日志、验证产物和私有密钥。
-- 项目内保留的是服务端实现和必要的开发/验证脚本，不提交临时用户脚本补丁。
-- 用户、平台配置、令牌、日志、钱包等运行时状态现在统一走 SQLAlchemy 存储。
-- 若配置了 `STQB_REDIS_URL`，会话与最近事件会优先使用 Redis；未配置时自动回退到内存实现。
-- 详细设计文档见 [docs](docs)。

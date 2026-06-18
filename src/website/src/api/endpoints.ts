@@ -1,0 +1,310 @@
+/** 平台业务接口封装。所有函数返回已解包的数据片段。 */
+import { api } from './http'
+import type {
+  ApiToken,
+  Billing,
+  DashboardSummary,
+  Feedback,
+  ImportScript,
+  LlmCallStat,
+  LlmCallTrace,
+  LlmModel,
+  LlmRuntimeConfig,
+  NotificationItem,
+  OcsConfig,
+  PointsPolicy,
+  QueryResultPayload,
+  QuestionRecord,
+  RankingItem,
+  RedeemCode,
+  RolePermission,
+  RuntimeEvent,
+  SystemConfig,
+  TokenImportScriptResponse,
+  User,
+  UsageLog,
+  WalletChange,
+  WalletOrder,
+  WalletSummary,
+  Workbench,
+} from './types'
+
+/* ---------------- 认证 ---------------- */
+export const authApi = {
+  register: (body: {
+    username: string
+    password: string
+    email?: string
+    invite_code?: string
+  }) => api.post<{ ok: true; user: User }>('/auth/register', body),
+  login: (body: { username: string; password: string; remember: boolean }) =>
+    api.post<{ ok: true; user: User; token: string; expires_in: number }>('/auth/login', body),
+  session: () => api.get<{ ok: true; user: User }>('/auth/session'),
+  logout: () => api.post<{ ok: true }>('/auth/logout'),
+  resetRequest: (username: string) =>
+    api.post<{ ok: true; message: string }>('/auth/reset-request', { username }),
+  resetConfirm: (body: { username: string; token: string; new_password: string }) =>
+    api.post<{ ok: true; message: string }>('/auth/reset-confirm', body),
+}
+
+/* ---------------- 用户中心 ---------------- */
+export const userApi = {
+  me: () => api.get<{ ok: true; user: User; billing: Billing; wallet: WalletSummary }>('/users/me'),
+  list: () => api.get<{ ok: true; users: User[] }>('/users'),
+  update: (username: string, body: { role?: string; points?: number; status?: string }) =>
+    api.patch<{ ok: true; user: User }>(`/users/${encodeURIComponent(username)}`, body),
+  updateProfile: (display_name: string) =>
+    api.patch<{ ok: true; user: User }>('/users/me/profile', { display_name }),
+  changePassword: (body: { old_password: string; new_password: string }) =>
+    api.post<{ ok: true; message: string }>('/users/me/password', body),
+  batchDelete: (usernames: string[]) =>
+    api.post<{ ok: true; deleted: string[]; skipped: { username: string; reason: string }[] }>(
+      '/users/batch-delete',
+      { usernames },
+    ),
+}
+
+/* ---------------- 在线搜题 ---------------- */
+export const queryApi = {
+  search: (body: { title: string; options?: string[]; type?: string }) =>
+    api.post<QueryResultPayload>('/query', body),
+}
+
+/* ---------------- 运行状态 / 系统日志 ---------------- */
+export const systemApi = {
+  status: () => api.get<Record<string, unknown>>('/status'),
+  recentEvents: () => api.get<{ ok: true; events: RuntimeEvent[] }>('/debug/recent'),
+}
+
+/* ---------------- API 令牌 ---------------- */
+export const tokenApi = {
+  list: () => api.get<{ ok: true; tokens: ApiToken[] }>('/tokens'),
+  create: (description: string, quotaLimit = -1, rejectLowConfidence = false, minAnswerConfidence = 0) =>
+    api.post<{ ok: true; token: string; token_info: ApiToken; ocs_config: OcsConfig }>('/tokens', {
+      description,
+      quota_limit: quotaLimit,
+      reject_low_confidence: rejectLowConfidence,
+      min_answer_confidence: minAnswerConfidence,
+    }),
+  revoke: (tokenId: string) =>
+    api.post<{ ok: true; token: ApiToken }>(`/tokens/${encodeURIComponent(tokenId)}/revoke`),
+  update: (tokenId: string, description: string, quotaLimit = -1, rejectLowConfidence = false, minAnswerConfidence = 0) =>
+    api.post<{ ok: true; token: ApiToken }>(`/tokens/${encodeURIComponent(tokenId)}`, {
+      description,
+      quota_limit: quotaLimit,
+      reject_low_confidence: rejectLowConfidence,
+      min_answer_confidence: minAnswerConfidence,
+    }),
+  delete: (tokenId: string) =>
+    api.delete<{ ok: true; message: string }>(`/tokens/${encodeURIComponent(tokenId)}`),
+  importScript: (tokenId?: string) =>
+    api.get<{ ok: true } & TokenImportScriptResponse>('/tokens/import-script', tokenId ? { token_id: tokenId } : {}),
+}
+
+/* ---------------- 使用记录 / 反馈 / 看板 ---------------- */
+export const usageApi = {
+  logs: (params: {
+    username?: string
+    keyword?: string
+    token_id?: string
+    page?: number
+    limit?: number
+  } = {}) =>
+    api.get<{ ok: true; logs: UsageLog[]; total: number }>('/usage-logs', params),
+  summary: (days = 30) =>
+    api.get<{ ok: true; summary: DashboardSummary }>('/dashboard/summary', { days }),
+}
+
+export const feedbackApi = {
+  list: (params: {
+    username?: string
+    status?: string
+    category?: string
+    page?: number
+    limit?: number
+  } = {}) =>
+    api.get<{ ok: true; feedbacks: Feedback[]; total: number }>('/feedback', params),
+  create: (body: {
+    usage_log_id?: string | null
+    category?: string
+    title: string
+    content: string
+    image_urls?: string[]
+  }) => api.post<{ ok: true; feedback: Feedback }>('/feedback', body),
+  resolve: (
+    feedbackId: string,
+    body: {
+      status?: string
+      admin_note?: string
+      corrected_answer?: string
+      reward_points?: number
+    },
+  ) =>
+    api.patch<{ ok: true; feedback: Feedback; granted_points: number }>(
+      `/feedback/${encodeURIComponent(feedbackId)}`,
+      body,
+    ),
+}
+
+/* ---------------- 工作台 / 排行 / 消息 ---------------- */
+export const dashboardApi = {
+  workbench: () => api.get<{ ok: true; workbench: Workbench }>('/dashboard/workbench'),
+  rankings: (params: { days?: number; limit?: number; dimension?: string } = {}) =>
+    api.get<{ ok: true; rankings: RankingItem[] }>('/dashboard/rankings', params),
+}
+
+export const notificationApi = {
+  list: (params: { status?: string; limit?: number } = {}) =>
+    api.get<{ ok: true; notifications: NotificationItem[] }>('/notifications', params),
+  read: (id: string) =>
+    api.post<{ ok: true; notification: NotificationItem }>(
+      `/notifications/${encodeURIComponent(id)}/read`,
+    ),
+  readAll: () => api.post<{ ok: true; count: number }>('/notifications/read-all'),
+}
+
+/* ---------------- 计费 / 系统配置 ---------------- */
+export const billingApi = {
+  get: () => api.get<{ ok: true; billing: Billing }>('/billing'),
+  update: (body: Partial<Billing>) => api.patch<{ ok: true; billing: Billing }>('/billing', body),
+  pointsPolicy: () => api.get<{ ok: true; points_policy: PointsPolicy }>('/points-policy'),
+}
+
+export const systemConfigApi = {
+  get: () => api.get<{ ok: true; config: SystemConfig }>('/system-config'),
+  update: (body: Record<string, string>) =>
+    api.patch<{ ok: true; config: SystemConfig; reload_required: boolean }>('/system-config', body),
+}
+
+/* ---------------- 钱包 / 兑换码 ---------------- */
+export const walletApi = {
+  me: () => api.get<{ ok: true; wallet: WalletSummary }>('/wallet/me'),
+  orders: (params: { source?: string; page?: number; limit?: number } = {}) =>
+    api.get<{ ok: true; orders: WalletOrder[]; total: number }>('/wallet/orders', params),
+  changes: (params: {
+    username?: string
+    kind?: string
+    source?: string
+    page?: number
+    limit?: number
+  } = {}) =>
+    api.get<{ ok: true; orders: WalletOrder[]; changes?: WalletChange[]; total: number }>(
+      '/wallet/changes',
+      params,
+    ),
+  grant: (body: { username: string; kind: 'points'; points: number }) =>
+    api.post<{ ok: true; order: WalletOrder }>('/wallet/grants', body),
+  redeemCodes: () => api.get<{ ok: true; redeem_codes: RedeemCode[] }>('/wallet/redeem-codes'),
+  createRedeemCode: (body: {
+    kind: 'points'
+    points: number
+    max_uses?: number
+    expires_at?: number
+  }) => api.post<{ ok: true; redeem_code: RedeemCode }>('/wallet/redeem-codes', body),
+  redeem: (code: string) =>
+    api.post<{ ok: true; order: WalletOrder; wallet: WalletSummary }>('/wallet/redeem', { code }),
+}
+
+/* ---------------- 导入脚本 ---------------- */
+export const importScriptApi = {
+  list: () => api.get<{ ok: true; scripts: ImportScript[] }>('/import-scripts'),
+  get: (id: string) =>
+    api.get<{ ok: true; script: ImportScript }>(`/import-scripts/${encodeURIComponent(id)}`),
+  create: (body: {
+    name: string
+    description?: string
+    target?: string
+    content?: string
+    script_template?: string
+    config_items?: Record<string, unknown>[]
+    ocs_config?: OcsConfig
+    requires_token?: boolean
+    tags?: string[]
+    is_default?: boolean
+    status?: string
+  }) => api.post<{ ok: true; script: ImportScript }>('/import-scripts', body),
+  generate: (body: {
+    name: string
+    token_id?: string | null
+    target: string
+    include_test_snippet: boolean
+  }) => api.post<{ ok: true; script: ImportScript }>('/import-scripts/generate', body),
+  remove: (id: string) => api.delete<{ ok: true }>(`/import-scripts/${encodeURIComponent(id)}`),
+}
+
+/* ---------------- 角色权限 ---------------- */
+export const roleApi = {
+  list: () => api.get<{ ok: true; roles: RolePermission[] }>('/roles'),
+  permissions: (roleId: string) =>
+    api.get<{ ok: true; role: RolePermission }>(
+      `/roles/${encodeURIComponent(roleId)}/permissions`,
+    ),
+  setPermissions: (roleId: string, permissions: string[]) =>
+    api.put<{ ok: true; role: RolePermission }>(
+      `/roles/${encodeURIComponent(roleId)}/permissions`,
+      { permissions },
+    ),
+}
+
+export const questionApi = {
+  list: (params: {
+    page?: number
+    limit?: number
+    keyword?: string
+    type?: string
+    source?: string
+    status?: string
+    subject?: string
+    topic?: string
+    question_type?: string
+  } = {}) =>
+    api.get<{
+      ok: true
+      total: number
+      page: number
+      limit: number
+      questions: QuestionRecord[]
+      all_types: string[]
+      all_sources: string[]
+    }>('/questions', params),
+  reindex: () => api.post<{ ok: true; indexed_count: number }>('/questions/reindex'),
+  update: (
+    questionId: string,
+    body: {
+      title_raw?: string
+      question_type?: string
+      options_raw?: string[]
+      answer_raw?: string
+      explanation?: string
+      subject?: string
+      tags?: string[]
+    },
+  ) =>
+    api.patch<{ ok: true; question: QuestionRecord }>(
+      `/questions/${encodeURIComponent(questionId)}`,
+      body,
+    ),
+}
+
+/* ---------------- 大模型配置 / 调用追溯 ---------------- */
+export const llmApi = {
+  runtimeConfig: () => api.get<{ ok: true; config: LlmRuntimeConfig }>('/llm-runtime-config'),
+  updateRuntimeConfig: (body: Record<string, string>) =>
+    api.patch<{ ok: true; config: LlmRuntimeConfig }>('/llm-runtime-config', body),
+  models: () => api.get<{ ok: true; models: LlmModel[] }>('/llm-models'),
+  createModel: (body: Record<string, unknown>) =>
+    api.post<{ ok: true; model: LlmModel }>('/llm-models', body),
+  updateModel: (modelId: string, body: Record<string, unknown>) =>
+    api.patch<{ ok: true; model: LlmModel }>(`/llm-models/${encodeURIComponent(modelId)}`, body),
+  deleteModel: (modelId: string) =>
+    api.delete<{ ok: true }>(`/llm-models/${encodeURIComponent(modelId)}`),
+  stats: () => api.get<{ ok: true; stats: LlmCallStat[] }>('/llm-stats'),
+  traces: (params: {
+    request_id?: string
+    model_id?: string
+    phase?: string
+    page?: number
+    limit?: number
+  } = {}) =>
+    api.get<{ ok: true; traces: LlmCallTrace[]; total: number }>('/llm-traces', params),
+}

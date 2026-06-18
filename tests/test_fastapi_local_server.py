@@ -2,23 +2,39 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, text
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
+from study_qb_assistant.answering import AnswerService  # noqa: E402
 from study_qb_assistant.api.local_server import create_app  # noqa: E402
 from study_qb_assistant.auth import AuthService  # noqa: E402
-from study_qb_assistant.models import CanonicalQuestionRecord  # noqa: E402
+from study_qb_assistant.models import CanonicalQuestionRecord, ModelAnswer, QuestionQuery  # noqa: E402
 from study_qb_assistant.platform import PlatformService  # noqa: E402
 from study_qb_assistant.search import LocalQuestionIndex  # noqa: E402
+from study_qb_assistant.storage import database as database_module  # noqa: E402
+from study_qb_assistant.storage.question_repository import SqlAlchemyQuestionRepository  # noqa: E402
+
+
+class LowConfidenceProvider:
+    """用于接口测试的低置信度模型提供者。"""
+
+    provider_name = "low-confidence-provider"
+
+    def answer(self, query: QuestionQuery) -> ModelAnswer:
+        """返回结构化但低置信度的答案。"""
+
+        return ModelAnswer("A", "公私合营", f"低置信度解析：{query.title}", 0.43)
 
 
 class FastAPILocalServerTests(unittest.TestCase):
@@ -30,21 +46,33 @@ class FastAPILocalServerTests(unittest.TestCase):
         return Path(directory) / "study-qb.sqlite3"
 
     def test_query_and_ocs_routes_keep_existing_wire_shape(self) -> None:
-        client = TestClient(create_app(_sample_index(), require_auth=False))
+        import os
 
-        health = client.get("/healthz")
-        query_get = client.get("/query", params={"title": "示例题", "type": "single"})
-        query_post = client.post(
-            "/query",
-            json={
-                "title": "示例题",
-                "options": ["正确项", "干扰项"],
-                "type": "single",
-                "request_id": "route-test",
-            },
-        )
-        ocs_get = client.get("/ocs/query", params={"title": "示例题", "type": "single"})
-        config = client.get("/configs/ocs-local-study-bank.json")
+        os.environ["STQB_OCS_API_KEYS"] = "wire-shape-key"
+        try:
+            client = TestClient(create_app(_sample_index(), require_auth=False))
+            key_headers = {"Authorization": "Bearer wire-shape-key"}
+
+            health = client.get("/healthz")
+            query_get = client.get(
+                "/query", params={"title": "示例题", "type": "single"}, headers=key_headers
+            )
+            query_post = client.post(
+                "/query",
+                json={
+                    "title": "示例题",
+                    "options": ["正确项", "干扰项"],
+                    "type": "single",
+                    "request_id": "route-test",
+                },
+                headers=key_headers,
+            )
+            ocs_get = client.get(
+                "/ocs/query", params={"title": "示例题", "type": "single"}, headers=key_headers
+            )
+            config = client.get("/configs/ocs-local-study-bank.json")
+        finally:
+            os.environ.pop("STQB_OCS_API_KEYS", None)
 
         self.assertEqual(health.json(), {"ok": True})
         self.assertEqual(query_get.json()["result"]["candidate_answer"], "A")
@@ -101,10 +129,18 @@ class FastAPILocalServerTests(unittest.TestCase):
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
             platform = PlatformService(database_path)
-            client = TestClient(create_app(_sample_index(), auth_service=auth, platform_service=platform, require_auth=True))
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                )
+            )
 
-            register = client.post("/auth/register", json={"username": "owner", "password": "password123"})
-            login = client.post("/auth/login", json={"username": "owner", "password": "password123"})
+            register = client.post(
+                "/auth/register", json={"username": "owner", "password": "password123"}
+            )
+            login = client.post(
+                "/auth/login", json={"username": "owner", "password": "password123"}
+            )
             token = login.json()["token"]
             headers = {"Authorization": f"Bearer {token}"}
 
@@ -115,74 +151,275 @@ class FastAPILocalServerTests(unittest.TestCase):
 
             raw_api_token = token_create.json()["token"]
             ocs_headers = {"Authorization": f"Bearer {raw_api_token}"}
-            query = client.get("/ocs/query", params={"title": "示例题", "type": "single"}, headers=ocs_headers)
+            query = client.get(
+                "/ocs/query", params={"title": "示例题", "type": "single"}, headers=ocs_headers
+            )
             usage_after = client.get("/usage-logs", headers=headers)
+            workbench_after_query = client.get("/dashboard/workbench", headers=headers)
+            unused_token_create = client.post(
+                "/tokens", json={"description": "未使用 OCS"}, headers=headers
+            )
+            usage_by_token = client.get(
+                "/usage-logs",
+                params={"token_id": token_create.json()["token_info"]["token_id"]},
+                headers=headers,
+            )
+            usage_by_legacy_api_key_id = client.get(
+                "/usage-logs",
+                params={"api_key_id": token_create.json()["token_info"]["token_id"]},
+                headers=headers,
+            )
+            usage_by_unused_token = client.get(
+                "/usage-logs",
+                params={"token_id": unused_token_create.json()["token_info"]["token_id"]},
+                headers=headers,
+            )
 
             feedback = client.post(
                 "/feedback",
-                json={"title": "答错了", "content": "这题答案不对", "image_urls": ["https://example.com/a.png"]},
+                json={
+                    "category": "wrong_answer",
+                    "title": "答错了",
+                    "content": "这题答案不对",
+                    "image_urls": ["https://example.com/a.png"],
+                },
                 headers=headers,
             )
             feedback_list = client.get("/feedback", headers=headers)
+            feedback_id = feedback.json()["feedback"]["feedback_id"]
+            points_before_feedback_resolve = client.get("/users/me", headers=headers)
+            feedback_resolve = client.patch(
+                f"/feedback/{feedback_id}",
+                json={
+                    "status": "resolved",
+                    "admin_note": "已修正题库",
+                    "corrected_answer": "B",
+                    "reward_points": 20,
+                },
+                headers=headers,
+            )
+            feedback_list_after_resolve = client.get("/feedback", headers=headers)
+            points_after_feedback_resolve = client.get("/users/me", headers=headers)
+            feedback_resolve_repeat = client.patch(
+                f"/feedback/{feedback_id}",
+                json={
+                    "status": "resolved",
+                    "admin_note": "重复保存",
+                    "corrected_answer": "B",
+                    "reward_points": 20,
+                },
+                headers=headers,
+            )
+            points_after_feedback_repeat = client.get("/users/me", headers=headers)
             billing_get = client.get("/billing", headers=headers)
             billing_patch = client.patch("/billing", json={"llm_fallback": 9}, headers=headers)
             wallet_me = client.get("/wallet/me", headers=headers)
-            wallet_orders_before = client.get("/wallet/orders", headers=headers)
+            wallet_orders_after_feedback = client.get("/wallet/orders", headers=headers)
             redeem_code_create = client.post(
                 "/wallet/redeem-codes",
                 json={"kind": "points", "points": 25, "max_uses": 1},
                 headers=headers,
             )
-            redeem = client.post("/wallet/redeem", json={"code": redeem_code_create.json()["redeem_code"]["code"]}, headers=headers)
+            subscription_code_rejected = client.post(
+                "/wallet/redeem-codes",
+                json={"kind": "subscription", "subscription_days": 30, "max_uses": 1},
+                headers=headers,
+            )
+            subscription_grant_rejected = client.post(
+                "/wallet/grants",
+                json={"username": "owner", "kind": "subscription", "subscription_days": 30},
+                headers=headers,
+            )
+            redeem = client.post(
+                "/wallet/redeem",
+                json={"code": redeem_code_create.json()["redeem_code"]["code"]},
+                headers=headers,
+            )
             wallet_orders_after = client.get("/wallet/orders", headers=headers)
             system_config_patch = client.patch(
                 "/system-config",
-                json={"llm_base_url": "https://example.com/v1", "llm_api_key": "secret-key"},
+                json={
+                    "smart_proto_enabled": "false",
+                    "custom_proto_header": "https",
+                    "default_user_points": "150",
+                    "invite_bonus_points": "30",
+                    "manual_grant_default_points": "88",
+                    "redeem_code_default_points": "66",
+                },
                 headers=headers,
             )
             system_config_get = client.get("/system-config", headers=headers)
+            ocs_config_after_proto_change = client.get(
+                "/configs/ocs-local-study-bank.json",
+                headers={**headers, "Host": "example.com"},
+            )
+            points_policy_get = client.get("/points-policy", headers=headers)
+            llm_model_create = client.post(
+                "/llm-models",
+                json={
+                    "name": "主力模型",
+                    "base_url": "https://llm.example.com/v1",
+                    "model": "gpt-test",
+                    "api_key": "model-secret-key",
+                    "role": "primary",
+                },
+                headers=headers,
+            )
+            llm_models = client.get("/llm-models", headers=headers)
+            platform.save_llm_call_trace(
+                {
+                    "request_id": "req-evidence",
+                    "phase": "web_search",
+                    "model_id": "duckduckgo",
+                    "model_name": "DuckDuckGo",
+                    "evidence": [
+                        {
+                            "title": "证据标题",
+                            "url": "https://example.com/evidence",
+                            "snippet": "证据摘要",
+                        }
+                    ],
+                }
+            )
+            llm_traces = client.get("/llm-traces", headers=headers)
+            plain_register = client.post(
+                "/auth/register",
+                json={"username": "plain", "password": "password123"},
+            )
+            invited_register = client.post(
+                "/auth/register",
+                json={
+                    "username": "invited",
+                    "password": "password123",
+                    "invite_code": "demo-code",
+                },
+            )
 
         self.assertTrue(register.json()["ok"])
         self.assertTrue(me.json()["ok"])
         self.assertEqual(me.json()["user"]["role"], "superadmin")
         self.assertTrue(token_create.json()["ok"])
+        self.assertIsInstance(token_create.json()["ocs_config"], list)
+        self.assertEqual(token_create.json()["ocs_config"][0]["type"], "GM_xmlhttpRequest")
         self.assertEqual(len(token_list.json()["tokens"]), 1)
         self.assertEqual(len(usage_before.json()["logs"]), 0)
         self.assertEqual(query.status_code, 200)
         self.assertGreaterEqual(len(usage_after.json()["logs"]), 1)
+        self.assertGreater(usage_after.json()["logs"][0]["elapsed_ms"], 0)
+        self.assertNotEqual(
+            workbench_after_query.json()["workbench"]["overview"]["avg_response_seconds"], 0.82
+        )
+        self.assertEqual(usage_by_token.json()["total"], 1)
+        self.assertEqual(usage_by_legacy_api_key_id.json()["total"], 1)
+        self.assertEqual(usage_by_unused_token.json()["total"], 0)
         self.assertTrue(feedback.json()["ok"])
+        self.assertEqual(feedback.json()["feedback"]["category"], "wrong_answer")
         self.assertEqual(len(feedback_list.json()["feedbacks"]), 1)
+        self.assertEqual(feedback_list.json()["feedbacks"][0]["category"], "wrong_answer")
+        self.assertTrue(feedback_resolve.json()["ok"])
+        self.assertEqual(feedback_resolve.json()["granted_points"], 20)
+        resolved_feedback = feedback_list_after_resolve.json()["feedbacks"][0]
+        self.assertEqual(resolved_feedback["admin_note"], "已修正题库")
+        self.assertEqual(resolved_feedback["corrected_answer"], "B")
+        self.assertEqual(resolved_feedback["reward_points"], 20)
+        self.assertEqual(resolved_feedback["handled_by"], "owner")
+        self.assertGreater(resolved_feedback["handled_at"], 0)
+        self.assertEqual(
+            points_after_feedback_resolve.json()["user"]["points"],
+            points_before_feedback_resolve.json()["user"]["points"] + 20,
+        )
+        self.assertEqual(feedback_resolve_repeat.json()["granted_points"], 0)
+        self.assertEqual(
+            points_after_feedback_repeat.json()["user"]["points"],
+            points_after_feedback_resolve.json()["user"]["points"],
+        )
         self.assertEqual(billing_get.json()["billing"]["llm_fallback"], 3)
         self.assertEqual(billing_patch.json()["billing"]["llm_fallback"], 9)
         self.assertTrue(wallet_me.json()["ok"])
-        self.assertEqual(len(wallet_orders_before.json()["orders"]), 0)
+        self.assertNotIn("subscription_active", wallet_me.json()["wallet"])
+        self.assertNotIn("subscription_expires_at", wallet_me.json()["wallet"])
+        self.assertEqual(len(wallet_orders_after_feedback.json()["orders"]), 1)
+        self.assertEqual(wallet_orders_after_feedback.json()["orders"][0]["source"], "feedback_reward")
+        self.assertEqual(wallet_orders_after_feedback.json()["orders"][0]["points_delta"], 20)
+        self.assertNotIn("subscription_days", redeem_code_create.json()["redeem_code"])
+        self.assertEqual(subscription_code_rejected.status_code, 422)
+        self.assertEqual(subscription_grant_rejected.status_code, 422)
         self.assertTrue(redeem.json()["ok"])
-        self.assertGreaterEqual(len(wallet_orders_after.json()["orders"]), 1)
+        self.assertGreaterEqual(len(wallet_orders_after.json()["orders"]), 2)
+        self.assertNotIn("subscription_days", wallet_orders_after.json()["orders"][0])
         self.assertFalse(system_config_patch.json()["reload_required"])
-        self.assertEqual(system_config_get.json()["config"]["llm_base_url"], "https://example.com/v1")
-        self.assertTrue(system_config_get.json()["config"]["llm_api_key_configured"])
+        self.assertEqual(system_config_get.json()["config"]["smart_proto_enabled"], "false")
+        self.assertEqual(system_config_get.json()["config"]["custom_proto_header"], "https")
+        self.assertNotIn("llm_base_url", system_config_get.json()["config"])
+        self.assertNotIn("ai_cache_enabled", system_config_get.json()["config"])
+        self.assertIn("https://example.com/ocs/query", ocs_config_after_proto_change.text)
+        self.assertEqual(system_config_get.json()["config"]["default_user_points"], "150")
+        self.assertEqual(points_policy_get.json()["points_policy"]["manual_grant_default_points"], 88)
+        self.assertEqual(points_policy_get.json()["points_policy"]["redeem_code_default_points"], 66)
+        self.assertTrue(llm_model_create.json()["model"]["api_key_configured"])
+        self.assertEqual(llm_model_create.json()["model"]["api_key"], "******")
+        self.assertTrue(llm_models.json()["models"][0]["api_key_configured"])
+        self.assertEqual(llm_models.json()["models"][0]["api_key"], "******")
+        self.assertEqual(llm_traces.json()["traces"][0]["evidence"][0]["title"], "证据标题")
+        self.assertEqual(plain_register.json()["user"]["points"], 150)
+        self.assertEqual(invited_register.json()["user"]["points"], 180)
 
     def test_admin_can_manage_users_but_regular_user_cannot_patch_billing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
             platform = PlatformService(database_path)
-            client = TestClient(create_app(_sample_index(), auth_service=auth, platform_service=platform, require_auth=True))
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                )
+            )
 
             client.post("/auth/register", json={"username": "boss", "password": "password123"})
-            super_headers = {"Authorization": f"Bearer {client.post('/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"}
+            super_headers = {
+                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
+            }
             client.post("/auth/register", json={"username": "alice", "password": "password123"})
             client.post("/auth/register", json={"username": "bob", "password": "password123"})
-            promote_admin = client.patch("/users/alice", json={"role": "admin"}, headers=super_headers)
-            admin_headers = {"Authorization": f"Bearer {client.post('/auth/login', json={'username': 'alice', 'password': 'password123'}).json()['token']}"}
-            user_headers = {"Authorization": f"Bearer {client.post('/auth/login', json={'username': 'bob', 'password': 'password123'}).json()['token']}"}
+            promote_admin = client.patch(
+                "/users/alice", json={"role": "admin"}, headers=super_headers
+            )
+            admin_headers = {
+                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'alice', 'password': 'password123'}).json()['token']}"
+            }
+            user_headers = {
+                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'bob', 'password': 'password123'}).json()['token']}"
+            }
 
             users = client.get("/users", headers=admin_headers)
-            patch_points_ok = client.patch("/users/bob", json={"points": 250}, headers=admin_headers)
-            patch_role_forbidden = client.patch("/users/bob", json={"role": "admin"}, headers=admin_headers)
+            patch_points_ok = client.patch(
+                "/users/bob", json={"points": 250}, headers=admin_headers
+            )
+            patch_role_forbidden = client.patch(
+                "/users/bob", json={"role": "admin"}, headers=admin_headers
+            )
             patch_forbidden = client.patch("/billing", json={"local_hit": 5}, headers=user_headers)
-            system_forbidden = client.patch("/system-config", json={"llm_model": "x"}, headers=admin_headers)
-            disable_ok = client.patch("/users/bob", json={"status": "disabled"}, headers=admin_headers)
+            system_forbidden = client.patch(
+                "/system-config", json={"llm_model": "x"}, headers=admin_headers
+            )
+            redeem_code_create = client.post(
+                "/wallet/redeem-codes",
+                json={"kind": "points", "points": 10, "max_uses": 1},
+                headers=admin_headers,
+            )
+            wallet_grant_ok = client.post(
+                "/wallet/grants",
+                json={"username": "bob", "kind": "points", "points": 5},
+                headers=admin_headers,
+            )
+            wallet_grant_admin_forbidden = client.post(
+                "/wallet/grants",
+                json={"username": "alice", "kind": "points", "points": 5},
+                headers=admin_headers,
+            )
+            disable_ok = client.patch(
+                "/users/bob", json={"status": "disabled"}, headers=admin_headers
+            )
 
         self.assertEqual(promote_admin.status_code, 200)
         self.assertEqual(users.status_code, 200)
@@ -191,64 +428,278 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(patch_role_forbidden.status_code, 403)
         self.assertEqual(patch_forbidden.status_code, 403)
         self.assertEqual(system_forbidden.status_code, 403)
+        self.assertEqual(redeem_code_create.status_code, 200)
+        self.assertEqual(wallet_grant_ok.status_code, 200)
+        self.assertEqual(wallet_grant_admin_forbidden.status_code, 403)
+        self.assertEqual(
+            wallet_grant_admin_forbidden.json()["error"]["message"],
+            "管理员只能为普通用户发放积分",
+        )
         self.assertEqual(disable_ok.json()["user"]["status"], "disabled")
 
-    def test_completion_request_ignores_noisy_options_in_get(self) -> None:
-        client = TestClient(create_app(_sample_index(), require_auth=False))
+    def test_admin_can_list_and_update_questions_but_regular_user_cannot(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
 
-        response = client.get(
-            "/ocs/query",
-            params={
-                "title": "填空题(1分)1992年，邓小平发表【1】____，对整个社会主义现代化建设事业产生了重大而深远的影响。",
-                "type": "completion",
-                "options": "}#loadEditorAnswerd(405113364, 2);#answerContentChange();#});",
-            },
-        )
+            record = CanonicalQuestionRecord(
+                question_id="http_q_1",
+                title_raw="HTTP题目",
+                question_type="single",
+                options_raw=("A", "B"),
+                answer_raw="A",
+                explanation="None",
+                subject="general",
+                chapter=None,
+                tags=(),
+                source_name="TestSource",
+                source_url="",
+                source_license="",
+                source_split="",
+                source_record_path="",
+            )
+            index = LocalQuestionIndex((record,))
+
+            client = TestClient(
+                create_app(index, auth_service=auth, platform_service=platform, require_auth=True)
+            )
+
+            client.post("/auth/register", json={"username": "boss", "password": "password123"})
+            super_headers = {
+                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
+            }
+            client.post("/auth/register", json={"username": "alice", "password": "password123"})
+            client.post("/auth/register", json={"username": "bob", "password": "password123"})
+
+            client.patch("/users/alice", json={"role": "admin"}, headers=super_headers)
+
+            admin_headers = {
+                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'alice', 'password': 'password123'}).json()['token']}"
+            }
+            user_headers = {
+                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'bob', 'password': 'password123'}).json()['token']}"
+            }
+
+            res_user_list = client.get("/questions", headers=user_headers)
+            self.assertEqual(res_user_list.status_code, 403)
+
+            res_admin_list = client.get("/questions", headers=admin_headers)
+            self.assertEqual(res_admin_list.status_code, 200)
+            self.assertEqual(res_admin_list.json()["total"], 1)
+            self.assertEqual(res_admin_list.json()["questions"][0]["title_raw"], "HTTP题目")
+
+            res_user_patch = client.patch(
+                "/questions/http_q_1",
+                json={"title_raw": "新标题", "answer_raw": "B"},
+                headers=user_headers,
+            )
+            self.assertEqual(res_user_patch.status_code, 403)
+
+            res_admin_patch = client.patch(
+                "/questions/http_q_1",
+                json={"title_raw": "新标题", "answer_raw": "B"},
+                headers=admin_headers,
+            )
+            self.assertEqual(res_admin_patch.status_code, 200)
+            self.assertEqual(res_admin_patch.json()["question"]["title_raw"], "新标题")
+            self.assertEqual(res_admin_patch.json()["question"]["answer_raw"], "B")
+
+            res_reloaded_list = client.get("/questions", headers=admin_headers)
+            self.assertEqual(res_reloaded_list.json()["questions"][0]["title_raw"], "新标题")
+
+    def test_completion_request_ignores_noisy_options_in_get(self) -> None:
+        import os
+
+        os.environ["STQB_OCS_API_KEYS"] = "noisy-get-key"
+        try:
+            client = TestClient(create_app(_sample_index(), require_auth=False))
+            response = client.get(
+                "/ocs/query",
+                params={
+                    "title": "填空题(1分)1992年，邓小平发表【1】____，对整个社会主义现代化建设事业产生了重大而深远的影响。",
+                    "type": "completion",
+                    "options": "}#loadEditorAnswerd(405113364, 2);#answerContentChange();#});",
+                },
+                headers={"Authorization": "Bearer noisy-get-key"},
+            )
+        finally:
+            os.environ.pop("STQB_OCS_API_KEYS", None)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["data"]["answer"], "南方谈话")
 
     def test_completion_request_ignores_noisy_options_in_post(self) -> None:
-        client = TestClient(create_app(_sample_index(), require_auth=False))
+        import os
 
-        response = client.post(
-            "/ocs/query",
-            json={
-                "title": "填空题(1分)社会主义本质是解放生产力、发展生产力，消灭剥削，消除两极分化，最终达到【1】____。",
-                "type": "completion",
-                "options": ["}", "loadEditorAnswerd(405113366, 2);", "answerContentChange();", "});"],
-            },
-        )
+        os.environ["STQB_OCS_API_KEYS"] = "noisy-post-key"
+        try:
+            client = TestClient(create_app(_sample_index(), require_auth=False))
+            response = client.post(
+                "/ocs/query",
+                json={
+                    "title": "填空题(1分)社会主义本质是解放生产力、发展生产力，消灭剥削，消除两极分化，最终达到【1】____。",
+                    "type": "completion",
+                    "options": [
+                        "}",
+                        "loadEditorAnswerd(405113366, 2);",
+                        "answerContentChange();",
+                        "});",
+                    ],
+                },
+                headers={"Authorization": "Bearer noisy-post-key"},
+            )
+        finally:
+            os.environ.pop("STQB_OCS_API_KEYS", None)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["data"]["answer"], "共同富裕")
 
     def test_multi_blank_completion_response_matches_ocs_split_contract(self) -> None:
-        client = TestClient(create_app(_sample_index(), require_auth=False))
+        import os
 
-        response = client.get(
-            "/ocs/query",
-            params={
-                "title": "填空题(2分)第一空【1】____，第二空【2】____。",
-                "type": "completion",
-                "options": "}#loadEditorAnswerd(405113370, 2);#answerContentChange();#});",
-            },
-        )
+        os.environ["STQB_OCS_API_KEYS"] = "multi-blank-key"
+        try:
+            client = TestClient(create_app(_sample_index(), require_auth=False))
+            response = client.get(
+                "/ocs/query",
+                params={
+                    "title": "填空题(2分)第一空【1】____，第二空【2】____。",
+                    "type": "completion",
+                    "options": "}#loadEditorAnswerd(405113370, 2);#answerContentChange();#});",
+                },
+                headers={"Authorization": "Bearer multi-blank-key"},
+            )
+        finally:
+            os.environ.pop("STQB_OCS_API_KEYS", None)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["data"]["answer"], '["第一空答案", "第二空答案"]')
 
-    def test_workbench_integration_script_notification_and_catalog_routes(self) -> None:
+    def test_llm_runtime_config_uses_llm_cache_contract(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
             platform = PlatformService(database_path)
-            client = TestClient(create_app(_sample_index(), auth_service=auth, platform_service=platform, require_auth=True))
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                )
+            )
 
             client.post("/auth/register", json={"username": "boss", "password": "password123"})
-            headers = {"Authorization": f"Bearer {client.post('/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"}
+            headers = {
+                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
+            }
 
-            token_create = client.post("/tokens", json={"description": "工作台接入"}, headers=headers)
+            initial = client.get("/llm-runtime-config", headers=headers)
+            update = client.patch(
+                "/llm-runtime-config",
+                json={
+                    "llm_cache_enabled": "false",
+                    "llm_cache_min_confidence": "0.98",
+                    "llm_cache_min_confirmations": "3",
+                    "ai_cache_enabled": "true",
+                },
+                headers=headers,
+            )
+
+        self.assertTrue(initial.json()["ok"])
+        self.assertIn("llm_cache_enabled", initial.json()["config"])
+        self.assertNotIn("ai_cache_enabled", initial.json()["config"])
+        self.assertTrue(update.json()["ok"])
+        self.assertEqual(update.json()["config"]["llm_cache_enabled"], "false")
+        self.assertEqual(update.json()["config"]["llm_cache_min_confidence"], "0.98")
+        self.assertEqual(update.json()["config"]["llm_cache_min_confirmations"], "3")
+        self.assertNotIn("ai_cache_enabled", update.json()["config"])
+
+    def test_llm_runtime_config_persists_web_search_configs_without_leaking_keys(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                )
+            )
+
+            client.post("/auth/register", json={"username": "boss", "password": "password123"})
+            headers = {
+                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
+            }
+            search_configs = [
+                {
+                    "id": "search_google",
+                    "name": "Google",
+                    "provider": "google",
+                    "api_key": "google-secret",
+                    "cx": "cx-001",
+                    "proxy_url": "http://127.0.0.1:7890",
+                    "status": "active",
+                }
+            ]
+
+            update = client.patch(
+                "/llm-runtime-config",
+                json={"web_search_configs": json.dumps(search_configs, ensure_ascii=False)},
+                headers=headers,
+            )
+            response_config = json.loads(update.json()["config"]["web_search_configs"])
+            raw_config = json.loads(
+                platform.get_llm_runtime_config(reveal_secret=True)["web_search_configs"]
+            )
+            edit_without_secret = [
+                {
+                    "id": "search_google",
+                    "name": "Google Edited",
+                    "provider": "google",
+                    "api_key": "",
+                    "api_key_configured": True,
+                    "cx": "cx-002",
+                    "proxy_url": "",
+                    "status": "active",
+                }
+            ]
+            preserved = client.patch(
+                "/llm-runtime-config",
+                json={"web_search_configs": json.dumps(edit_without_secret, ensure_ascii=False)},
+                headers=headers,
+            )
+            preserved_raw_config = json.loads(
+                platform.get_llm_runtime_config(reveal_secret=True)["web_search_configs"]
+            )
+
+        self.assertTrue(update.json()["ok"])
+        self.assertEqual(response_config[0]["provider"], "google")
+        self.assertNotIn("api_key", response_config[0])
+        self.assertTrue(response_config[0]["api_key_configured"])
+        self.assertEqual(raw_config[0]["api_key"], "google-secret")
+        self.assertTrue(preserved.json()["ok"])
+        self.assertEqual(preserved_raw_config[0]["api_key"], "google-secret")
+        self.assertEqual(preserved_raw_config[0]["cx"], "cx-002")
+
+    def test_workbench_script_notification_and_catalog_routes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                )
+            )
+
+            client.post("/auth/register", json={"username": "boss", "password": "password123"})
+            headers = {
+                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
+            }
+
+            token_create = client.post(
+                "/tokens", json={"description": "工作台接入"}, headers=headers
+            )
             token_id = token_create.json()["token_info"]["token_id"]
             notify = platform.create_notification(
                 user_id=None,
@@ -258,25 +709,23 @@ class FastAPILocalServerTests(unittest.TestCase):
                 content="接口稳定性优化完成",
             )
 
-            integration_create = client.post(
+            integrations_removed = client.get("/integrations", headers=headers)
+            integration_create_removed = client.post(
                 "/integrations",
                 json={
-                    "name": "生活活系统",
+                    "name": "旧接入点",
                     "platform": "ocs",
                     "base_url": "https://example.com/ocs",
                     "token_id": token_id,
                     "status": "active",
-                    "description": "测试接入点",
+                    "description": "已下线功能不再提供接口",
                 },
                 headers=headers,
             )
-            integration_id = integration_create.json()["integration"]["integration_id"]
-            integration_test = client.post(f"/integrations/{integration_id}/test", headers=headers)
             import_script = client.post(
                 "/import-scripts/generate",
                 json={
                     "name": "生活活系统导入",
-                    "integration_id": integration_id,
                     "token_id": token_id,
                     "target": "ocs",
                     "include_test_snippet": True,
@@ -284,55 +733,562 @@ class FastAPILocalServerTests(unittest.TestCase):
                 headers=headers,
             )
             script_id = import_script.json()["script"]["script_id"]
-            package_create = client.post(
+            quota_package_create = client.post(
                 "/quota-packages",
-                json={
-                    "name": "基础套餐",
-                    "kind": "points",
-                    "points": 1000,
-                    "price": 19.9,
-                    "description": "基础版",
-                    "sort_order": 1,
-                },
+                json={"name": "基础套餐", "kind": "points", "points": 1000},
                 headers=headers,
             )
-            package_id = package_create.json()["package"]["package_id"]
+            roles_before_update = client.get("/roles", headers=headers)
             role_update = client.put(
                 "/roles/admin/permissions",
-                json={"permissions": ["dashboard:all", "users:write", "integrations:write"]},
+                json={"permissions": ["dashboard:all", "users:write", "questions:read"]},
+                headers=headers,
+            )
+            invalid_role_update = client.put(
+                "/roles/admin/permissions",
+                json={"permissions": ["integrations:write"]},
                 headers=headers,
             )
 
             workbench = client.get("/dashboard/workbench", headers=headers)
             rankings = client.get("/dashboard/rankings", headers=headers)
             notifications = client.get("/notifications", headers=headers)
-            notification_read = client.post(f"/notifications/{notify['notification_id']}/read", headers=headers)
-            integrations = client.get("/integrations", headers=headers)
-            integration_status = client.get(f"/integrations/{integration_id}/status", headers=headers)
+            notification_read = client.post(
+                f"/notifications/{notify['notification_id']}/read", headers=headers
+            )
             scripts = client.get("/import-scripts", headers=headers)
             script_detail = client.get(f"/import-scripts/{script_id}", headers=headers)
-            packages = client.get("/quota-packages", headers=headers)
+            default_script_detail = client.get(
+                "/import-scripts/ocs_local_question_bank", headers=headers
+            )
+            missing_script_detail = client.get("/import-scripts/not-found", headers=headers)
+            default_script_delete = client.delete(
+                "/import-scripts/ocs_local_question_bank", headers=headers
+            )
+            quota_packages = client.get("/quota-packages", headers=headers)
             roles = client.get("/roles", headers=headers)
             role_detail = client.get("/roles/admin/permissions", headers=headers)
-            package_delete = client.delete(f"/quota-packages/{package_id}", headers=headers)
 
         self.assertTrue(workbench.json()["ok"])
         self.assertIn("hero", workbench.json()["workbench"])
         self.assertTrue(rankings.json()["ok"])
         self.assertTrue(notifications.json()["ok"])
         self.assertEqual(notification_read.json()["notification"]["read"], True)
-        self.assertTrue(integrations.json()["ok"])
-        self.assertEqual(len(integrations.json()["integrations"]), 1)
-        self.assertTrue(integration_test.json()["ok"])
-        self.assertEqual(integration_status.json()["status"]["last_test_status"], "success")
+        self.assertEqual(integrations_removed.status_code, 404)
+        self.assertIn(integration_create_removed.status_code, {404, 405})
+        admin_actions = {item["key"] for item in workbench.json()["workbench"]["quick_actions"]}
+        self.assertNotIn("test_integration", admin_actions)
+        self.assertNotIn("integration_manage", admin_actions)
         self.assertTrue(scripts.json()["ok"])
+        default_scripts = [
+            item for item in scripts.json()["scripts"] if item.get("script_id") == "ocs_local_question_bank"
+        ]
+        self.assertEqual(len(default_scripts), 1)
+        self.assertTrue(default_scripts[0]["builtin"])
+        self.assertTrue(default_scripts[0]["is_default"])
         self.assertEqual(script_detail.json()["script"]["target"], "ocs")
-        self.assertTrue(packages.json()["ok"])
-        self.assertEqual(len(packages.json()["packages"]), 1)
+        self.assertTrue(default_script_detail.json()["script"]["builtin"])
+        self.assertIn("/ocs/query", default_script_detail.json()["script"]["content"])
+        self.assertEqual(missing_script_detail.status_code, 404)
+        self.assertEqual(missing_script_detail.json()["error"]["code"], "SCRIPT_NOT_FOUND")
+        self.assertEqual(default_script_delete.status_code, 400)
+        self.assertEqual(
+            default_script_delete.json()["error"]["code"], "BUILTIN_SCRIPT_READONLY"
+        )
+        self.assertEqual(quota_package_create.status_code, 405)
+        self.assertEqual(quota_packages.status_code, 404)
+        self.assertTrue(roles_before_update.json()["ok"])
+        admin_defaults = next(
+            item for item in roles_before_update.json()["roles"] if item["role_id"] == "admin"
+        )
+        self.assertIn("llm:read", admin_defaults["permissions"])
+        self.assertIn("wallet:changes:read", admin_defaults["permissions"])
         self.assertTrue(roles.json()["ok"])
         self.assertEqual(role_update.json()["role"]["role_id"], "admin")
-        self.assertIn("integrations:write", role_detail.json()["role"]["permissions"])
-        self.assertTrue(package_delete.json()["ok"])
+        self.assertIn("questions:read", role_detail.json()["role"]["permissions"])
+        self.assertEqual(invalid_role_update.status_code, 400)
+        self.assertEqual(invalid_role_update.json()["error"]["code"], "INVALID_PERMISSION")
+
+    def test_user_workbench_actions_hide_admin_entries_and_expose_copy_script(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                )
+            )
+
+            client.post("/auth/register", json={"username": "boss", "password": "password123"})
+            client.post("/auth/register", json={"username": "alice", "password": "password123"})
+            user_headers = {
+                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'alice', 'password': 'password123'}).json()['token']}"
+            }
+
+            workbench = client.get("/dashboard/workbench", headers=user_headers)
+
+        self.assertTrue(workbench.json()["ok"])
+        actions = {item["key"] for item in workbench.json()["workbench"]["quick_actions"]}
+        self.assertIn("copy_import_script", actions)
+        self.assertNotIn("generate_script", actions)
+        self.assertNotIn("test_integration", actions)
+        self.assertNotIn("integration_manage", actions)
+        self.assertEqual(workbench.json()["workbench"]["overview"]["avg_response_seconds"], 0.0)
+
+    def test_workbench_average_response_uses_recorded_elapsed_ms(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                )
+            )
+
+            client.post("/auth/register", json={"username": "boss", "password": "password123"})
+            client.post("/auth/register", json={"username": "alice", "password": "password123"})
+            user_headers = {
+                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'alice', 'password': 'password123'}).json()['token']}"
+            }
+            platform.record_usage(
+                user_id="alice-id",
+                username="alice",
+                token_id=None,
+                title="第一题",
+                question_type="single",
+                resolution_mode="local_hit",
+                answer="A",
+                confidence=1.0,
+                provider="local",
+                points_cost=1,
+                elapsed_ms=1000.0,
+            )
+            platform.record_usage(
+                user_id="alice-id",
+                username="alice",
+                token_id=None,
+                title="第二题",
+                question_type="single",
+                resolution_mode="local_hit",
+                answer="B",
+                confidence=1.0,
+                provider="local",
+                points_cost=1,
+                elapsed_ms=3000.0,
+            )
+
+            workbench = client.get("/dashboard/workbench", headers=user_headers)
+
+        self.assertTrue(workbench.json()["ok"])
+        overview = workbench.json()["workbench"]["overview"]
+        self.assertEqual(overview["today_calls"], 2)
+        self.assertEqual(overview["avg_response_seconds"], 2.0)
+
+    def test_legacy_usage_logs_table_gets_elapsed_ms_compat_column(self) -> None:
+        engine = create_engine("sqlite:///:memory:", future=True)
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE usage_logs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        log_id VARCHAR(64) UNIQUE,
+                        user_id VARCHAR(64),
+                        username VARCHAR(64),
+                        token_id VARCHAR(64),
+                        title TEXT,
+                        question_type VARCHAR(64),
+                        resolution_mode VARCHAR(64),
+                        answer TEXT,
+                        confidence FLOAT DEFAULT 0.0,
+                        points_cost INTEGER DEFAULT 0,
+                        provider VARCHAR(128) DEFAULT '',
+                        created_at FLOAT
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO usage_logs (
+                        log_id, user_id, username, token_id, title, question_type,
+                        resolution_mode, answer, confidence, points_cost, provider, created_at
+                    )
+                    VALUES (
+                        'legacy-log', 'legacy-user', 'legacy', NULL, '旧题目', 'single',
+                        'local_hit', 'A', 1.0, 1, 'local', 1.0
+                    )
+                    """
+                )
+            )
+        database_module.ensure_sqlite_compat_columns(engine)
+        with engine.connect() as connection:
+            columns = {
+                row[1] for row in connection.execute(text("PRAGMA table_info(usage_logs)")).fetchall()
+            }
+            elapsed_ms = connection.execute(
+                text("SELECT elapsed_ms FROM usage_logs WHERE log_id = 'legacy-log'")
+            ).scalar_one()
+        engine.dispose()
+
+        self.assertIn("elapsed_ms", columns)
+        self.assertEqual(elapsed_ms, 0.0)
+
+    def test_dashboard_rankings_user_isolation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                )
+            )
+
+            # 1. Register superadmin (owner) and create a log
+            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            owner_login = client.post(
+                "/auth/login", json={"username": "owner", "password": "password123"}
+            )
+            owner_token = owner_login.json()["token"]
+            owner_headers = {"Authorization": f"Bearer {owner_token}"}
+
+            # Create token and query to generate a log for owner
+            token_res = client.post(
+                "/tokens", json={"description": "Owner Token"}, headers=owner_headers
+            )
+            raw_token = token_res.json()["token"]
+            client.get(
+                "/ocs/query",
+                params={"title": "Test Question", "type": "single"},
+                headers={"Authorization": f"Bearer {raw_token}"},
+            )
+
+            # 2. Register normal user (alice) who has no usage logs
+            client.post("/auth/register", json={"username": "alice", "password": "password123"})
+            alice_login = client.post(
+                "/auth/login", json={"username": "alice", "password": "password123"}
+            )
+            alice_token = alice_login.json()["token"]
+            alice_headers = {"Authorization": f"Bearer {alice_token}"}
+
+            # 3. Query workbench and rankings for owner (superadmin) -> should see the log
+            owner_workbench = client.get("/dashboard/workbench", headers=owner_headers)
+            owner_rankings = client.get("/dashboard/rankings", headers=owner_headers)
+            self.assertTrue(owner_workbench.json()["ok"])
+            self.assertTrue(owner_rankings.json()["ok"])
+            self.assertGreater(len(owner_workbench.json()["workbench"]["ranking_preview"]), 0)
+            self.assertGreater(len(owner_rankings.json()["rankings"]), 0)
+
+            # 4. Query workbench and rankings for alice (normal user) -> should be empty
+            alice_workbench = client.get("/dashboard/workbench", headers=alice_headers)
+            alice_rankings = client.get("/dashboard/rankings", headers=alice_headers)
+            self.assertTrue(alice_workbench.json()["ok"])
+            self.assertTrue(alice_rankings.json()["ok"])
+            self.assertEqual(len(alice_workbench.json()["workbench"]["ranking_preview"]), 0)
+            self.assertEqual(len(alice_rankings.json()["rankings"]), 0)
+
+    def test_api_key_quota_limits_and_deletion(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                )
+            )
+
+            # 1. Register and login superadmin and a normal user
+            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            client.post("/auth/register", json={"username": "alice", "password": "password123"})
+            auth.set_points("alice", 100)
+            alice_login = client.post(
+                "/auth/login", json={"username": "alice", "password": "password123"}
+            )
+            alice_token = alice_login.json()["token"]
+            alice_headers = {"Authorization": f"Bearer {alice_token}"}
+
+            # 2. Create token with quota_limit = 2
+            token_res = client.post(
+                "/tokens",
+                json={"description": "Test Limit Key", "quota_limit": 2},
+                headers=alice_headers,
+            )
+            self.assertTrue(token_res.json()["ok"])
+            token_id = token_res.json()["token_info"]["token_id"]
+            raw_token = token_res.json()["token"]
+            self.assertEqual(token_res.json()["token_info"]["quota_limit"], 2)
+            self.assertEqual(token_res.json()["token_info"]["quota_used"], 0)
+
+            # 3. Call OCS query once (this key consumes 2 points on OCS query local hit)
+            query_headers = {"Authorization": f"Bearer {raw_token}"}
+            q1 = client.get(
+                "/ocs/query", params={"title": "示例题", "type": "single"}, headers=query_headers
+            )
+            self.assertEqual(q1.status_code, 200)
+
+            # Check token info -> quota_used should be 2
+            tokens_after = client.get("/tokens", headers=alice_headers)
+            target_token = next(
+                t for t in tokens_after.json()["tokens"] if t["token_id"] == token_id
+            )
+            self.assertEqual(target_token["quota_used"], 2)
+
+            # 4. Call OCS query a second time -> should be blocked because quota_used (2) >= quota_limit (2)
+            q2 = client.get(
+                "/ocs/query", params={"title": "示例题", "type": "single"}, headers=query_headers
+            )
+            self.assertEqual(q2.status_code, 401)
+            self.assertEqual(q2.json()["error"]["code"], "TOKEN_QUOTA_EXCEEDED")
+
+            # 5. Update token quota_limit to 5
+            update_res = client.post(
+                f"/tokens/{token_id}",
+                json={"description": "Updated Limit Key", "quota_limit": 5},
+                headers=alice_headers,
+            )
+            self.assertTrue(update_res.json()["ok"])
+            self.assertEqual(update_res.json()["token"]["quota_limit"], 5)
+
+            # 6. Call OCS query again -> should work now!
+            q3 = client.get(
+                "/ocs/query", params={"title": "示例题", "type": "single"}, headers=query_headers
+            )
+            self.assertEqual(q3.status_code, 200)
+
+            # 7. Delete token
+            del_res = client.delete(f"/tokens/{token_id}", headers=alice_headers)
+            self.assertTrue(del_res.json()["ok"])
+
+            # 8. Listing tokens -> deleted token should be gone!
+            tokens_final = client.get("/tokens", headers=alice_headers)
+            self.assertEqual(len(tokens_final.json()["tokens"]), 0)
+
+            # 9. Query OCS using deleted token -> should return 401 (invalid key)
+            q4 = client.get(
+                "/ocs/query", params={"title": "示例题", "type": "single"}, headers=query_headers
+            )
+            self.assertEqual(q4.status_code, 401)
+
+    def test_token_import_script_requires_token_or_returns_template(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                )
+            )
+
+            client.post("/auth/register", json={"username": "boss", "password": "password123"})
+            headers = {
+                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
+            }
+
+            no_token = client.get("/tokens/import-script", headers=headers)
+            token_a = client.post("/tokens", json={"description": "A"}, headers=headers)
+            one_token = client.get("/tokens/import-script", headers=headers)
+            token_b = client.post("/tokens", json={"description": "B"}, headers=headers)
+            multiple_tokens = client.get("/tokens/import-script", headers=headers)
+            direct = client.get(
+                "/tokens/import-script",
+                params={"token_id": token_b.json()["token_info"]["token_id"]},
+                headers=headers,
+            )
+
+        self.assertEqual(no_token.status_code, 404)
+        self.assertEqual(no_token.json()["error"]["code"], "TOKEN_REQUIRED")
+        self.assertEqual(token_a.status_code, 200)
+        self.assertEqual(one_token.json()["mode"], "direct")
+        self.assertEqual(one_token.json()["template_id"], "ocs_local_question_bank")
+        self.assertIn("{{TOKEN}}", one_token.json()["script"])
+        self.assertIn("/ocs/query", one_token.json()["script"])
+        self.assertIsInstance(one_token.json()["ocs_config"], list)
+        self.assertEqual(one_token.json()["ocs_config"][0]["type"], "GM_xmlhttpRequest")
+        self.assertIn("/ocs/query", one_token.json()["ocs_config"][0]["url"])
+        self.assertEqual(token_b.status_code, 200)
+        self.assertEqual(multiple_tokens.json()["mode"], "select_token")
+        self.assertEqual(len(multiple_tokens.json()["token_options"]), 2)
+        self.assertEqual(direct.json()["mode"], "direct")
+        self.assertEqual(
+            direct.json()["token_id"],
+            token_b.json()["token_info"]["token_id"],
+        )
+
+    def test_runtime_index_loads_reviewed_records_from_database(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            repository = SqlAlchemyQuestionRepository(database_path)
+            repository.save_question_record(
+                CanonicalQuestionRecord(
+                    question_id="reviewed:1",
+                    title_raw="单选题(1分)运行时应能加载数据库评审题。",
+                    question_type="single",
+                    options_raw=("答案一", "答案二"),
+                    answer_raw="B",
+                    explanation="人工评审答案。",
+                    subject="reviewed",
+                    chapter=None,
+                    tags=("chaoxing_reviewed",),
+                    source_name="ChaoxingReviewed",
+                    source_url="",
+                    source_license="user-local-reviewed",
+                    source_split="reviewed",
+                    source_record_path="tests",
+                )
+            )
+            client = TestClient(
+                create_app(
+                    LocalQuestionIndex(()),
+                    auth_service=auth,
+                    platform_service=platform,
+                    require_auth=False,
+                )
+            )
+
+            response = client.get(
+                "/query",
+                params={
+                    "title": "单选题(1分)运行时应能加载数据库评审题。",
+                    "options": "答案一#答案二",
+                    "type": "single",
+                },
+            )
+
+        self.assertTrue(response.json()["ok"])
+        self.assertEqual(response.json()["result"]["candidate_answer"], "B")
+        self.assertEqual(response.json()["sources"][0]["source_name"], "ChaoxingReviewed")
+
+    def test_reviewed_record_overrides_ai_generated_duplicate_on_startup(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            repository = SqlAlchemyQuestionRepository(database_path)
+            repository.save_question_record(
+                CanonicalQuestionRecord(
+                    question_id="reviewed:dup",
+                    title_raw="单选题(1分)同题应优先使用评审题库。",
+                    question_type="single",
+                    options_raw=("正确项", "干扰项"),
+                    answer_raw="A",
+                    explanation="人工评审答案。",
+                    subject="reviewed",
+                    chapter=None,
+                    tags=("chaoxing_reviewed",),
+                    source_name="ChaoxingReviewed",
+                    source_url="",
+                    source_license="user-local-reviewed",
+                    source_split="reviewed",
+                    source_record_path="tests",
+                )
+            )
+            ai_seed = LocalQuestionIndex(
+                (
+                    CanonicalQuestionRecord(
+                        question_id="ai:dup",
+                        title_raw="单选题(1分)同题应优先使用评审题库。",
+                        question_type="single",
+                        options_raw=("正确项", "干扰项"),
+                        answer_raw="B",
+                        explanation="旧 AI 答案。",
+                        subject="ai-generated",
+                        chapter=None,
+                        tags=("ai_generated", "auto_learned"),
+                        source_name="AIGenerated",
+                        source_url="",
+                        source_license="user-local-ai-generated",
+                        source_split="trusted",
+                        source_record_path="tests",
+                        metadata={
+                            "record_origin": "ai_generated",
+                            "ai_status": "trusted",
+                            "ai_confidence": "0.99",
+                        },
+                    ),
+                )
+            )
+            client = TestClient(
+                create_app(
+                    ai_seed,
+                    auth_service=auth,
+                    platform_service=platform,
+                    require_auth=False,
+                )
+            )
+
+            response = client.get(
+                "/query",
+                params={
+                    "title": "单选题(1分)同题应优先使用评审题库。",
+                    "options": "正确项#干扰项",
+                    "type": "single",
+                },
+            )
+
+        self.assertTrue(response.json()["ok"])
+        self.assertEqual(response.json()["result"]["candidate_answer"], "A")
+        self.assertEqual(response.json()["sources"][0]["source_name"], "ChaoxingReviewed")
+
+    def test_ocs_query_can_hide_low_confidence_answer_by_token_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            lookup = AnswerService(
+                LocalQuestionIndex(()),
+                model_provider=LowConfidenceProvider(),
+                allow_model_fallback=True,
+            )
+            client = TestClient(
+                create_app(lookup, auth_service=auth, platform_service=platform, require_auth=True)
+            )
+
+            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            session = client.post(
+                "/auth/login", json={"username": "owner", "password": "password123"}
+            )
+            headers = {"Authorization": f"Bearer {session.json()['token']}"}
+            token_create = client.post(
+                "/tokens",
+                json={
+                    "description": "严格拒答",
+                    "reject_low_confidence": True,
+                    "min_answer_confidence": 0.8,
+                },
+                headers=headers,
+            )
+            raw_api_token = token_create.json()["token"]
+
+            response = client.get(
+                "/ocs/query",
+                params={
+                    "title": "单选题(1分)国家资本主义的高级形式是【1】____。",
+                    "options": "公私合营#农业互助组",
+                    "type": "single",
+                },
+                headers={"Authorization": f"Bearer {raw_api_token}"},
+            )
+            questions = client.get(
+                "/questions",
+                params={"keyword": "公私合营", "status": "low_confidence"},
+                headers=headers,
+            )
+
+        self.assertTrue(token_create.json()["token_info"]["reject_low_confidence"])
+        self.assertEqual(token_create.json()["token_info"]["min_answer_confidence"], 0.8)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["code"], 1)
+        self.assertIsNone(response.json()["data"]["answer"])
+        self.assertEqual(response.json()["data"]["ai"]["error_code"], "LOW_CONFIDENCE_ANSWER")
+        self.assertEqual(questions.json()["total"], 1)
 
 
 def _sample_index() -> LocalQuestionIndex:

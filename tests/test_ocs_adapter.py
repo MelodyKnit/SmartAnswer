@@ -27,7 +27,7 @@ class OcsAdapterTests(unittest.TestCase):
 
     def test_success_response_contains_answer_and_metadata(self) -> None:
         """测试正常查到答案时，生成的 OCS 响应是否包含合规的答案、置信度及元数据。
-        
+
         验证 code 为 0，且 payload 中正确携带了 candidate_answer 以及数据源 CMMLU 信息。
         """
         index = _cmmlu_index()
@@ -46,7 +46,7 @@ class OcsAdapterTests(unittest.TestCase):
 
     def test_error_response_preserves_question_and_error_code(self) -> None:
         """测试查询异常或未查到结果时，生成的 OCS 响应是否能正确返回错误码且标记需要审核。
-        
+
         验证无效请求（如空标题）下的 code 为 1，且 error_code 被设置为 INVALID_REQUEST。
         """
         # 输入一个非法的空标题查询

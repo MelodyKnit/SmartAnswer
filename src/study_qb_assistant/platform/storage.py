@@ -13,7 +13,6 @@ from .records import (
     RedeemCodeRecord,
     UsageLogRecord,
     WalletOrderRecord,
-    WalletProfileRecord,
 )
 
 
@@ -40,6 +39,10 @@ def public_token_dict(token: ApiTokenRecord) -> dict:
         "created_at": token.created_at,
         "last_used_at": token.last_used_at,
         "usage_count": token.usage_count,
+        "quota_limit": token.quota_limit,
+        "quota_used": token.usage_count,
+        "reject_low_confidence": token.reject_low_confidence,
+        "min_answer_confidence": token.min_answer_confidence,
     }
 
 
@@ -50,7 +53,6 @@ def load_platform_state(
     token_lookup: dict[str, str],
     usage_logs: list[UsageLogRecord],
     feedbacks: list[FeedbackRecord],
-    wallet_profiles: dict[str, WalletProfileRecord],
     redeem_codes: dict[str, RedeemCodeRecord],
     wallet_orders: list[WalletOrderRecord],
     billing: dict[str, int],
@@ -72,9 +74,6 @@ def load_platform_state(
         usage_logs.append(UsageLogRecord.from_dict(item))
     for item in payload.get("feedbacks") or ():
         feedbacks.append(FeedbackRecord.from_dict(item))
-    for item in payload.get("wallet_profiles") or ():
-        profile = WalletProfileRecord.from_dict(item)
-        wallet_profiles[profile.user_id] = profile
     for item in payload.get("redeem_codes") or ():
         redeem = RedeemCodeRecord.from_dict(item)
         redeem_codes[redeem.code_id] = redeem
@@ -98,7 +97,6 @@ def save_platform_state(
     tokens: dict[str, ApiTokenRecord],
     usage_logs: list[UsageLogRecord],
     feedbacks: list[FeedbackRecord],
-    wallet_profiles: dict[str, WalletProfileRecord],
     redeem_codes: dict[str, RedeemCodeRecord],
     wallet_orders: list[WalletOrderRecord],
     billing: dict[str, int],
@@ -112,7 +110,6 @@ def save_platform_state(
         "tokens": [token.to_dict() for token in tokens.values()],
         "usage_logs": [log.to_dict() for log in usage_logs],
         "feedbacks": [fb.to_dict() for fb in feedbacks],
-        "wallet_profiles": [profile.to_dict() for profile in wallet_profiles.values()],
         "redeem_codes": [code.to_dict() for code in redeem_codes.values()],
         "wallet_orders": [order.to_dict() for order in wallet_orders],
         "billing": billing,
