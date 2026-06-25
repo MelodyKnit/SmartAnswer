@@ -10,7 +10,7 @@ import os
 import re
 import time
 import json
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from html import unescape
 from pathlib import Path

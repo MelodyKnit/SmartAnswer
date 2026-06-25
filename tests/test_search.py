@@ -126,6 +126,21 @@ class LocalQuestionIndexTests(unittest.TestCase):
         self.assertEqual(result.sources[0]["source_name"], "AIGenerated")
         self.assertEqual(result.sources[0]["source_type"], "ai_generated_question_bank")
 
+    def test_index_can_start_empty_when_all_jsonl_paths_are_missing(self) -> None:
+        """部署场景中缺少题库文件时，索引应以空库启动而不是抛异常。"""
+        with tempfile.TemporaryDirectory() as directory:
+            missing_verified = Path(directory) / "verified.jsonl"
+            missing_ai = Path(directory) / "ai-learned.jsonl"
+            index = LocalQuestionIndex.from_jsonl_files((missing_verified, missing_ai))
+
+        status = index.status()
+        result = index.query(QuestionQuery(title="尚未导入的题目", question_type="single"))
+
+        self.assertEqual(status["record_count"], 0)
+        self.assertEqual(status["source_path"], "")
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error_code, "NOT_FOUND")
+
     def test_ai_learned_records_do_not_fuzzy_match_similar_questions(self) -> None:
         """LLM 自动沉淀题不能通过相似题干复用，避免选项顺序不同导致错答。"""
         index = LocalQuestionIndex(

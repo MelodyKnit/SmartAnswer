@@ -6,13 +6,22 @@
 from __future__ import annotations
 
 import time
+from typing import Protocol
 
 from .llm.cache import CachedLlmAnswer, LlmAnswerCache, cache_key
 from .answer_quality import direct_known_answer, is_cache_safe_answer, repair_model_answer
-from .models import ModelAnswer, QueryResult, QuestionQuery
+from .models import CanonicalQuestionRecord, ModelAnswer, QueryResult, QuestionQuery
 from .llm.providers import ModelProvider
 from .option_labels import canonicalize_label_answer
 from .search import LocalQuestionIndex
+
+
+class QuestionRecordRepository(Protocol):
+    """AI 答题沉淀只依赖题库仓储的保存能力。"""
+
+    def save_question_record(self, record: CanonicalQuestionRecord) -> None:
+        """保存或更新题库记录。"""
+        ...
 
 
 class AnswerService:
@@ -54,7 +63,7 @@ class AnswerService:
         self.llm_answer_cache = llm_answer_cache
         self.trusted_confidence_threshold = min(max(trusted_confidence_threshold, 0.0), 1.0)
         self.platform_service: object | None = None
-        self.question_repository: object | None = None
+        self.question_repository: QuestionRecordRepository | None = None
 
     def query(self, query: QuestionQuery) -> QueryResult:
         """查询问题的答案，返回带来源标记的本地结果或明确标识的模型结果。

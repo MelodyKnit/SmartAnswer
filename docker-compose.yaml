@@ -1,0 +1,29 @@
+services:
+  study-qb-assistant:
+    container_name: study-qb-assistant
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3003:8765"
+    env_file:
+      - path: .env.server
+        required: false
+    environment:
+      STQB_HOST: 0.0.0.0
+      STQB_PORT: 8765
+      STQB_DATA_DIR: /app/data
+      STQB_REQUIRE_AUTH: "true"
+    volumes:
+      - ./deploy-data:/app/data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8765/healthz", timeout=5)
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s

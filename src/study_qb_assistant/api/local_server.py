@@ -5,18 +5,24 @@
 
 from __future__ import annotations
 
-import os
-
 from fastapi import FastAPI, Request, Response
+from starlette.responses import FileResponse
 
 from ..answering import AnswerService
 from ..auth import AuthService
+from ..config import get_global_config
 from ..platform import PlatformService
 from ..search import LocalQuestionIndex
 from ..storage.question_repository import SqlAlchemyQuestionRepository
 from .context import bool_env, cors_headers
 from .query_parser import build_query_from_mapping, split_options
-from .route_support import base_url_from_headers, build_session_cookie, expire_session_cookie
+from .route_support import (
+    STATIC_DIR,
+    base_url_from_headers,
+    build_session_cookie,
+    expire_session_cookie,
+    should_serve_spa_shell,
+)
 from .routes import (
     build_auth_router,
     build_platform_router,
@@ -33,11 +39,7 @@ def create_app(
     require_auth: bool | None = None,
 ) -> FastAPI:
     """构建本地 FastAPI 应用。"""
-    configured_database = (
-        os.getenv("STQB_DATABASE_URL")
-        or os.getenv("STQB_DATABASE_PATH")
-        or "data/runtime/study-qb.sqlite3"
-    )
+    configured_database = get_global_config().database_locator
     database_locator = (
         getattr(platform_service, "path", None)
         or getattr(auth_service, "path", None)
@@ -65,6 +67,15 @@ def create_app(
     async def cors_and_options(request: Request, call_next) -> Response:
         if request.method == "OPTIONS":
             return Response(status_code=204, headers=cors_headers(request))
+        if request.method == "GET" and should_serve_spa_shell(
+            request, request.url.path
+        ):
+            html_path = STATIC_DIR / "index.html"
+            if html_path.exists():
+                response = FileResponse(html_path, media_type="text/html; charset=utf-8")
+                for key, value in cors_headers(request).items():
+                    response.headers[key] = value
+                return response
         response = await call_next(request)
         for key, value in cors_headers(request).items():
             response.headers[key] = value

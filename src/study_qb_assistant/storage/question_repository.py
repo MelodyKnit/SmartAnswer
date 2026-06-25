@@ -240,8 +240,9 @@ class SqlAlchemyQuestionRepository:
 
     def _record_from_entity(self, entity: QuestionEntity) -> CanonicalQuestionRecord:
         metadata = json_object(entity.metadata_json, default={})
-        if not metadata and getattr(entity, "legacy_metadata_json", ""):
-            metadata = json_object(entity.legacy_metadata_json, default={})
+        legacy_metadata = str(entity.legacy_metadata_json or "")
+        if not metadata and legacy_metadata:
+            metadata = json_object(legacy_metadata, default={})
         status = question_entity_status(entity)
         metadata["status"] = status
         metadata["confidence"] = str(float(entity.confidence or 0.0))

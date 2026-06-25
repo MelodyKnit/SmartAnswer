@@ -116,6 +116,16 @@ npm install
 npm run build
 ```
 
+Docker one-command deployment:
+
+```bash
+docker compose up -d --build
+```
+
+The Docker image builds the frontend and backend together. Runtime data is written to
+`deploy-data/` on the server and starts empty by default; local `data/` files are not
+required and are not copied into the image.
+
 Install and run commit hooks:
 
 ```powershell

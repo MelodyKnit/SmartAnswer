@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from ..config import get_global_config
 from ..storage.redis_state import build_recent_event_store_from_env
 
 _RECENT_EVENT_STORE = build_recent_event_store_from_env()
@@ -13,7 +14,7 @@ _RECENT_EVENT_STORE = build_recent_event_store_from_env()
 
 def log_path() -> Path:
     """获取运行时 JSONL 日志路径。"""
-    return Path(os.getenv("STQB_LOG_PATH", "data/logs/service.jsonl"))
+    return get_global_config().log_path_resolved
 
 
 def redact(value: Any) -> Any:

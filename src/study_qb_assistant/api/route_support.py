@@ -26,7 +26,6 @@ STATIC_PAGES = {
     "/index.html": "index.html",
 }
 
-
 def run_lookup(
     lookup: LocalQuestionIndex | AnswerService,
     platform: PlatformService,
@@ -43,6 +42,21 @@ def run_lookup(
     token = record_usage(platform, auth, request, query, result, elapsed_seconds)
     log_query(path, method, query, result, elapsed_seconds)
     return JSONResponse(response_for_path(path, result, platform=platform, token=token))
+
+
+def should_serve_spa_shell(request: Request, path: str) -> bool:
+    """判断当前请求是否是浏览器前端导航。
+
+    这里不维护 API 路径清单：浏览器导航由 `Accept: text/html` 表达，
+    API 调用由 JSON/默认 Accept 表达，新增接口不需要同步修改该判断。
+    """
+    normalized = path.strip("/")
+    if not normalized:
+        return True
+    if "." in Path(normalized).name:
+        return False
+    accept = request.headers.get("Accept", "")
+    return "text/html" in accept
 
 
 def response_for_path(

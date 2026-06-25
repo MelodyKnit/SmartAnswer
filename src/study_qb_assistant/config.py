@@ -17,6 +17,7 @@ DATA_RUNTIME_DIR = DATA_DIR / "runtime"
 DATA_LOGS_DIR = DATA_DIR / "logs"
 
 ENV_DATABASE_URL = "STQB_DATABASE_URL"
+ENV_DATA_DIR = "STQB_DATA_DIR"
 ENV_DATABASE_PATH = "STQB_DATABASE_PATH"
 ENV_DB_POOL_SIZE = "STQB_DB_POOL_SIZE"
 ENV_DB_MAX_OVERFLOW = "STQB_DB_MAX_OVERFLOW"
@@ -69,7 +70,8 @@ class GlobalConfig(BaseModel):
 
     # 数据库连接配置：优先完整 URL，其次本地 SQLite 文件路径。
     database_url: str = ""
-    database_path: str = "data/runtime/study-qb.sqlite3"
+    data_dir_path: str = "data"
+    database_path: str = ""
     db_pool_size: int = 10
     db_max_overflow: int = 20
     db_pool_timeout: int = 30
@@ -85,7 +87,7 @@ class GlobalConfig(BaseModel):
     default_user_points: int = 0
 
     # 运行时日志：JSONL 文件、控制台开关与日志级别统一在这里声明。
-    log_path: str = "data/logs/service.jsonl"
+    log_path: str = ""
     console_log: bool = True
     console_log_level: str = "INFO"
 
@@ -95,7 +97,7 @@ class GlobalConfig(BaseModel):
     reload: bool = False
 
     # 本地题库导入源与结果页输入路径：统一使用 data 目录作为默认生产落点。
-    index_path: str = "data/normalized/verified.jsonl"
+    index_path: str = ""
     answer_rules_path: str = ""
     reviewed_results_dir: str = ""
     reviewed_results_glob: str = "*.html"
@@ -151,27 +153,27 @@ class GlobalConfig(BaseModel):
     @property
     def data_dir(self) -> Path:
         """返回运行数据根目录。"""
-        return DATA_DIR
+        return self.resolve_path(self.data_dir_path, default=DATA_DIR)
 
     @property
     def data_raw_dir(self) -> Path:
         """返回原始题库与导入数据目录。"""
-        return DATA_RAW_DIR
+        return self.data_dir / "raw"
 
     @property
     def data_normalized_dir(self) -> Path:
         """返回标准化题库目录。"""
-        return DATA_NORMALIZED_DIR
+        return self.data_dir / "normalized"
 
     @property
     def data_runtime_dir(self) -> Path:
         """返回数据库、缓存等运行时数据目录。"""
-        return DATA_RUNTIME_DIR
+        return self.data_dir / "runtime"
 
     @property
     def data_logs_dir(self) -> Path:
         """返回结构化日志目录。"""
-        return DATA_LOGS_DIR
+        return self.data_dir / "logs"
 
     @property
     def database_locator(self) -> str:
@@ -266,7 +268,8 @@ def load_global_config() -> GlobalConfig:
     """从当前进程环境中加载一份最新的全局配置。"""
     return GlobalConfig(
         database_url=env_text(ENV_DATABASE_URL),
-        database_path=env_text(ENV_DATABASE_PATH, "data/runtime/study-qb.sqlite3"),
+        data_dir_path=env_text(ENV_DATA_DIR, "data"),
+        database_path=env_text(ENV_DATABASE_PATH),
         db_pool_size=env_int(ENV_DB_POOL_SIZE, 10),
         db_max_overflow=env_int(ENV_DB_MAX_OVERFLOW, 20),
         db_pool_timeout=env_int(ENV_DB_POOL_TIMEOUT, 30),
@@ -276,13 +279,13 @@ def load_global_config() -> GlobalConfig:
         require_auth=env_bool(ENV_REQUIRE_AUTH, False),
         ocs_api_keys=env_csv(ENV_OCS_API_KEYS),
         default_user_points=env_int(ENV_DEFAULT_USER_POINTS, 0),
-        log_path=env_text(ENV_LOG_PATH, "data/logs/service.jsonl"),
+        log_path=env_text(ENV_LOG_PATH),
         console_log=env_bool(ENV_CONSOLE_LOG, True),
         console_log_level=env_text(ENV_CONSOLE_LOG_LEVEL, "INFO"),
         host=env_text(ENV_HOST, "127.0.0.1"),
         port=env_int(ENV_PORT, 8765),
         reload=env_bool(ENV_RELOAD, False),
-        index_path=env_text(ENV_INDEX_PATH, "data/normalized/verified.jsonl"),
+        index_path=env_text(ENV_INDEX_PATH),
         answer_rules_path=env_text(ENV_ANSWER_RULES_PATH),
         reviewed_results_dir=env_text(ENV_REVIEWED_RESULTS_DIR),
         reviewed_results_glob=env_text(ENV_REVIEWED_RESULTS_GLOB, "*.html"),

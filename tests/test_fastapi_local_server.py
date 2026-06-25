@@ -81,6 +81,27 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(ocs_get.json()["data"]["answer"], "A")
         self.assertEqual(config.json()[0]["data"]["title"], "${title}")
 
+    def test_spa_route_fallback_serves_frontend_for_browser_navigation(self) -> None:
+        client = TestClient(create_app(_sample_index(), require_auth=True))
+
+        page = client.get("/users", headers={"Accept": "text/html"})
+        future_page = client.get("/future-admin-page", headers={"Accept": "text/html"})
+        future_api = client.get("/future-api", headers={"Accept": "application/json"})
+        missing_asset = client.get("/assets/missing.js", headers={"Accept": "*/*"})
+        missing_api = client.get("/auth/missing", headers={"Accept": "application/json"})
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("text/html", page.headers["content-type"])
+        self.assertIn("<!doctype html", page.text.lower())
+        self.assertEqual(future_page.status_code, 200)
+        self.assertIn("text/html", future_page.headers["content-type"])
+        self.assertEqual(future_api.status_code, 404)
+        self.assertEqual(future_api.json()["error"]["code"], "NOT_FOUND")
+        self.assertEqual(missing_asset.status_code, 404)
+        self.assertEqual(missing_asset.json()["error"]["code"], "NOT_FOUND")
+        self.assertEqual(missing_api.status_code, 404)
+        self.assertEqual(missing_api.json()["error"]["code"], "NOT_FOUND")
+
     def test_require_auth_blocks_data_routes_and_allows_registered_session(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             auth = AuthService(self._runtime_database_path(directory))

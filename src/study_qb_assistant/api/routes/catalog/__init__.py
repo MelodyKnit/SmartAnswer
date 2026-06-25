@@ -216,9 +216,16 @@ def updated_question_record(
         if key in values:
             payload[key] = values[key]
     if "options_raw" in values:
-        payload["options_raw"] = list(values["options_raw"])
+        payload["options_raw"] = string_list(values["options_raw"])
     if "tags" in values:
-        payload["tags"] = list(values["tags"])
+        payload["tags"] = string_list(values["tags"])
     if "metadata" in values and isinstance(values["metadata"], dict):
         payload["metadata"] = {str(k): str(v) for k, v in values["metadata"].items()}
     return CanonicalQuestionRecord.from_dict(payload)
+
+
+def string_list(value: object) -> list[str]:
+    """把接口传入的列表型字段安全规范为字符串列表。"""
+    if isinstance(value, (list, tuple, set)):
+        return [str(item) for item in value]
+    return []

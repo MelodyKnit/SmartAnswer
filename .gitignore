@@ -39,6 +39,8 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 src/study_qb_assistant/api/static/
+deploy-data/
+study-qb-deploy.tgz
 
 # --- 测试与代码静态分析缓存 ---
 .pytest_cache/
@@ -57,6 +59,7 @@ coverage.xml
 .env.local
 .env.*
 !.env.example
+!.env.server.example
 *.key
 *.pem
 jwt_secret*
