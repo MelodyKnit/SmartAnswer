@@ -47,10 +47,18 @@ Recommended deployment values:
 - `STQB_REQUIRE_AUTH=true`
 - `STQB_REDIS_URL` only if shared session storage is needed
 
+When the model gateway or outbound proxy runs on the host machine instead of inside the
+same container network, use `host.docker.internal` rather than `127.0.0.1`.
+Inside the container, loopback only points to the application container itself.
+
 The compose file does not require `.env.server` to exist. You can boot the site first,
 create the first `superadmin`, and then configure model/search providers from the admin UI.
 If you prefer environment-based deployment, copy `.env.server.example` to `.env.server`
 and fill server-local values; Compose loads it when present.
+The default server template points `STQB_LLM_BASE_URL` at `http://host.docker.internal:3000/v1`
+so a host-side OpenAI-compatible gateway remains reachable from the container.
+The server template also defaults `STQB_WEB_SEARCH_PROVIDER` to `bing`, which is the safer
+choice when DuckDuckGo direct access is unstable in the deployment environment.
 
 ## First start
 

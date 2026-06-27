@@ -14,4 +14,4 @@ $env:STQB_HOST = $HostName
 $env:STQB_PORT = [string]$Port
 $env:STQB_RELOAD = "true"
 
-uvicorn study_qb_assistant.runtime:create_runtime_app --factory --host $HostName --port $Port --reload --app-dir src
+uvicorn study_qb_assistant.runtime:create_runtime_app --factory --host $HostName --port $Port --reload --reload-dir src/study_qb_assistant --app-dir src

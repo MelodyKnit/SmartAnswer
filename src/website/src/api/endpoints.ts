@@ -284,6 +284,10 @@ export const questionApi = {
       `/questions/${encodeURIComponent(questionId)}`,
       body,
     ),
+  remove: (questionId: string) =>
+    api.delete<{ ok: true; question_id: string; status: string }>(
+      `/questions/${encodeURIComponent(questionId)}`,
+    ),
 }
 
 /* ---------------- 大模型配置 / 调用追溯 ---------------- */

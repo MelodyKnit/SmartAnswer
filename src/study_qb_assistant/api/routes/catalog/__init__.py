@@ -178,6 +178,36 @@ def build_catalog_router() -> APIRouter:
 
         return JSONResponse({"ok": True, "question": updated_record.to_dict()})
 
+    @router.delete("/questions/{question_id}")
+    def question_delete(request: Request, question_id: str) -> JSONResponse:
+        """软删除题库记录，并从当前运行时索引移除。"""
+
+        denied = require_roles(request, {"admin", "superadmin"})
+        if denied:
+            return denied
+        denied = require_permissions(request, {"questions:write"})
+        if denied:
+            return denied
+
+        repository = get_question_repository(request)
+        try:
+            deleted_record = repository.soft_delete_question_record(question_id)
+        except Exception as exc:
+            return JSONResponse(
+                {"ok": False, "error": {"code": "QUESTION_DELETE_FAILED", "message": str(exc)}},
+                status_code=500,
+            )
+        if deleted_record is None:
+            return JSONResponse(
+                {"ok": False, "error": {"code": "QUESTION_NOT_FOUND", "message": "题目不存在"}},
+                status_code=404,
+            )
+
+        lookup = get_lookup_service(request)
+        index = lookup.index if isinstance(lookup, AnswerService) else lookup
+        index.remove(question_id)
+        return JSONResponse({"ok": True, "question_id": question_id, "status": "deleted"})
+
     @router.post("/questions/reindex")
     def questions_reindex(request: Request) -> JSONResponse:
         """按数据库中的可信题库记录重建当前进程内存索引。"""

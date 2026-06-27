@@ -529,6 +529,26 @@ class FastAPILocalServerTests(unittest.TestCase):
             res_reloaded_list = client.get("/questions", headers=admin_headers)
             self.assertEqual(res_reloaded_list.json()["questions"][0]["title_raw"], "新标题")
 
+            res_user_delete = client.delete("/questions/http_q_1", headers=user_headers)
+            self.assertEqual(res_user_delete.status_code, 403)
+
+            res_admin_delete = client.delete("/questions/http_q_1", headers=admin_headers)
+            self.assertEqual(res_admin_delete.status_code, 200)
+            self.assertTrue(res_admin_delete.json()["ok"])
+            self.assertEqual(res_admin_delete.json()["status"], "deleted")
+
+            res_deleted_list = client.get("/questions", headers=admin_headers)
+            self.assertEqual(res_deleted_list.json()["total"], 0)
+            self.assertFalse(index.query(QuestionQuery(title="新标题", question_type="single")).ok)
+
+            res_repeat_delete = client.delete("/questions/http_q_1", headers=admin_headers)
+            self.assertEqual(res_repeat_delete.status_code, 200)
+            self.assertEqual(res_repeat_delete.json()["status"], "deleted")
+
+            res_missing_delete = client.delete("/questions/missing", headers=admin_headers)
+            self.assertEqual(res_missing_delete.status_code, 404)
+            self.assertEqual(res_missing_delete.json()["error"]["code"], "QUESTION_NOT_FOUND")
+
     def test_completion_request_ignores_noisy_options_in_get(self) -> None:
         import os
 
@@ -1186,6 +1206,56 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertTrue(response.json()["ok"])
         self.assertEqual(response.json()["result"]["candidate_answer"], "B")
         self.assertEqual(response.json()["sources"][0]["source_name"], "ChaoxingReviewed")
+
+    def test_deleted_database_record_is_not_restored_from_startup_index(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            record = CanonicalQuestionRecord(
+                question_id="jsonl:deleted",
+                title_raw="单选题(1分)已删除题不应重启复活。",
+                question_type="single",
+                options_raw=("会复活", "不会复活"),
+                answer_raw="B",
+                explanation="删除后应保留墓碑状态。",
+                subject="verified",
+                chapter=None,
+                tags=("verified",),
+                source_name="VerifiedJsonl",
+                source_url="",
+                source_license="local",
+                source_split="verified",
+                source_record_path="verified.jsonl",
+            )
+            repository = SqlAlchemyQuestionRepository(database_path)
+            repository.save_question_record(record)
+            repository.soft_delete_question_record(record.question_id)
+
+            client = TestClient(
+                create_app(
+                    LocalQuestionIndex((record,)),
+                    auth_service=auth,
+                    platform_service=platform,
+                    require_auth=False,
+                )
+            )
+            response = client.get(
+                "/query",
+                params={
+                    "title": "单选题(1分)已删除题不应重启复活。",
+                    "options": "会复活#不会复活",
+                    "type": "single",
+                },
+            )
+            reloaded = SqlAlchemyQuestionRepository(database_path).get_question_record(
+                record.question_id
+            )
+
+        self.assertFalse(response.json()["ok"])
+        self.assertEqual(response.json()["error"]["code"], "NOT_FOUND")
+        self.assertIsNotNone(reloaded)
+        self.assertEqual(reloaded.to_dict()["status"], "deleted")
 
     def test_reviewed_record_overrides_ai_generated_duplicate_on_startup(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -8,7 +8,9 @@ testable boundary.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
+from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 import httpx
 
@@ -42,7 +44,7 @@ def request_text(
     try:
         response = httpx.request(
             method,
-            url,
+            normalize_container_loopback_url(url),
             headers=headers,
             json=json_body,
             params=params,
@@ -104,4 +106,50 @@ def post_json(
 
 def _proxy_from_env(proxy_env: str) -> str | None:
     proxy_url = os.getenv(proxy_env, "").strip()
-    return proxy_url or None
+    if not proxy_url:
+        return None
+    return normalize_container_loopback_url(proxy_url)
+
+
+def is_running_in_container() -> bool:
+    """Return whether the current process appears to run inside a container."""
+
+    return Path("/.dockerenv").exists()
+
+
+def normalize_container_loopback_url(
+    url: str,
+    *,
+    host_alias: str = "host.docker.internal",
+) -> str:
+    """Rewrite loopback URLs to a host alias when running inside a container.
+
+    Containerized services cannot reach host-side dependencies through ``127.0.0.1`` or
+    ``localhost``. When we detect those hostnames inside a container, rewrite them to the
+    explicit host gateway alias so existing host-bound integrations keep working.
+    """
+
+    raw = (url or "").strip()
+    if not raw or not is_running_in_container():
+        return raw
+    parsed = urlsplit(raw)
+    if parsed.hostname not in {"127.0.0.1", "localhost", "::1"}:
+        return raw
+    if not host_alias.strip():
+        return raw
+    netloc = host_alias.strip()
+    if parsed.port is not None:
+        netloc = f"{netloc}:{parsed.port}"
+    if parsed.username:
+        credentials = parsed.username
+        if parsed.password:
+            credentials += f":{parsed.password}"
+        netloc = f"{credentials}@{netloc}"
+    rewritten = SplitResult(
+        scheme=parsed.scheme,
+        netloc=netloc,
+        path=parsed.path,
+        query=parsed.query,
+        fragment=parsed.fragment,
+    )
+    return urlunsplit(rewritten)

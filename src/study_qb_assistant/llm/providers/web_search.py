@@ -562,6 +562,8 @@ def build_search_provider(
             if item_provider in {"duckduckgo", "ddg", "keyless", "free"}:
                 providers.append(DuckDuckGoInstantAnswerProvider(proxy_url=item_proxy_url))
                 providers.append(BingHtmlSearchProvider(proxy_url=item_proxy_url))
+            elif item_provider in {"bing", "bing-html", "bing_html"}:
+                providers.append(BingHtmlSearchProvider(proxy_url=item_proxy_url))
             elif item_provider == "google":
                 api_key = str(item.get("api_key") or "").strip()
                 cx = str(item.get("cx") or "").strip()
@@ -628,6 +630,9 @@ def build_search_provider(
         wants_keyless = any(name in requested for name in ("duckduckgo", "ddg", "keyless", "free"))
         if wants_keyless:
             providers.append(DuckDuckGoInstantAnswerProvider(proxy_url=proxy_url))
+            providers.append(BingHtmlSearchProvider(proxy_url=proxy_url))
+        wants_bing_only = any(name in requested for name in ("bing", "bing-html", "bing_html"))
+        if wants_bing_only and not wants_keyless:
             providers.append(BingHtmlSearchProvider(proxy_url=proxy_url))
         if "google" in requested:
             google_key = str(

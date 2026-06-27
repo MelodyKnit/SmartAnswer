@@ -24,6 +24,7 @@ if str(SRC_ROOT) not in sys.path:
 
 from study_qb_assistant.models import ModelAnswer, QuestionQuery  # noqa: E402
 from study_qb_assistant.llm.orchestration import SearchAugmentedModelProvider  # noqa: E402
+from study_qb_assistant.http_client import _proxy_from_env  # noqa: E402
 from study_qb_assistant.llm.providers.web_search import (  # noqa: E402
     CompositeWebSearchProvider,
     WebSearchResult,
@@ -162,10 +163,31 @@ class WebSearchTests(unittest.TestCase):
         self.assertIsNotNone(provider)
         self.assertEqual(provider.provider_name, "web-search")
 
+    def test_bing_search_provider_can_be_selected_explicitly(self) -> None:
+        """测试显式指定 bing 时，仅构建 Bing HTML 搜索提供者。"""
+        with patch.dict(os.environ, {"STQB_WEB_SEARCH_PROVIDER": "bing"}, clear=True):
+            provider = build_search_provider_from_env()
+
+        self.assertIsNotNone(provider)
+        assert isinstance(provider, CompositeWebSearchProvider)
+        self.assertEqual(len(provider.providers), 1)
+        self.assertEqual(provider.providers[0].provider_name, "bing-html-search")
+
     def test_search_provider_can_be_disabled(self) -> None:
         """测试通过将环境变量 `STQB_WEB_SEARCH_PROVIDER` 设置为 none，可显式关闭搜索。"""
         with patch.dict(os.environ, {"STQB_WEB_SEARCH_PROVIDER": "none"}, clear=True):
             self.assertIsNone(build_search_provider_from_env())
+
+    def test_container_loopback_proxy_url_is_rewritten(self) -> None:
+        """测试容器内搜索代理地址会从 localhost 改写到宿主机别名。"""
+
+        with patch.dict(os.environ, {"STQB_SEARCH_PROXY": "http://127.0.0.1:7890"}, clear=True):
+            with patch(
+                "study_qb_assistant.http_client.is_running_in_container", return_value=True
+            ):
+                proxy_url = _proxy_from_env("STQB_SEARCH_PROXY")
+
+        self.assertEqual(proxy_url, "http://host.docker.internal:7890")
 
     def test_web_search_configs_build_keyed_provider(self) -> None:
         """测试运行时联网搜索配置能用未脱敏密钥构建真实搜索适配器。"""
@@ -190,6 +212,28 @@ class WebSearchTests(unittest.TestCase):
         self.assertIsInstance(provider, CompositeWebSearchProvider)
         assert isinstance(provider, CompositeWebSearchProvider)
         self.assertEqual(provider.providers[0].provider_name, "google-custom-search")
+
+    def test_web_search_configs_can_build_bing_provider(self) -> None:
+        """测试新版联网搜索配置可以显式启用 Bing HTML 搜索。"""
+        runtime_config = {
+            "web_search_configs": json.dumps(
+                [
+                    {
+                        "id": "search_bing",
+                        "name": "Bing",
+                        "provider": "bing",
+                        "status": "active",
+                    }
+                ],
+                ensure_ascii=False,
+            )
+        }
+
+        provider = build_search_provider(runtime_config=runtime_config)
+
+        self.assertIsInstance(provider, CompositeWebSearchProvider)
+        assert isinstance(provider, CompositeWebSearchProvider)
+        self.assertEqual(provider.providers[0].provider_name, "bing-html-search")
 
     def test_composite_search_cools_down_failing_provider(self) -> None:
         """测试当某个搜索数据源崩溃时，Composite 复合搜索引擎的冷却（避让）机制。

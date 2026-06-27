@@ -37,7 +37,20 @@ class SqlAlchemyQuestionRepository:
         """把启动时加载的 JSONL 内存索引同步到数据库题库表。"""
 
         synced = 0
+        with self.session_factory() as session:
+            deleted_ids = set(
+                session.scalars(
+                    select(QuestionEntity.question_id).where(
+                        or_(
+                            QuestionEntity.status == "deleted",
+                            QuestionEntity.record_status == "deleted",
+                        )
+                    )
+                ).all()
+            )
         for record in index.records:
+            if record.question_id in deleted_ids:
+                continue
             self.save_question_record(record)
             synced += 1
         return synced
@@ -155,6 +168,31 @@ class SqlAlchemyQuestionRepository:
                 session.add(entity)
             self._apply_record_to_entity(entity, record, updated_at=now)
             session.commit()
+
+    def soft_delete_question_record(self, question_id: str) -> CanonicalQuestionRecord | None:
+        """软删除题库记录，并保留数据库审计数据。"""
+
+        now = time.time()
+        with self.session_factory() as session:
+            entity = session.scalar(
+                select(QuestionEntity).where(QuestionEntity.question_id == question_id)
+            )
+            if entity is None:
+                return None
+            metadata = json_object(entity.metadata_json, default={})
+            metadata["status"] = "deleted"
+            metadata["updated_at"] = str(now)
+            metadata.setdefault("created_at", str(float(entity.created_at or 0.0) or now))
+            metadata_text = json.dumps(metadata, ensure_ascii=False, sort_keys=True)
+            entity.metadata_json = metadata_text
+            entity.legacy_metadata_json = metadata_text
+            entity.status = "deleted"
+            entity.record_status = "deleted"
+            entity.is_active = 0
+            entity.review_required = 0
+            entity.updated_at = now
+            session.commit()
+            return self._record_from_entity(entity)
 
     def _apply_filters(
         self,
@@ -357,6 +395,22 @@ class IndexQuestionRepository:
         """保存题目记录到当前索引。"""
 
         self.index.add_or_replace(record)
+
+    def soft_delete_question_record(self, question_id: str) -> CanonicalQuestionRecord | None:
+        """从当前索引中软删除题目记录。"""
+
+        target = self.get_question_record(question_id)
+        if target is None:
+            return None
+        payload = target.to_dict()
+        metadata = dict(target.metadata)
+        metadata["status"] = "deleted"
+        metadata["updated_at"] = str(time.time())
+        payload["metadata"] = metadata
+        payload["source_split"] = "deleted"
+        deleted_record = CanonicalQuestionRecord.from_dict(payload)
+        self.index.remove(question_id)
+        return deleted_record
 
     def _filter_records(
         self,

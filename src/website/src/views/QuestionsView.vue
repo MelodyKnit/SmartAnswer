@@ -2,7 +2,7 @@
 /** 题库检索：允许输入题目片段查询题库，展示结果。管理员有编辑/操作题目的权限。 */
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { ApiException } from '@/api/http'
 import { questionApi } from '@/api/endpoints'
 import type { QuestionRecord } from '@/api/types'
@@ -15,6 +15,7 @@ const router = useRouter()
 // 数据状态
 const loading = ref(false)
 const saving = ref(false)
+const deleting = ref(false)
 const questions = ref<QuestionRecord[]>([])
 const total = ref(0)
 const allTypes = ref<string[]>([])
@@ -221,6 +222,39 @@ async function saveQuestion() {
   }
 }
 
+async function deleteQuestion(question: QuestionRecord) {
+  const title = question.title_raw || question.question_id
+  try {
+    await ElMessageBox.confirm(
+      `确认删除“${title.slice(0, 40)}”吗？删除后题目将不再参与自动命中，历史使用记录不受影响。`,
+      '删除题目',
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+        confirmButtonClass: 'el-button--danger',
+      },
+    )
+  } catch (err) {
+    if (err === 'cancel' || err === 'close') return
+    throw err
+  }
+
+  deleting.value = true
+  try {
+    await questionApi.remove(question.question_id)
+    ElMessage.success('题目已删除')
+    if (questions.value.length <= 1 && filter.page > 1) {
+      filter.page -= 1
+    }
+    await loadList()
+  } catch (err) {
+    ElMessage.error(err instanceof ApiException ? err.message : '删除题目失败')
+  } finally {
+    deleting.value = false
+  }
+}
+
 function reset() {
   filter.keyword = ''
   filter.source = ''
@@ -356,11 +390,16 @@ onMounted(loadList)
           </el-table-column>
 
           <!-- 操作 -->
-          <el-table-column label="操作" width="100" align="center">
+          <el-table-column label="操作" width="140" align="center">
             <template #default="{ row }">
-              <el-button type="primary" size="small" circle @click="openEdit(row)">
-                <el-icon><Edit /></el-icon>
-              </el-button>
+              <div class="flex justify-center gap-2">
+                <el-button type="primary" size="small" circle @click="openEdit(row)">
+                  <el-icon><Edit /></el-icon>
+                </el-button>
+                <el-button type="danger" size="small" circle :loading="deleting" @click="deleteQuestion(row)">
+                  <el-icon><Delete /></el-icon>
+                </el-button>
+              </div>
             </template>
           </el-table-column>
         </el-table>

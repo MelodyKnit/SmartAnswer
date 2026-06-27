@@ -323,6 +323,24 @@
 - 用于编辑题干、选项、答案、解析等题库字段。
 - 状态为 `active` / `trusted` 的记录会同步进入运行时本地索引；`low_confidence`、`pending`、`conflict` 等记录只在题库管理可见，不自动命中作答。
 
+#### `DELETE /questions/{question_id}`
+
+- 角色：`admin` / `superadmin`
+- 权限：`questions:write`
+- 采用软删除：数据库记录会标记为 `deleted`，默认题库列表不再显示，当前运行时本地索引会立即移除该题。
+- 不物理删除 JSONL 来源文件，也不删除历史使用日志、反馈记录、积分流水或调用追溯。
+- 启动同步 JSONL 题库时会跳过已软删除的同 ID 记录，避免删除后的题目重启后重新参与命中。
+- 重复删除同一题保持幂等，已删除记录继续返回 `ok: true`。
+- 成功响应：
+
+```json
+{
+  "ok": true,
+  "question_id": "xxx",
+  "status": "deleted"
+}
+```
+
 #### `POST /questions/reindex`
 
 - 角色：`admin` / `superadmin`

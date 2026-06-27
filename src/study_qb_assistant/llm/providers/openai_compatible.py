@@ -10,7 +10,7 @@ import json
 import os
 from dataclasses import dataclass
 
-from ...http_client import HttpClientError, request_text
+from ...http_client import HttpClientError, normalize_container_loopback_url, request_text
 from ...models import ModelAnswer, QuestionQuery
 from ...logger import log_event
 from .openai_answer_parser import (
@@ -46,6 +46,11 @@ class OpenAICompatibleProvider:
     max_completion_tokens: int = 700  # 最大生成 token 数量限制
     model_id: str = ""  # 平台模型配置记录 ID
     display_name: str = ""  # 平台展示名称
+
+    def __post_init__(self) -> None:
+        """规范化容器内访问宿主机服务的基础地址。"""
+
+        self.base_url = normalize_container_loopback_url(self.base_url)
 
     @classmethod
     def from_env(

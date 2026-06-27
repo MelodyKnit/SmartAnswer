@@ -25,6 +25,7 @@ from study_qb_assistant.llm.providers.openai_compatible import (  # noqa: E402
     OpenAICompatibleProvider,
     _decode_chat_response,
 )
+from study_qb_assistant.http_client import normalize_container_loopback_url  # noqa: E402
 from study_qb_assistant.models import ModelAnswer, QuestionQuery  # noqa: E402
 from study_qb_assistant.api.query_parser import split_options  # noqa: E402
 
@@ -60,6 +61,44 @@ class ProviderParsingTests(unittest.TestCase):
         self.assertEqual(answer.answer_text, "B")
         # 纯文本解析出的置信度不应过高
         self.assertLess(answer.confidence, 0.5)
+
+    def test_container_loopback_model_url_is_rewritten_to_host_alias(self) -> None:
+        """测试容器内 loopback 模型地址会自动改写为宿主机别名。"""
+
+        with patch(
+            "study_qb_assistant.http_client.is_running_in_container", return_value=True
+        ):
+            provider = OpenAICompatibleProvider(
+                base_url="http://127.0.0.1:3000/v1", model="demo"
+            )
+
+        self.assertEqual(provider.base_url, "http://host.docker.internal:3000/v1")
+
+    def test_non_loopback_model_url_is_kept_unchanged(self) -> None:
+        """测试外部模型地址不会被错误改写。"""
+
+        with patch(
+            "study_qb_assistant.http_client.is_running_in_container", return_value=True
+        ):
+            provider = OpenAICompatibleProvider(
+                base_url="https://api.example.com/v1", model="demo"
+            )
+
+        self.assertEqual(provider.base_url, "https://api.example.com/v1")
+
+    def test_container_loopback_url_helper_preserves_credentials_and_port(self) -> None:
+        """测试 loopback 地址改写时保留端口与鉴权凭据。"""
+
+        with patch(
+            "study_qb_assistant.http_client.is_running_in_container", return_value=True
+        ):
+            rewritten = normalize_container_loopback_url(
+                "http://user:pass@localhost:7890/proxy"
+            )
+
+        self.assertEqual(
+            rewritten, "http://user:pass@host.docker.internal:7890/proxy"
+        )
 
     def test_streaming_chat_response_is_joined(self) -> None:
         """测试流式传输的 SSE 数据包解码拼接逻辑。
