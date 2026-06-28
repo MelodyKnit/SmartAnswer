@@ -242,6 +242,7 @@ export interface SystemConfig {
   invite_bonus_points?: string
   manual_grant_default_points?: string
   redeem_code_default_points?: string
+  answer_retry_times?: string
   [key: string]: string | boolean | undefined
 }
 

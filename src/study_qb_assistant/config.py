@@ -28,6 +28,7 @@ ENV_PUBLIC_BASE_URL = "STQB_PUBLIC_BASE_URL"
 ENV_REQUIRE_AUTH = "STQB_REQUIRE_AUTH"
 ENV_OCS_API_KEYS = "STQB_OCS_API_KEYS"
 ENV_DEFAULT_USER_POINTS = "STQB_DEFAULT_USER_POINTS"
+ENV_ANSWER_RETRY_TIMES = "STQB_ANSWER_RETRY_TIMES"
 ENV_LOG_PATH = "STQB_LOG_PATH"
 ENV_CONSOLE_LOG = "STQB_CONSOLE_LOG"
 ENV_CONSOLE_LOG_LEVEL = "STQB_CONSOLE_LOG_LEVEL"
@@ -85,6 +86,7 @@ class GlobalConfig(BaseModel):
     require_auth: bool = False
     ocs_api_keys: tuple[str, ...] = ()
     default_user_points: int = 0
+    answer_retry_times: int = 3
 
     # 运行时日志：JSONL 文件、控制台开关与日志级别统一在这里声明。
     log_path: str = ""
@@ -279,6 +281,7 @@ def load_global_config() -> GlobalConfig:
         require_auth=env_bool(ENV_REQUIRE_AUTH, False),
         ocs_api_keys=env_csv(ENV_OCS_API_KEYS),
         default_user_points=env_int(ENV_DEFAULT_USER_POINTS, 0),
+        answer_retry_times=max(0, min(env_int(ENV_ANSWER_RETRY_TIMES, 3), 10)),
         log_path=env_text(ENV_LOG_PATH),
         console_log=env_bool(ENV_CONSOLE_LOG, True),
         console_log_level=env_text(ENV_CONSOLE_LOG_LEVEL, "INFO"),

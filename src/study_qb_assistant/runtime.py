@@ -103,6 +103,7 @@ def build_answer_service(
     )
     config = get_global_config()
     llm_runtime = platform_service.get_llm_runtime_config() if platform_service is not None else {}
+    system_config = platform_service.get_system_config() if platform_service is not None else {}
     allow_model_fallback = (
         bool_from_config(llm_runtime.get("llm_fallback"), default=config.llm_fallback)
         and provider is not None
@@ -126,6 +127,10 @@ def build_answer_service(
             or llm_runtime.get("ai_cache_min_confidence"),
             default=config.llm_cache_min_confidence,
         ),
+        answer_retry_times=int_from_config(
+            system_config.get("answer_retry_times"),
+            default=config.answer_retry_times,
+        ),
     )
     service.platform_service = platform_service
     return service
@@ -139,6 +144,7 @@ def refresh_answer_service(service: AnswerService, *, ai_learned_path: Path | No
     path = ai_learned_path or (config.data_normalized_dir / "ai-learned.jsonl")
     provider, llm_answer_cache = build_provider_stack(path, platform_service=platform_service)
     llm_runtime = platform_service.get_llm_runtime_config() if platform_service is not None else {}
+    system_config = platform_service.get_system_config() if platform_service is not None else {}
     service.model_provider = provider
     service.allow_model_fallback = (
         bool_from_config(llm_runtime.get("llm_fallback"), default=config.llm_fallback)
@@ -157,6 +163,10 @@ def refresh_answer_service(service: AnswerService, *, ai_learned_path: Path | No
         llm_runtime.get("llm_cache_min_confidence")
         or llm_runtime.get("ai_cache_min_confidence"),
         default=config.llm_cache_min_confidence,
+    )
+    service.answer_retry_times = int_from_config(
+        system_config.get("answer_retry_times"),
+        default=config.answer_retry_times,
     )
 
 

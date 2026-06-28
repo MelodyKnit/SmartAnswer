@@ -18,6 +18,7 @@ const form = reactive({
   invite_bonus_points: 0,
   manual_grant_default_points: 100,
   redeem_code_default_points: 50,
+  answer_retry_times: 3,
 })
 
 const billingForm = reactive({
@@ -38,6 +39,7 @@ async function load() {
     form.invite_bonus_points = Number(res.config.invite_bonus_points || 0)
     form.manual_grant_default_points = Number(res.config.manual_grant_default_points || 100)
     form.redeem_code_default_points = Number(res.config.redeem_code_default_points || 50)
+    form.answer_retry_times = Number(res.config.answer_retry_times || 3)
     billingForm.local_hit = Number(billing.billing.local_hit || 0)
     billingForm.web_search = Number(billing.billing.web_search || 0)
     billingForm.llm_fallback = Number(billing.billing.llm_fallback || 0)
@@ -56,6 +58,7 @@ async function save() {
       invite_bonus_points: String(form.invite_bonus_points),
       manual_grant_default_points: String(form.manual_grant_default_points),
       redeem_code_default_points: String(form.redeem_code_default_points),
+      answer_retry_times: String(form.answer_retry_times),
     }
 
     await systemConfigApi.update(body)
@@ -110,9 +113,12 @@ onMounted(load)
           <el-form-item label="兑换码默认积分">
             <el-input-number v-model="form.redeem_code_default_points" :min="1" class="w-full" />
           </el-form-item>
+          <el-form-item label="答题报错重试次数">
+            <el-input-number v-model="form.answer_retry_times" :min="0" :max="10" class="w-full" />
+          </el-form-item>
         </el-form>
         <p class="text-xs text-ink-muted">
-          查题扣费实时影响 OCS/API 调用；默认积分用于后台表单预填和后续注册奖励策略。
+          查题扣费实时影响 OCS/API 调用；默认积分用于后台表单预填和后续注册奖励策略。答题报错重试仅在 AI/联网增强链路抛异常时生效，0 表示不重试。
         </p>
       </div>
 

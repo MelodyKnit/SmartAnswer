@@ -5,13 +5,16 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from starlette.responses import JSONResponse
 
+from ....answering import AnswerService
 from ....auth import AuthError
 from ...context import (
     auth_error_response,
+    get_lookup_service,
     get_platform_service,
     require_permissions,
     require_roles,
 )
+from ...route_support import apply_system_config_to_process
 from ...schemas import SystemConfigPayload
 
 
@@ -44,6 +47,12 @@ def build_system_router() -> APIRouter:
             config = platform.set_system_config(values)
         except AuthError as exc:
             return auth_error_response(exc)
+        apply_system_config_to_process(platform)
+        lookup = get_lookup_service(request)
+        if isinstance(lookup, AnswerService):
+            from ....runtime import refresh_answer_service
+
+            refresh_answer_service(lookup)
         return JSONResponse({"ok": True, "config": config, "reload_required": False})
 
     @router.get("/project-update/status")

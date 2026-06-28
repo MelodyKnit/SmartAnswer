@@ -14,6 +14,7 @@ from .models import CanonicalQuestionRecord, ModelAnswer, QueryResult, QuestionQ
 from .llm.providers import ModelProvider
 from .option_labels import canonicalize_label_answer
 from .search import LocalQuestionIndex
+from .logger import log_event
 
 
 class QuestionRecordRepository(Protocol):
@@ -41,6 +42,7 @@ class AnswerService:
         no_local_bank_mode: bool = False,
         llm_answer_cache: LlmAnswerCache | None = None,
         trusted_confidence_threshold: float = 0.95,
+        answer_retry_times: int = 3,
     ) -> None:
         """初始化答案决议服务。
 
@@ -53,6 +55,7 @@ class AnswerService:
             no_local_bank_mode: 是否跳过本地题库与 AI 本地缓存，仅保留规则和模型链路。
             llm_answer_cache: LLM 自动沉淀题库管理实例（可选）。
             trusted_confidence_threshold: AI 题目可自动进入本地命中链路的最低置信度。
+            answer_retry_times: AI/联网增强答题链路在异常时的重试次数。
         """
         self.index = index
         self.model_provider = model_provider
@@ -62,6 +65,7 @@ class AnswerService:
         self.no_local_bank_mode = no_local_bank_mode
         self.llm_answer_cache = llm_answer_cache
         self.trusted_confidence_threshold = min(max(trusted_confidence_threshold, 0.0), 1.0)
+        self.answer_retry_times = max(0, min(int(answer_retry_times), 10))
         self.platform_service: object | None = None
         self.question_repository: QuestionRecordRepository | None = None
 
@@ -150,6 +154,7 @@ class AnswerService:
             "provider": provider_name,
             "fallback_enabled": self.allow_model_fallback,
             "explain_local_matches": self.explain_local_matches,
+            "answer_retry_times": self.answer_retry_times,
         }
         if self.model_provider is not None:
             # 提取大模型提供商的内部特征字段用于诊断
@@ -208,9 +213,10 @@ class AnswerService:
         if cached_answer is not None:
             return self._result_from_cached_answer(query, cached_answer)
 
+        attempts = 0
         try:
             # 调用大模型并对模型返回的结果进行后处理修复
-            model_answer = repair_model_answer(query, self.model_provider.answer(query))
+            model_answer, attempts = self._retry_model_answer(query)
         except Exception as exc:
             # 大模型接口异常时，返回明确的报错结果并标记需要审核
             return QueryResult(
@@ -224,7 +230,10 @@ class AnswerService:
                 review_required=True,
                 error_code="MODEL_ERROR",
                 error_message=str(exc),
-                debug={"provider": self.model_provider.provider_name},
+                debug={
+                    "provider": self.model_provider.provider_name,
+                    "retry_attempts": str(attempts or (self.answer_retry_times + 1)),
+                },
             )
 
         confidence = max(0.0, min(model_answer.confidence, 1.0))
@@ -289,8 +298,40 @@ class AnswerService:
                 "provider": self.model_provider.provider_name,
                 "llm_cache_status": cache_status,
                 "question_bank_status": learned_status if has_answer_content else "no_answer",
+                "retry_attempts": str(attempts),
             },
         )
+
+    def _retry_model_answer(self, query: QuestionQuery) -> tuple[ModelAnswer, int]:
+        """在 AI/联网增强答题链路异常时按配置次数重试。"""
+
+        assert self.model_provider is not None
+        max_attempts = max(1, self.answer_retry_times + 1)
+        last_error: Exception | None = None
+        attempts = 0
+        for attempt in range(1, max_attempts + 1):
+            attempts = attempt
+            try:
+                answer = self.model_provider.answer(query)
+                return repair_model_answer(query, answer), attempt
+            except Exception as exc:
+                last_error = exc
+                if attempt >= max_attempts:
+                    break
+                log_event(
+                    "answer_retry",
+                    {
+                        "request_id": query.request_id,
+                        "title": query.title,
+                        "provider": self.model_provider.provider_name,
+                        "attempt": attempt,
+                        "max_retries": self.answer_retry_times,
+                        "error": str(exc),
+                    },
+                )
+        assert last_error is not None
+        setattr(last_error, "stqb_retry_attempts", attempts)
+        raise last_error
 
     def _result_from_direct_answer(
         self,

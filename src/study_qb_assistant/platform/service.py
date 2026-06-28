@@ -1547,13 +1547,16 @@ class PlatformService:
             if key not in SYSTEM_CONFIG_KEYS:
                 raise AuthError("INVALID_INPUT", f"不支持的系统配置项: {key}", http_status=400)
             text = "" if value is None else str(value).strip()
-            if key.endswith("_points"):
+            if key.endswith("_points") or key == "answer_retry_times":
                 try:
-                    text = str(max(0, int(text or "0")))
+                    parsed = max(0, int(text or "0"))
                 except ValueError as exc:
                     raise AuthError(
                         "INVALID_INPUT", f"{key} 必须为非负整数", http_status=400
                     ) from exc
+                if key == "answer_retry_times":
+                    parsed = min(parsed, 10)
+                text = str(parsed)
             normalized[key] = text
         with self._lock:
             self.repository.set_settings("system_config", normalized)

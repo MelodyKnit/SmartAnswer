@@ -41,6 +41,25 @@ class LowConfidenceProvider:
         return ModelAnswer("A", "公私合营", f"低置信度解析：{query.title}", 0.43)
 
 
+class FlakyProvider:
+    """前几次抛异常、随后成功的模型提供者。"""
+
+    provider_name = "flaky-provider"
+
+    def __init__(self, failures_before_success: int, *, answer_text: str = "正确答案") -> None:
+        self.failures_before_success = failures_before_success
+        self.answer_text = answer_text
+        self.attempts = 0
+
+    def answer(self, query: QuestionQuery) -> ModelAnswer:
+        """按预设次数抛异常，随后返回成功答案。"""
+
+        self.attempts += 1
+        if self.attempts <= self.failures_before_success:
+            raise RuntimeError(f"transient failure #{self.attempts}")
+        return ModelAnswer("A", self.answer_text, f"重试成功：{query.title}", 0.99)
+
+
 class FastAPILocalServerTests(unittest.TestCase):
     """Covers route behavior that used to live in the hand-written HTTP handler."""
 
@@ -307,6 +326,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                     "invite_bonus_points": "30",
                     "manual_grant_default_points": "88",
                     "redeem_code_default_points": "66",
+                    "answer_retry_times": "4",
                 },
                 headers=headers,
             )
@@ -426,6 +446,7 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertFalse(system_config_patch.json()["reload_required"])
         self.assertEqual(system_config_get.json()["config"]["smart_proto_enabled"], "false")
         self.assertEqual(system_config_get.json()["config"]["custom_proto_header"], "https")
+        self.assertEqual(system_config_get.json()["config"]["answer_retry_times"], "4")
         self.assertNotIn("llm_base_url", system_config_get.json()["config"])
         self.assertNotIn("ai_cache_enabled", system_config_get.json()["config"])
         self.assertIn("https://example.com/ocs/query", ocs_config_after_proto_change.text)
@@ -1778,6 +1799,116 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertIsNone(response.json()["data"]["answer"])
         self.assertEqual(response.json()["data"]["ai"]["error_code"], "LOW_CONFIDENCE_ANSWER")
         self.assertEqual(questions.json()["total"], 1)
+
+    def test_model_fallback_retries_and_only_records_usage_once(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            flaky_provider = FlakyProvider(2, answer_text="重试后的正确答案")
+            lookup = AnswerService(
+                LocalQuestionIndex(()),
+                model_provider=flaky_provider,
+                allow_model_fallback=True,
+                answer_retry_times=3,
+            )
+            client = TestClient(
+                create_app(lookup, auth_service=auth, platform_service=platform, require_auth=True)
+            )
+
+            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            session = client.post(
+                "/auth/login", json={"username": "owner", "password": "password123"}
+            )
+            headers = {"Authorization": f"Bearer {session.json()['token']}"}
+            token_create = client.post("/tokens", json={"description": "retry"}, headers=headers)
+            raw_api_token = token_create.json()["token"]
+            response = client.get(
+                "/ocs/query",
+                params={
+                    "title": "单选题(1分)重试后成功",
+                    "type": "single",
+                    "options": "重试后的正确答案#干扰项",
+                },
+                headers={"Authorization": f"Bearer {raw_api_token}"},
+            )
+            usage_logs = platform.list_usage_logs(username="owner")
+            token_info = next(
+                item
+                for item in platform.list_tokens(user_id=auth.get_user("owner")["user_id"])
+                if item["token_id"] == token_create.json()["token_info"]["token_id"]
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["code"], 0)
+        self.assertEqual(response.json()["data"]["answer"], "A")
+        self.assertEqual(response.json()["data"]["ai"]["resolution_mode"], "llm_fallback")
+        self.assertEqual(response.json()["data"]["ai"]["confidence"], 0.99)
+        self.assertEqual(flaky_provider.attempts, 3)
+        self.assertEqual(len(usage_logs), 1)
+        self.assertEqual(token_info["usage_count"], 1)
+        self.assertEqual(token_info["quota_used"], 1)
+
+    def test_model_fallback_returns_model_error_after_retry_exhausted(self) -> None:
+        flaky_provider = FlakyProvider(10)
+        lookup = AnswerService(
+            LocalQuestionIndex(()),
+            model_provider=flaky_provider,
+            allow_model_fallback=True,
+            answer_retry_times=3,
+        )
+
+        result = lookup.query(QuestionQuery(title="单选题(1分)总是失败", question_type="single"))
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error_code, "MODEL_ERROR")
+        self.assertEqual(result.debug["retry_attempts"], "4")
+        self.assertEqual(result.debug["provider"], "flaky-provider")
+        self.assertEqual(flaky_provider.attempts, 4)
+
+    def test_model_fallback_does_not_retry_when_retry_times_is_zero(self) -> None:
+        flaky_provider = FlakyProvider(1)
+        lookup = AnswerService(
+            LocalQuestionIndex(()),
+            model_provider=flaky_provider,
+            allow_model_fallback=True,
+            answer_retry_times=0,
+        )
+
+        result = lookup.query(QuestionQuery(title="单选题(1分)不重试", question_type="single"))
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error_code, "MODEL_ERROR")
+        self.assertEqual(result.debug["retry_attempts"], "1")
+        self.assertEqual(flaky_provider.attempts, 1)
+
+    def test_system_config_retry_times_hot_refreshes_answer_service(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            lookup = AnswerService(
+                LocalQuestionIndex(()),
+                answer_retry_times=0,
+            )
+            client = TestClient(
+                create_app(lookup, auth_service=auth, platform_service=platform, require_auth=True)
+            )
+
+            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            headers = {
+                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'owner', 'password': 'password123'}).json()['token']}"
+            }
+
+            patch = client.patch(
+                "/system-config",
+                json={"answer_retry_times": "3"},
+                headers=headers,
+            )
+
+        self.assertTrue(patch.json()["ok"])
+        self.assertEqual(patch.json()["config"]["answer_retry_times"], "3")
+        self.assertEqual(lookup.answer_retry_times, 3)
 
 
 def _sample_index() -> LocalQuestionIndex:

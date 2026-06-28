@@ -9,6 +9,7 @@ SYSTEM_CONFIG_KEYS = {
     "invite_bonus_points",
     "manual_grant_default_points",
     "redeem_code_default_points",
+    "answer_retry_times",
 }
 
 LLM_RUNTIME_CONFIG_KEYS = {
@@ -45,6 +46,7 @@ SYSTEM_CONFIG_DEFAULTS = {
     "invite_bonus_points": "0",
     "manual_grant_default_points": "100",
     "redeem_code_default_points": "50",
+    "answer_retry_times": "3",
 }
 
 LLM_RUNTIME_DEFAULTS = {
@@ -69,6 +71,7 @@ LLM_RUNTIME_DEFAULTS = {
 SYSTEM_CONFIG_ENV_MAP = {
     "smart_proto_enabled": "STQB_SMART_PROTO_ENABLED",
     "custom_proto_header": "STQB_CUSTOM_PROTO_HEADER",
+    "answer_retry_times": "STQB_ANSWER_RETRY_TIMES",
 }
 
 LLM_RUNTIME_ENV_MAP = {
