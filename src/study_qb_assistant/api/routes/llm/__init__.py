@@ -142,6 +142,24 @@ def build_llm_router() -> APIRouter:
         refresh_models(lookup)
         return JSONResponse({"ok": True})
 
+    @router.post("/llm-models/{model_id}/test")
+    def llm_model_test(
+        request: Request,
+        platform: PlatformServiceDep,
+        model_id: str,
+    ) -> JSONResponse:
+        denied = require_roles(request, {"admin", "superadmin"})
+        if denied:
+            return denied
+        denied = require_permissions(request, {"llm:write"})
+        if denied:
+            return denied
+        try:
+            res = platform.test_llm_model(model_id)
+        except AuthError as exc:
+            return auth_error_response(exc)
+        return JSONResponse(res)
+
     @router.get("/llm-stats")
     def llm_stats(request: Request, platform: PlatformServiceDep) -> JSONResponse:
         denied = require_roles(request, {"admin", "superadmin"})

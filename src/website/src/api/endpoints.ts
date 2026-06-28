@@ -19,6 +19,7 @@ import type {
   RedeemCode,
   RolePermission,
   RuntimeEvent,
+  UsageAudit,
   SystemConfig,
   TokenImportScriptResponse,
   User,
@@ -73,7 +74,10 @@ export const queryApi = {
 /* ---------------- 运行状态 / 系统日志 ---------------- */
 export const systemApi = {
   status: () => api.get<Record<string, unknown>>('/status'),
-  recentEvents: () => api.get<{ ok: true; events: RuntimeEvent[] }>('/debug/recent'),
+  recentEvents: (params?: { start_date?: string; end_date?: string }) =>
+    api.get<{ ok: true; events: RuntimeEvent[] }>('/debug/recent', params),
+  usageAudit: (date?: string) =>
+    api.get<{ ok: true; audit: UsageAudit }>('/debug/usage-audit', date ? { date } : {}),
 }
 
 /* ---------------- API 令牌 ---------------- */
@@ -111,8 +115,11 @@ export const usageApi = {
     limit?: number
   } = {}) =>
     api.get<{ ok: true; logs: UsageLog[]; total: number }>('/usage-logs', params),
-  summary: (days = 30) =>
-    api.get<{ ok: true; summary: DashboardSummary }>('/dashboard/summary', { days }),
+  summary: (days = 30, scope?: 'self' | 'global') =>
+    api.get<{ ok: true; summary: DashboardSummary }>('/dashboard/summary', {
+      days,
+      ...(scope ? { scope } : {}),
+    }),
 }
 
 export const feedbackApi = {
@@ -148,8 +155,14 @@ export const feedbackApi = {
 
 /* ---------------- 工作台 / 排行 / 消息 ---------------- */
 export const dashboardApi = {
-  workbench: () => api.get<{ ok: true; workbench: Workbench }>('/dashboard/workbench'),
-  rankings: (params: { days?: number; limit?: number; dimension?: string } = {}) =>
+  workbench: (scope?: 'self' | 'global') =>
+    api.get<{ ok: true; workbench: Workbench }>('/dashboard/workbench', scope ? { scope } : {}),
+  rankings: (params: {
+    days?: number
+    limit?: number
+    dimension?: string
+    scope?: 'self' | 'global'
+  } = {}) =>
     api.get<{ ok: true; rankings: RankingItem[] }>('/dashboard/rankings', params),
 }
 
@@ -302,6 +315,16 @@ export const llmApi = {
     api.patch<{ ok: true; model: LlmModel }>(`/llm-models/${encodeURIComponent(modelId)}`, body),
   deleteModel: (modelId: string) =>
     api.delete<{ ok: true }>(`/llm-models/${encodeURIComponent(modelId)}`),
+  testModel: (modelId: string) =>
+    api.post<{
+      ok: boolean
+      elapsed_ms: number
+      error?: string
+      candidate_answer?: string
+      answer_text?: string
+      explanation?: string
+      confidence?: number
+    }>(`/llm-models/${encodeURIComponent(modelId)}/test`),
   stats: () => api.get<{ ok: true; stats: LlmCallStat[] }>('/llm-stats'),
   traces: (params: {
     request_id?: string

@@ -72,6 +72,7 @@ export interface UsageLog {
   provider: string
   elapsed_ms: number
   created_at: number
+  request_id?: string
   options?: string | string[] | null
 }
 
@@ -180,6 +181,7 @@ export interface TrendPoint {
 }
 
 export interface Workbench {
+  scope: 'self' | 'global'
   hero: { title: string; subtitle: string; badges: string[] }
   quick_actions: {
     key: string
@@ -202,11 +204,35 @@ export interface Workbench {
 }
 
 export interface DashboardSummary {
+  scope: 'self' | 'global'
   days: number
   points_used: number
   query_count: number
   resolution_modes: Record<string, number>
   trend: { date: string; query_count: number; points_used: number }[]
+}
+
+export interface UsageAudit {
+  date: string
+  timezone: string
+  evidence_status: string
+  gaps: string[]
+  usage_logs: {
+    count: number
+    resolution_modes: Record<string, number>
+  }
+  api_tokens: {
+    usage_count_total: number
+    quota_used_total: number
+    daily_count_available: boolean
+  }
+  runtime_logs: {
+    query_event_count: number
+    malformed_line_count: number
+  }
+  diff: {
+    usage_logs_vs_runtime_queries: number
+  }
 }
 
 export interface SystemConfig {

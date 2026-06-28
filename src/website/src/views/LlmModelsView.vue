@@ -329,6 +329,7 @@ function moveSearchConfig(index: number, direction: 'up' | 'down') {
 /* ---------------- 模型配置 ---------------- */
 const modelsLoading = ref(false)
 const models = ref<LlmModel[]>([])
+const testingModelId = ref<string | null>(null)
 
 async function loadModels() {
   modelsLoading.value = true
@@ -336,6 +337,70 @@ async function loadModels() {
     models.value = (await llmApi.models()).models
   } finally {
     modelsLoading.value = false
+  }
+}
+
+async function handleTestModel(row: LlmModel) {
+  testingModelId.value = row.model_id
+  ElMessage.info(`正在诊断模型「${row.name}」连通性，请稍候...`)
+  try {
+    const res = await llmApi.testModel(row.model_id)
+    if (res.ok) {
+      ElMessageBox.alert(
+        `<div class="space-y-2">
+          <div class="text-success font-bold flex items-center gap-1">✓ 连通性测试通过</div>
+          <div class="text-xs text-ink-soft">本次调用通过结构化自检模型推理通道。</div>
+          <hr class="border-line/45 my-2" />
+          <div class="grid grid-cols-3 gap-y-1.5 text-xs">
+            <span class="text-ink-muted">测试耗时:</span>
+            <span class="col-span-2 font-medium">${res.elapsed_ms.toFixed(0)} ms</span>
+            <span class="text-ink-muted">推荐参考:</span>
+            <span class="col-span-2 font-bold text-success">${res.candidate_answer || '—'}</span>
+            <span class="text-ink-muted">匹配答案:</span>
+            <span class="col-span-2 text-ink">${res.answer_text || '—'}</span>
+            <span class="text-ink-muted">置信得分:</span>
+            <span class="col-span-2 font-medium">${(res.confidence ?? 0).toFixed(2)}</span>
+          </div>
+          <hr class="border-line/45 my-2" />
+          <div class="text-xs text-ink-muted">推理证据与说明:</div>
+          <div class="bg-canvas p-2.5 rounded text-[11px] max-h-32 overflow-y-auto whitespace-pre-wrap leading-relaxed mt-1 text-ink-soft border border-line">
+            ${res.explanation || '模型未返回解析描述。'}
+          </div>
+         </div>`,
+        `模型「${row.name}」测试报告`,
+        { 
+          confirmButtonText: '关闭详情',
+          dangerouslyUseHTMLString: true,
+          customClass: 'max-w-md'
+        }
+      )
+    } else {
+      ElMessageBox.alert(
+        `<div class="space-y-2">
+          <div class="text-rose-600 font-bold flex items-center gap-1">✗ 连通性测试失败</div>
+          <hr class="border-line/45 my-2" />
+          <div class="grid grid-cols-3 gap-1 text-xs">
+            <span class="text-ink-muted">测试耗时:</span>
+            <span class="col-span-2 font-medium">${res.elapsed_ms.toFixed(0)} ms</span>
+          </div>
+          <hr class="border-line/45 my-2" />
+          <div class="text-xs text-rose-700 font-medium">错误信息追踪:</div>
+          <div class="bg-rose-50/50 dark:bg-rose-950/20 text-rose-700 border border-rose-100 p-2.5 rounded text-[11px] max-h-40 overflow-y-auto whitespace-pre-wrap leading-relaxed font-mono mt-1">
+            ${res.error || '未获知具体底层错误原因，请检查端口监听。'}
+          </div>
+         </div>`,
+        `模型「${row.name}」诊断报告`,
+        { 
+          confirmButtonText: '我知道了',
+          dangerouslyUseHTMLString: true,
+          customClass: 'max-w-md'
+        }
+      )
+    }
+  } catch (err) {
+    ElMessage.error(err instanceof ApiException ? err.message : '与后端服务测试联调通信异常')
+  } finally {
+    testingModelId.value = null
   }
 }
 
@@ -816,9 +881,10 @@ onMounted(async () => {
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column v-if="auth.isSuperAdmin" label="操作" width="130" align="right">
+            <el-table-column v-if="auth.isSuperAdmin" label="操作" width="180" align="right">
               <template #default="{ row }">
                 <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+                <el-button link type="warning" :loading="testingModelId === row.model_id" @click="handleTestModel(row)">测试</el-button>
                 <el-button link type="danger" @click="removeModel(row)">删除</el-button>
               </template>
             </el-table-column>

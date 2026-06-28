@@ -5,10 +5,13 @@ from __future__ import annotations
 import json
 import secrets
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from threading import RLock
+from zoneinfo import ZoneInfo
 
 from ..auth import AuthError
+from ..logger import log_path
 from ..llm.config import service as llm_config_service
 from ..storage.platform_repository import SqlAlchemyPlatformRepository
 from .config import (
@@ -73,6 +76,8 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, tuple[str, ...]] = {
     ),
     "user": ("dashboard:self", "tokens:self", "feedback:self"),
 }
+
+LOCAL_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 
 class PlatformService:
@@ -205,18 +210,15 @@ class PlatformService:
             self.repository.delete_token(token_id)
 
     def resolve_token(self, raw_token: str | None) -> dict | None:
-        """解析原始 Bearer 令牌，并记录最后使用时间。"""
+        """解析原始 Bearer 令牌，并校验当前剩余额度。"""
         with self._lock:
             if not raw_token:
                 return None
             token = self.repository.find_token_by_hash(hash_token(raw_token))
             if token is None or token.status != "active":
                 return None
-            if token.quota_limit >= 0 and token.usage_count >= token.quota_limit:
+            if token.quota_limit >= 0 and token.quota_used >= token.quota_limit:
                 raise AuthError("TOKEN_QUOTA_EXCEEDED", "API Key 调用额度已用完", http_status=401)
-            token.last_used_at = time.time()
-            token.usage_count += 1
-            self.repository.save_token(token)
             return public_token_dict(token)
 
     def get_billing(self) -> dict:
@@ -308,6 +310,7 @@ class PlatformService:
         provider: str,
         points_cost: int,
         elapsed_ms: float = 0.0,
+        request_id: str = "",
     ) -> dict:
         """记录一次查题调用的审计日志。"""
         record = UsageLogRecord(
@@ -321,12 +324,17 @@ class PlatformService:
             answer=answer,
             confidence=confidence,
             points_cost=points_cost,
-            provider=provider,
+            provider=(provider or "unknown").strip() or "unknown",
             elapsed_ms=elapsed_ms,
             created_at=time.time(),
+            request_id=request_id.strip(),
         )
         with self._lock:
-            self.repository.save_usage_log(record)
+            self.repository.commit_usage_transaction(
+                record,
+                token_id=token_id,
+                points_cost=points_cost,
+            )
         return record.to_dict()
 
     def list_usage_logs(
@@ -337,6 +345,8 @@ class PlatformService:
         keyword: str = "",
         limit: int = 100,
         offset: int = 0,
+        start_time: float | None = None,
+        end_time: float | None = None,
     ) -> list[dict]:
         """按用户与关键词筛选使用日志。"""
         with self._lock:
@@ -348,22 +358,90 @@ class PlatformService:
                     keyword=keyword,
                     limit=limit,
                     offset=offset,
+                    start_time=start_time,
+                    end_time=end_time,
                 )
             ]
 
     def count_usage_logs(
-        self, *, username: str | None = None, token_id: str = "", keyword: str = ""
+        self,
+        *,
+        username: str | None = None,
+        token_id: str = "",
+        keyword: str = "",
+        start_time: float | None = None,
+        end_time: float | None = None,
     ) -> int:
         """统计使用日志数量。"""
-
-        return len(
-            self.list_usage_logs(
+        with self._lock:
+            return self.repository.count_usage_logs(
                 username=username,
                 token_id=token_id,
                 keyword=keyword,
-                limit=5000,
+                start_time=start_time,
+                end_time=end_time,
             )
+
+    def usage_scope(self, *, username: str, role: str, scope: str = "self") -> tuple[str, str | None]:
+        """归一化统计范围，并返回仓储层需要的用户过滤器。"""
+
+        requested_scope = (scope or "").strip().lower()
+        if not requested_scope:
+            requested_scope = "global" if role in {"admin", "superadmin"} else "self"
+        if requested_scope == "global" and role in {"admin", "superadmin"}:
+            return "global", None
+        return "self", username
+
+    def usage_overview(
+        self,
+        *,
+        username: str,
+        role: str,
+        scope: str,
+        start_time: float,
+        end_time: float,
+    ) -> dict[str, float | str]:
+        """返回当前口径下的概览统计。"""
+
+        effective_scope, username_filter = self.usage_scope(
+            username=username,
+            role=role,
+            scope=scope,
         )
+        with self._lock:
+            metrics = self.repository.usage_overview(
+                username=username_filter,
+                start_time=start_time,
+                end_time=end_time,
+            )
+        return {"scope": effective_scope, **metrics}
+
+    def usage_distribution(
+        self,
+        field: str,
+        *,
+        username: str,
+        role: str,
+        scope: str,
+        start_time: float,
+        end_time: float,
+        limit: int | None = None,
+    ) -> list[tuple[str, int]]:
+        """返回指定统计口径下的分布聚合。"""
+
+        _effective_scope, username_filter = self.usage_scope(
+            username=username,
+            role=role,
+            scope=scope,
+        )
+        with self._lock:
+            return self.repository.usage_counts_by_field(
+                field,
+                username=username_filter,
+                start_time=start_time,
+                end_time=end_time,
+                limit=limit,
+            )
 
     def create_feedback(
         self,
@@ -912,6 +990,49 @@ class PlatformService:
 
         return llm_config_service.active_llm_models(self.repository, self._lock)
 
+    def test_llm_model(self, model_id: str) -> dict:
+        """测试指定大模型配置的连通性与接口解析。"""
+        from ..llm.providers.openai_compatible import OpenAICompatibleProvider
+        from ..models import QuestionQuery
+
+        model_dict = self.get_llm_model(model_id, reveal_secret=True)
+        provider = OpenAICompatibleProvider(
+            base_url=model_dict["base_url"],
+            model=model_dict["model"],
+            api_key=model_dict["api_key"] or None,
+            stream=model_dict["stream"],
+            max_completion_tokens=model_dict["max_completion_tokens"],
+            timeout_seconds=model_dict["timeout_seconds"],
+            model_id=model_id,
+            display_name=model_dict["name"],
+        )
+
+        query = QuestionQuery(
+            title="请验证接口，这道题的答案是: A。此为系统连通性测试，请输出: A",
+            options=("A", "B"),
+            question_type="single",
+        )
+
+        t0 = time.time()
+        try:
+            res = provider.answer(query)
+            elapsed = (time.time() - t0) * 1000
+            return {
+                "ok": True,
+                "elapsed_ms": elapsed,
+                "candidate_answer": res.candidate_answer,
+                "answer_text": res.answer_text,
+                "explanation": res.explanation,
+                "confidence": res.confidence,
+            }
+        except Exception as exc:
+            elapsed = (time.time() - t0) * 1000
+            return {
+                "ok": False,
+                "elapsed_ms": elapsed,
+                "error": str(exc),
+            }
+
     def save_llm_call_trace(self, payload: dict) -> None:
         """落库一条 LLM 调用追溯，失败不影响答题主流程。"""
 
@@ -1077,58 +1198,64 @@ class PlatformService:
         days: int = 1,
         limit: int = 10,
         dimension: str = "provider",
-        username: str | None = None,
+        username: str,
+        role: str = "user",
+        scope: str = "self",
     ) -> list[dict]:
         """构造工作台排行统计。"""
-        logs = self.list_usage_logs(username=username, limit=5000)
-        since = time.time() - max(1, min(days, 365)) * 86400
-        scoped = [log for log in logs if float(log["created_at"]) >= since]
-        counters: dict[str, int] = {}
-        for log in scoped:
-            if dimension == "question_type":
-                label = str(log.get("question_type") or "unknown")
-            elif dimension == "provider":
-                label = str(log.get("provider") or "unknown")
-            else:
-                label = str(log.get("username") or "unknown")
-            counters[label] = counters.get(label, 0) + 1
-        ranked = sorted(counters.items(), key=lambda item: item[1], reverse=True)
+        start_time, end_time = recent_day_range(days)
+        normalized_dimension = normalize_ranking_dimension(dimension)
+        rows = self.usage_distribution(
+            normalized_dimension,
+            username=username,
+            role=role,
+            scope=scope,
+            start_time=start_time,
+            end_time=end_time,
+            limit=max(1, min(limit, 50)),
+        )
         return [
             {"rank": index + 1, "label": label, "count": count}
-            for index, (label, count) in enumerate(ranked[: max(1, min(limit, 50))])
+            for index, (label, count) in enumerate(rows)
         ]
 
     def dashboard_workbench(
-        self, *, user_id: str, username: str, points: int, role: str = "user"
+        self,
+        *,
+        user_id: str,
+        username: str,
+        points: int,
+        role: str = "user",
+        scope: str = "self",
     ) -> dict:
         """构造工作台首页聚合数据。"""
-        logs = self.list_usage_logs(username=username, limit=1000)
-        today = time.time() - 86400
-        today_logs = [log for log in logs if float(log["created_at"]) >= today]
+        today_start, today_end = current_local_day_range()
+        effective_scope, _ = self.usage_scope(username=username, role=role, scope=scope)
+        overview = self.usage_overview(
+            username=username,
+            role=role,
+            scope=effective_scope,
+            start_time=today_start,
+            end_time=today_end,
+        )
+        total_count = int(overview["total_count"])
         success_rate = (
             100.0
-            if not today_logs
-            else round(
-                sum(1 for log in today_logs if log.get("resolution_mode") != "model_error")
-                / len(today_logs)
-                * 100,
-                1,
+            if total_count == 0
+            else round(float(overview["success_count"]) / total_count * 100, 1)
+        )
+        avg_response = round(float(overview["avg_elapsed_ms"]) / 1000, 2) if total_count else 0.0
+        distribution = {
+            key: value
+            for key, value in self.usage_distribution(
+                "question_type",
+                username=username,
+                role=role,
+                scope=effective_scope,
+                start_time=today_start,
+                end_time=today_end,
             )
-        )
-        elapsed_samples = [
-            float(log.get("elapsed_ms") or 0.0)
-            for log in today_logs
-            if float(log.get("elapsed_ms") or 0.0) > 0
-        ]
-        avg_response = (
-            round(sum(elapsed_samples) / len(elapsed_samples) / 1000, 2)
-            if elapsed_samples
-            else 0.0
-        )
-        distribution: dict[str, int] = {}
-        for log in today_logs:
-            question_type = str(log.get("question_type") or "unknown")
-            distribution[question_type] = distribution.get(question_type, 0) + 1
+        }
         notifications = self.list_notifications(user_id=user_id, limit=5)
         wallet = self.wallet_summary(user_id=user_id, username=username, points=points)
         is_admin = role in {"admin", "superadmin"}
@@ -1136,7 +1263,9 @@ class PlatformService:
             days=1,
             limit=5,
             dimension="provider",
-            username=None if is_admin else username,
+            username=username,
+            role=role,
+            scope=effective_scope,
         )
         quick_actions = (
             [
@@ -1202,6 +1331,7 @@ class PlatformService:
             ]
         )
         return {
+            "scope": effective_scope,
             "hero": {
                 "title": "答题接入平台 全新上线",
                 "subtitle": "更稳定的接口服务，更便捷的接入体验，助力平台高效接入答题能力",
@@ -1209,29 +1339,141 @@ class PlatformService:
             },
             "quick_actions": quick_actions,
             "overview": {
-                "today_calls": len(today_logs),
+                "today_calls": total_count,
                 "success_rate": success_rate,
                 "avg_response_seconds": avg_response,
                 "remaining_points": wallet["points"],
             },
-            "trend": {"days": 7, "items": self._daily_trend(logs, 7)},
+            "trend": {"days": 7, "items": self._usage_trend(username, role, effective_scope, 7)},
             "question_distribution": distribution,
             "ranking_preview": ranking_preview,
             "notifications_preview": notifications,
             "service_status": self._dashboard_service_status(),
         }
 
-    def _daily_trend(self, logs: list[dict], days: int) -> list[dict]:
-        buckets: dict[str, int] = {}
-        for offset in range(days):
-            stamp = time.time() - ((days - offset - 1) * 86400)
-            key = time.strftime("%m-%d", time.localtime(stamp))
-            buckets[key] = 0
-        for log in logs:
-            key = time.strftime("%m-%d", time.localtime(float(log["created_at"])))
-            if key in buckets:
-                buckets[key] += 1
-        return [{"date": key, "count": value} for key, value in buckets.items()]
+    def dashboard_summary(
+        self,
+        *,
+        username: str,
+        role: str,
+        scope: str,
+        days: int = 30,
+    ) -> dict:
+        """返回工作台摘要统计。"""
+
+        start_time, end_time = recent_day_range(days)
+        overview = self.usage_overview(
+            username=username,
+            role=role,
+            scope=scope,
+            start_time=start_time,
+            end_time=end_time,
+        )
+        effective_scope = str(overview["scope"])
+        return {
+            "scope": effective_scope,
+            "days": max(1, min(days, 365)),
+            "points_used": int(overview["points_used"]),
+            "query_count": int(overview["total_count"]),
+            "resolution_modes": {
+                key: value
+                for key, value in self.usage_distribution(
+                    "resolution_mode",
+                    username=username,
+                    role=role,
+                    scope=effective_scope,
+                    start_time=start_time,
+                    end_time=end_time,
+                )
+            },
+            "trend": self._usage_summary_trend(username, role, effective_scope, days),
+        }
+
+    def usage_audit(self, date_text: str = "") -> dict:
+        """返回指定自然日的调用对账结果。"""
+
+        date_label, start_time, end_time = local_day_range_from_text(date_text)
+        with self._lock:
+            usage_log_count = self.repository.count_usage_logs(
+                start_time=start_time,
+                end_time=end_time,
+            )
+            resolution_modes = {
+                key: value
+                for key, value in self.repository.usage_counts_by_field(
+                    "resolution_mode",
+                    start_time=start_time,
+                    end_time=end_time,
+                )
+            }
+            token_totals = self.repository.token_counter_totals()
+        query_event_count, malformed_lines = count_query_events_for_date(date_label)
+        gaps = [
+            "api_tokens 仅保留累计 usage_count/quota_used，无法直接还原指定自然日的独立 token 日计数。"
+        ]
+        return {
+            "date": date_label,
+            "timezone": "Asia/Shanghai",
+            "evidence_status": "partial",
+            "gaps": gaps,
+            "usage_logs": {
+                "count": usage_log_count,
+                "resolution_modes": resolution_modes,
+            },
+            "api_tokens": {
+                **token_totals,
+                "daily_count_available": False,
+            },
+            "runtime_logs": {
+                "query_event_count": query_event_count,
+                "malformed_line_count": malformed_lines,
+            },
+            "diff": {
+                "usage_logs_vs_runtime_queries": usage_log_count - query_event_count,
+            },
+        }
+
+    def _usage_trend(self, username: str, role: str, scope: str, days: int) -> list[dict]:
+        effective_scope, username_filter = self.usage_scope(
+            username=username,
+            role=role,
+            scope=scope,
+        )
+        del effective_scope
+        items: list[dict] = []
+        for label, start_time, end_time in day_windows(days):
+            with self._lock:
+                count = self.repository.count_usage_logs(
+                    username=username_filter,
+                    start_time=start_time,
+                    end_time=end_time,
+                )
+            items.append({"date": label[5:], "count": count})
+        return items
+
+    def _usage_summary_trend(self, username: str, role: str, scope: str, days: int) -> list[dict]:
+        effective_scope, username_filter = self.usage_scope(
+            username=username,
+            role=role,
+            scope=scope,
+        )
+        del effective_scope
+        items: list[dict] = []
+        for label, start_time, end_time in day_windows(days):
+            with self._lock:
+                overview = self.repository.usage_overview(
+                    username=username_filter,
+                    start_time=start_time,
+                    end_time=end_time,
+                )
+            items.append(
+                {
+                    "date": label,
+                    "query_count": int(overview["total_count"]),
+                    "points_used": int(overview["points_used"]),
+                }
+            )
+        return items
 
     def _dashboard_service_status(self) -> dict[str, str]:
         """返回工作台服务状态摘要。"""
@@ -1327,6 +1569,111 @@ class PlatformService:
         }
         env.update(self.llm_runtime_env())
         return env
+
+
+def normalize_ranking_dimension(value: str) -> str:
+    """把排行维度收敛到受支持集合。"""
+
+    normalized = (value or "provider").strip().lower()
+    if normalized in {"provider", "question_type", "username"}:
+        return normalized
+    return "provider"
+
+
+def local_day_range_from_text(date_text: str = "") -> tuple[str, float, float]:
+    """把日期文本转换为上海时区自然日范围。"""
+
+    if date_text.strip():
+        target = datetime.strptime(date_text.strip(), "%Y-%m-%d").replace(tzinfo=LOCAL_TIMEZONE)
+    else:
+        now = datetime.now(LOCAL_TIMEZONE)
+        target = datetime(now.year, now.month, now.day, tzinfo=LOCAL_TIMEZONE)
+    start = datetime(target.year, target.month, target.day, tzinfo=LOCAL_TIMEZONE)
+    end = start + timedelta(days=1)
+    return start.strftime("%Y-%m-%d"), start.timestamp(), end.timestamp()
+
+
+def local_day_window_from_dates(
+    start_date: str = "",
+    end_date: str = "",
+) -> tuple[float | None, float | None]:
+    """把日期区间文本转换为上海时区自然日的闭开区间。"""
+
+    normalized_start = start_date.strip()
+    normalized_end = end_date.strip()
+    start_time: float | None = None
+    end_time: float | None = None
+    start_label = ""
+    end_label = ""
+
+    if normalized_start:
+        start_label, start_time, _ignored = local_day_range_from_text(normalized_start)
+    if normalized_end:
+        end_label, _ignored, end_time = local_day_range_from_text(normalized_end)
+
+    if start_time is not None and end_time is not None and start_label > end_label:
+        raise ValueError("start_date must be on or before end_date")
+    return start_time, end_time
+
+
+def current_local_day_range() -> tuple[float, float]:
+    """返回当前上海自然日的时间戳范围。"""
+
+    _, start_time, end_time = local_day_range_from_text("")
+    return start_time, end_time
+
+
+def recent_day_range(days: int) -> tuple[float, float]:
+    """返回最近 N 个自然日的范围，包含今天。"""
+
+    normalized_days = max(1, min(int(days), 365))
+    today_label, _today_start, today_end = local_day_range_from_text("")
+    start_day = (
+        datetime.strptime(today_label, "%Y-%m-%d").replace(tzinfo=LOCAL_TIMEZONE)
+        - timedelta(days=normalized_days - 1)
+    )
+    return start_day.timestamp(), today_end
+
+
+def day_windows(days: int) -> list[tuple[str, float, float]]:
+    """返回最近 N 个自然日的标签和边界。"""
+
+    normalized_days = max(1, min(int(days), 365))
+    start_time, _end_time = recent_day_range(normalized_days)
+    start_day = datetime.fromtimestamp(start_time, LOCAL_TIMEZONE)
+    windows: list[tuple[str, float, float]] = []
+    for offset in range(normalized_days):
+        day_start = start_day + timedelta(days=offset)
+        day_end = day_start + timedelta(days=1)
+        windows.append((day_start.strftime("%Y-%m-%d"), day_start.timestamp(), day_end.timestamp()))
+    return windows
+
+
+def count_query_events_for_date(date_label: str) -> tuple[int, int]:
+    """统计运行日志中指定自然日的 query 事件数量。"""
+
+    path = log_path()
+    if not path.exists():
+        return 0, 0
+    query_count = 0
+    malformed_lines = 0
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                malformed_lines += 1
+                if f'"ts": "{date_label}' in line and '"event": "query"' in line:
+                    query_count += 1
+                continue
+            if str(payload.get("ts") or "")[:10] != date_label:
+                continue
+            if str(payload.get("event") or "") == "query":
+                query_count += 1
+    return query_count, malformed_lines
 
 
 def normalized_confidence(value: object) -> float:

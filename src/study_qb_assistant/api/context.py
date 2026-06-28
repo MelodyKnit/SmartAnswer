@@ -15,7 +15,7 @@ from ..search import LocalQuestionIndex
 from ..storage.question_repository import IndexQuestionRepository, SqlAlchemyQuestionRepository
 
 SESSION_COOKIE = "stqb_session"
-PROTECTED_PATHS = {"/query", "/ocs/query", "/status", "/debug/recent"}
+PROTECTED_PATHS = {"/query", "/ocs/query", "/status", "/debug/recent", "/debug/usage-audit"}
 
 
 def get_lookup_service(request: Request) -> LocalQuestionIndex | AnswerService:

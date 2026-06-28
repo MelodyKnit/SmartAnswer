@@ -21,10 +21,20 @@ const logs = ref<UsageLog[]>([])
 const tokens = ref<ApiToken[]>([])
 const page = ref(1)
 const total = ref(0)
+
+const getLocalDateString = (d = new Date()) => {
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+const todayStr = getLocalDateString()
 const filters = reactive({
   username: '',
   keyword: '',
   token_id: '',
+  dateRange: [todayStr, todayStr] as [string, string] | null,
   limit: DEFAULT_PAGE_SIZE.USAGE_LOGS,
 })
 
@@ -38,6 +48,10 @@ async function load() {
     }
     if (auth.isAdmin && filters.username.trim()) params.username = filters.username.trim()
     if (filters.token_id) params.token_id = filters.token_id
+    if (filters.dateRange && filters.dateRange.length === 2) {
+      params.start_date = filters.dateRange[0]
+      params.end_date = filters.dateRange[1]
+    }
     const [res, toks] = await Promise.all([
       usageApi.logs(params),
       tokenApi.list().catch(() => ({ tokens: [] as ApiToken[] })),
@@ -126,6 +140,8 @@ function resetFilters() {
   filters.username = ''
   filters.keyword = ''
   filters.token_id = ''
+  const todayStr = getLocalDateString()
+  filters.dateRange = [todayStr, todayStr]
   filters.limit = DEFAULT_PAGE_SIZE.USAGE_LOGS
   page.value = 1
   load()
@@ -161,6 +177,17 @@ onMounted(load)
         class="!w-60"
         :prefix-icon="'Search'"
         @keyup.enter="search"
+      />
+      <el-date-picker
+        v-model="filters.dateRange"
+        type="daterange"
+        range-separator="至"
+        start-placeholder="开始日期"
+        end-placeholder="结束日期"
+        value-format="YYYY-MM-DD"
+        :clearable="false"
+        class="!w-80"
+        @change="search"
       />
       <el-select
         v-model="filters.token_id"

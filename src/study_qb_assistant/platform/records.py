@@ -20,6 +20,7 @@ class ApiTokenRecord:
     created_at: float
     last_used_at: float = 0.0
     usage_count: int = 0
+    quota_used: int = 0
     quota_limit: int = -1
     reject_low_confidence: bool = False
     min_answer_confidence: float = 0.0
@@ -35,8 +36,8 @@ class ApiTokenRecord:
             "created_at": self.created_at,
             "last_used_at": self.last_used_at,
             "usage_count": self.usage_count,
+            "quota_used": self.quota_used,
             "quota_limit": self.quota_limit,
-            "quota_used": self.usage_count,
             "reject_low_confidence": self.reject_low_confidence,
             "min_answer_confidence": self.min_answer_confidence,
         }
@@ -53,6 +54,7 @@ class ApiTokenRecord:
             created_at=float(payload.get("created_at") or time.time()),
             last_used_at=float(payload.get("last_used_at") or 0.0),
             usage_count=int(payload.get("usage_count") or 0),
+            quota_used=int(payload.get("quota_used", payload.get("usage_count", 0)) or 0),
             quota_limit=int(payload.get("quota_limit", -1)),
             reject_low_confidence=bool(payload.get("reject_low_confidence") or False),
             min_answer_confidence=float(payload.get("min_answer_confidence") or 0.0),
@@ -76,6 +78,7 @@ class UsageLogRecord:
     provider: str
     elapsed_ms: float
     created_at: float
+    request_id: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -92,6 +95,7 @@ class UsageLogRecord:
             "provider": self.provider,
             "elapsed_ms": self.elapsed_ms,
             "created_at": self.created_at,
+            "request_id": self.request_id,
         }
 
     @classmethod
@@ -110,6 +114,7 @@ class UsageLogRecord:
             provider=str(payload.get("provider") or ""),
             elapsed_ms=float(payload.get("elapsed_ms") or 0.0),
             created_at=float(payload.get("created_at") or time.time()),
+            request_id=str(payload.get("request_id") or ""),
         )
 
 

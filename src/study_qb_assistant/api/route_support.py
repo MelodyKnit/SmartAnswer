@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import secrets
 import time
 from pathlib import Path
 
@@ -14,9 +16,10 @@ from ..answering import AnswerService
 from ..auth import AuthError, AuthService
 from ..models import QuestionQuery
 from ..platform import PlatformService
-from ..logger import log_event, recent_events
+from ..platform.service import local_day_range_from_text
+from ..logger import log_event, log_path, recent_events
 from ..search import LocalQuestionIndex
-from .context import authorization_bearer, current_user
+from .context import auth_error_response, authorization_bearer, current_user
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 STATIC_PAGES = {
@@ -36,10 +39,15 @@ def run_lookup(
     query: QuestionQuery,
 ) -> JSONResponse:
     """执行查题主流程，并完成计费、日志与响应转换。"""
+    if not query.request_id:
+        query.request_id = secrets.token_hex(12)
     started = time.time()
     result = lookup.query(query)
     elapsed_seconds = time.time() - started
-    token = record_usage(platform, auth, request, query, result, elapsed_seconds)
+    try:
+        token = record_usage(platform, auth, request, query, result, elapsed_seconds)
+    except AuthError as exc:
+        return auth_error_response(exc)
     log_query(path, method, query, result, elapsed_seconds)
     return JSONResponse(response_for_path(path, result, platform=platform, token=token))
 
@@ -55,8 +63,15 @@ def should_serve_spa_shell(request: Request, path: str) -> bool:
         return True
     if "." in Path(normalized).name:
         return False
-    accept = request.headers.get("Accept", "")
-    return "text/html" in accept
+    accept = request.headers.get("Accept", "").lower()
+    if "text/html" in accept:
+        return True
+
+    # 某些浏览器或代理在页面刷新时不会稳定带上 text/html，
+    # 但仍会通过 Fetch Metadata 标识这是一次真实文档导航。
+    fetch_mode = request.headers.get("Sec-Fetch-Mode", "").lower()
+    fetch_dest = request.headers.get("Sec-Fetch-Dest", "").lower()
+    return fetch_mode == "navigate" and fetch_dest in {"document", "iframe"}
 
 
 def response_for_path(
@@ -85,9 +100,47 @@ def status_payload(lookup: LocalQuestionIndex | AnswerService) -> dict:
     }
 
 
-def debug_events_payload() -> dict[str, object]:
-    """返回最近一批结构化事件。"""
-    return {"ok": True, "events": recent_events()}
+def debug_events_payload(start_date: str = "", end_date: str = "") -> dict[str, object]:
+    """返回最近一批结构化事件，支持根据日期区间过滤本地日志文件。"""
+    limit = 2000
+    start_date = start_date.strip()
+    end_date = end_date.strip()
+
+    if not start_date and not end_date:
+        return {"ok": True, "events": recent_events()}
+
+    path = log_path()
+    if not path.exists():
+        return {"ok": True, "events": []}
+
+    if start_date and not end_date:
+        end_date = start_date
+    elif end_date and not start_date:
+        start_date = end_date
+
+    start_label, _start_time, _start_end = local_day_range_from_text(start_date)
+    end_label, _end_start, _end_time = local_day_range_from_text(end_date)
+    if start_label > end_label:
+        raise ValueError("日期范围无效")
+
+    events = []
+    with path.open("r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            line_str = line.strip()
+            if not line_str:
+                continue
+            try:
+                event_dict = json.loads(line_str)
+            except json.JSONDecodeError:
+                continue
+            ts = event_dict.get("ts")
+            if not ts or len(str(ts)) < 10:
+                continue
+            event_date = str(ts)[:10]
+            if start_label <= event_date <= end_label:
+                events.append(event_dict)
+
+    return {"ok": True, "events": events[-limit:]}
 
 
 def log_query(path: str, method: str, query: QuestionQuery, result, elapsed_seconds: float) -> None:
@@ -96,6 +149,7 @@ def log_query(path: str, method: str, query: QuestionQuery, result, elapsed_seco
     log_event(
         "query",
         {
+            "request_id": query.request_id,
             "method": method,
             "path": path,
             "title": query.title,
@@ -188,10 +242,6 @@ def record_usage(
     if user is None:
         return token
     points_cost = platform.calculate_points_cost(str(result.resolution_mode))
-    try:
-        auth.consume_points(str(user["username"]), points_cost)
-    except AuthError:
-        points_cost = 0
     platform.record_usage(
         user_id=str(user["user_id"]),
         username=str(user["username"]),
@@ -201,9 +251,10 @@ def record_usage(
         resolution_mode=str(result.resolution_mode),
         answer=result.candidate_answer or result.answer_text,
         confidence=float(result.confidence),
-        provider=str(result.debug.get("provider") or ""),
+        provider=usage_provider_name(result),
         points_cost=points_cost,
         elapsed_ms=round(max(0.0, elapsed_seconds) * 1000, 2),
+        request_id=str(query.request_id or ""),
     )
     return token
 
@@ -268,3 +319,16 @@ def apply_system_config_to_process(platform: PlatformService) -> None:
     """把系统配置写回当前进程环境变量。"""
     for env_key, value in platform.runtime_env().items():
         os.environ[env_key] = value
+
+
+def usage_provider_name(result) -> str:
+    """为 usage log 解析稳定的 provider 名称。"""
+
+    provider = str(result.debug.get("provider") or "").strip()
+    if provider:
+        return provider
+    if result.sources:
+        source_name = str(result.sources[0].get("source_name") or "").strip()
+        if source_name:
+            return source_name
+    return "unknown"

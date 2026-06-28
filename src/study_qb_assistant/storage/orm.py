@@ -44,6 +44,7 @@ class ApiTokenEntity(Base):
     created_at: Mapped[float] = mapped_column(Float)
     last_used_at: Mapped[float] = mapped_column(Float, default=0.0)
     usage_count: Mapped[int] = mapped_column(Integer, default=0)
+    quota_used: Mapped[int] = mapped_column(Integer, default=0)
     quota_limit: Mapped[int] = mapped_column(Integer, default=-1)
     reject_low_confidence: Mapped[int] = mapped_column(Integer, default=0)
     min_answer_confidence: Mapped[float] = mapped_column(Float, default=0.0)
@@ -105,6 +106,7 @@ class UsageLogEntity(Base):
     provider: Mapped[str] = mapped_column(String(128), default="")
     elapsed_ms: Mapped[float] = mapped_column(Float, default=0.0)
     created_at: Mapped[float] = mapped_column(Float, index=True)
+    request_id: Mapped[str] = mapped_column(String(64), default="", index=True)
 
 
 class FeedbackEntity(Base):

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /** 工作台首页：聚合展示 hero、常用功能、数据概览、趋势、题型分布、排行与消息。
  *  全部数据来自 GET /dashboard/workbench（单次聚合），无任何伪造数据。 */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import type { EChartsOption } from 'echarts'
 import { ElMessage } from 'element-plus'
@@ -23,6 +23,7 @@ const importScriptContent = ref('')
 const importScriptConfig = ref<OcsConfig | null>(null)
 const selectableTokens = ref<ApiToken[]>([])
 const isTokenSecretMissing = ref(false)
+const scope = ref<'self' | 'global'>(auth.isAdmin ? 'global' : 'self')
 
 const QUICK_ICONS: Record<string, string> = {
   create_api_key: 'Key',
@@ -41,8 +42,9 @@ const ROUTE_MAP: Record<string, string> = {
 async function load() {
   loading.value = true
   try {
-    const res = await dashboardApi.workbench()
+    const res = await dashboardApi.workbench(scope.value)
     data.value = res.workbench
+    scope.value = res.workbench.scope
   } finally {
     loading.value = false
   }
@@ -135,6 +137,9 @@ const overviewCards = computed(() => {
   ]
 })
 
+const canSwitchScope = computed(() => auth.isAdmin)
+const scopeLabel = computed(() => (scope.value === 'global' ? '全站' : '我的'))
+
 const trendOption = computed<EChartsOption>(() => {
   const items = data.value?.trend.items ?? []
   return {
@@ -207,6 +212,18 @@ const donutOption = computed<EChartsOption>(() => ({
 onMounted(() => {
   load()
 })
+
+watch(
+  () => auth.isAdmin,
+  (isAdmin) => {
+    scope.value = isAdmin ? 'global' : 'self'
+  },
+)
+
+watch(scope, (_value, oldValue) => {
+  if (!oldValue) return
+  load()
+})
 </script>
 
 <template>
@@ -253,7 +270,19 @@ onMounted(() => {
 
       <!-- 数据概览 -->
       <section>
-        <h3 class="mb-3 text-base font-semibold text-ink">数据概览 <span class="text-xs font-normal text-ink-muted">(实时统计)</span></h3>
+        <div class="mb-3 flex items-center justify-between gap-3">
+          <h3 class="text-base font-semibold text-ink">
+            数据概览 <span class="text-xs font-normal text-ink-muted">({{ scopeLabel }} / 自然日统计)</span>
+          </h3>
+          <el-segmented
+            v-if="canSwitchScope"
+            v-model="scope"
+            :options="[
+              { label: '全站', value: 'global' },
+              { label: '我的', value: 'self' },
+            ]"
+          />
+        </div>
         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <div v-for="c in overviewCards" :key="c.label" class="app-card flex items-center justify-between p-5 transition hover:shadow-float">
             <div>
@@ -273,11 +302,11 @@ onMounted(() => {
       <!-- 趋势 + 题型分布 -->
       <section class="grid grid-cols-1 gap-5 lg:grid-cols-3">
         <div class="app-card p-5 lg:col-span-2">
-          <h3 class="mb-2 text-base font-semibold text-ink">近 {{ data.trend.days }} 日调用趋势</h3>
+          <h3 class="mb-2 text-base font-semibold text-ink">近 {{ data.trend.days }} 日调用趋势 <span class="text-xs font-normal text-ink-muted">({{ scopeLabel }})</span></h3>
           <EChart :option="trendOption" height="280px" />
         </div>
         <div class="app-card p-5">
-          <h3 class="mb-2 text-base font-semibold text-ink">题型分布 <span class="text-xs font-normal text-ink-muted">(今日)</span></h3>
+          <h3 class="mb-2 text-base font-semibold text-ink">题型分布 <span class="text-xs font-normal text-ink-muted">(今日 / {{ scopeLabel }})</span></h3>
           <div v-if="distributionTotal === 0" class="flex h-[280px] items-center justify-center text-sm text-ink-muted">
             今日暂无调用数据
           </div>
@@ -320,7 +349,7 @@ onMounted(() => {
       <section class="grid grid-cols-1 gap-5 lg:grid-cols-2">
         <div class="app-card p-5">
           <div class="mb-3 flex items-center justify-between">
-            <h3 class="text-base font-semibold text-ink">排行统计 <span class="text-xs font-normal text-ink-muted">(今日调用次数)</span></h3>
+            <h3 class="text-base font-semibold text-ink">排行统计 <span class="text-xs font-normal text-ink-muted">(今日调用次数 / {{ scopeLabel }})</span></h3>
             <el-button link type="primary" size="small" @click="router.push('/usage-logs')">更多</el-button>
           </div>
           <div v-if="data.ranking_preview.length === 0" class="py-10 text-center text-sm text-ink-muted">

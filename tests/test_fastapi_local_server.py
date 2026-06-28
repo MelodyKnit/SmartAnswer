@@ -6,7 +6,10 @@ import json
 import sys
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
+from unittest import mock
+from zoneinfo import ZoneInfo
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
@@ -19,6 +22,7 @@ if str(SRC_ROOT) not in sys.path:
 from study_qb_assistant.answering import AnswerService  # noqa: E402
 from study_qb_assistant.api.local_server import create_app  # noqa: E402
 from study_qb_assistant.auth import AuthService  # noqa: E402
+from study_qb_assistant.logger import log_path  # noqa: E402
 from study_qb_assistant.models import CanonicalQuestionRecord, ModelAnswer, QuestionQuery  # noqa: E402
 from study_qb_assistant.platform import PlatformService  # noqa: E402
 from study_qb_assistant.search import LocalQuestionIndex  # noqa: E402
@@ -85,6 +89,10 @@ class FastAPILocalServerTests(unittest.TestCase):
         client = TestClient(create_app(_sample_index(), require_auth=True))
 
         page = client.get("/users", headers={"Accept": "text/html"})
+        tokens_page = client.get(
+            "/tokens",
+            headers={"Accept": "*/*", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document"},
+        )
         future_page = client.get("/future-admin-page", headers={"Accept": "text/html"})
         future_api = client.get("/future-api", headers={"Accept": "application/json"})
         missing_asset = client.get("/assets/missing.js", headers={"Accept": "*/*"})
@@ -93,6 +101,8 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(page.status_code, 200)
         self.assertIn("text/html", page.headers["content-type"])
         self.assertIn("<!doctype html", page.text.lower())
+        self.assertEqual(tokens_page.status_code, 200)
+        self.assertIn("text/html", tokens_page.headers["content-type"])
         self.assertEqual(future_page.status_code, 200)
         self.assertIn("text/html", future_page.headers["content-type"])
         self.assertEqual(future_api.status_code, 404)
@@ -101,6 +111,37 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(missing_asset.json()["error"]["code"], "NOT_FOUND")
         self.assertEqual(missing_api.status_code, 404)
         self.assertEqual(missing_api.json()["error"]["code"], "NOT_FOUND")
+
+    def test_tokens_api_keeps_json_for_non_navigation_requests(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                )
+            )
+
+            client.post("/auth/register", json={"username": "tester", "password": "password123"})
+            login = client.post(
+                "/auth/login",
+                json={"username": "tester", "password": "password123"},
+            )
+            token = login.json()["token"]
+            response = client.get(
+                "/tokens",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "*/*",
+                    "Sec-Fetch-Mode": "cors",
+                    "Sec-Fetch-Dest": "empty",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["ok"], True)
+        self.assertIn("tokens", response.json())
 
     def test_require_auth_blocks_data_routes_and_allows_registered_session(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -287,6 +328,18 @@ class FastAPILocalServerTests(unittest.TestCase):
                 headers=headers,
             )
             llm_models = client.get("/llm-models", headers=headers)
+            
+            # 测试模型连通性测试接口（未登录拦截验证）
+            model_id_for_test = llm_models.json()["models"][0]["model_id"]
+            # 创建一个全新的未授权客户端来检验 401 拦截（因为 client 原有 Cookie 缓存了之前的会话）
+            unauth_client = TestClient(client.app)
+            blocked_test = unauth_client.post(f"/llm-models/{model_id_for_test}/test")
+            self.assertEqual(blocked_test.status_code, 401)
+            
+            # 使用超级管理员进行连通性测试调用（因 mock，连接被拦截或失败是预期结果，主要验证逻辑链路畅通）
+            test_response = client.post(f"/llm-models/{model_id_for_test}/test", headers=headers)
+            self.assertIn("ok", test_response.json())
+            
             platform.save_llm_call_trace(
                 {
                     "request_id": "req-evidence",
@@ -327,6 +380,8 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(query.status_code, 200)
         self.assertGreaterEqual(len(usage_after.json()["logs"]), 1)
         self.assertGreater(usage_after.json()["logs"][0]["elapsed_ms"], 0)
+        self.assertTrue(usage_after.json()["logs"][0]["request_id"])
+        self.assertTrue(usage_after.json()["logs"][0]["provider"])
         self.assertNotEqual(
             workbench_after_query.json()["workbench"]["overview"]["avg_response_seconds"], 0.82
         )
@@ -893,8 +948,9 @@ class FastAPILocalServerTests(unittest.TestCase):
             user_headers = {
                 "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'alice', 'password': 'password123'}).json()['token']}"
             }
+            alice_user_id = auth.get_user("alice")["user_id"]
             platform.record_usage(
-                user_id="alice-id",
+                user_id=alice_user_id,
                 username="alice",
                 token_id=None,
                 title="第一题",
@@ -907,7 +963,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 elapsed_ms=1000.0,
             )
             platform.record_usage(
-                user_id="alice-id",
+                user_id=alice_user_id,
                 username="alice",
                 token_id=None,
                 title="第二题",
@@ -926,6 +982,247 @@ class FastAPILocalServerTests(unittest.TestCase):
         overview = workbench.json()["workbench"]["overview"]
         self.assertEqual(overview["today_calls"], 2)
         self.assertEqual(overview["avg_response_seconds"], 2.0)
+
+    def test_usage_logs_date_filters_follow_shanghai_natural_day_and_validate_input(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                )
+            )
+
+            client.post("/auth/register", json={"username": "alice", "password": "password123"})
+            alice_headers = {
+                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'alice', 'password': 'password123'}).json()['token']}"
+            }
+            user = auth.get_user("alice")
+            target_day = "2026-06-27"
+            next_day = "2026-06-28"
+            end_of_day = datetime(2026, 6, 27, 23, 59, 59, 999000, tzinfo=ZoneInfo("Asia/Shanghai"))
+            next_day_start = datetime(2026, 6, 28, 0, 0, 0, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+            platform.record_usage(
+                user_id=user["user_id"],
+                username="alice",
+                token_id=None,
+                title="自然日尾部题目",
+                question_type="single",
+                resolution_mode="local_hit",
+                answer="A",
+                confidence=1.0,
+                provider="local",
+                points_cost=0,
+                elapsed_ms=120.0,
+            )
+            platform.record_usage(
+                user_id=user["user_id"],
+                username="alice",
+                token_id=None,
+                title="次日零点题目",
+                question_type="single",
+                resolution_mode="local_hit",
+                answer="B",
+                confidence=1.0,
+                provider="local",
+                points_cost=0,
+                elapsed_ms=160.0,
+            )
+            with platform.repository.session_factory() as session:
+                first_log = session.execute(
+                    text(
+                        """
+                        SELECT log_id FROM usage_logs
+                        WHERE username = 'alice'
+                        ORDER BY created_at ASC
+                        LIMIT 1
+                        """
+                    )
+                ).scalar_one()
+                second_log = session.execute(
+                    text(
+                        """
+                        SELECT log_id FROM usage_logs
+                        WHERE username = 'alice'
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                        """
+                    )
+                ).scalar_one()
+                session.execute(
+                    text("UPDATE usage_logs SET created_at = :created_at WHERE log_id = :log_id"),
+                    {"created_at": end_of_day.timestamp(), "log_id": first_log},
+                )
+                session.execute(
+                    text("UPDATE usage_logs SET created_at = :created_at WHERE log_id = :log_id"),
+                    {"created_at": next_day_start.timestamp(), "log_id": second_log},
+                )
+                session.commit()
+
+            target_response = client.get(
+                "/usage-logs",
+                params={"start_date": target_day, "end_date": target_day},
+                headers=alice_headers,
+            )
+            next_day_response = client.get(
+                "/usage-logs",
+                params={"start_date": next_day, "end_date": next_day},
+                headers=alice_headers,
+            )
+            invalid_response = client.get(
+                "/usage-logs",
+                params={"start_date": "2026-06-xx"},
+                headers=alice_headers,
+            )
+
+        self.assertEqual(target_response.status_code, 200)
+        self.assertEqual(target_response.json()["total"], 1)
+        self.assertEqual(target_response.json()["logs"][0]["title"], "自然日尾部题目")
+        self.assertEqual(next_day_response.status_code, 200)
+        self.assertEqual(next_day_response.json()["total"], 1)
+        self.assertEqual(next_day_response.json()["logs"][0]["title"], "次日零点题目")
+        self.assertEqual(invalid_response.status_code, 400)
+        self.assertEqual(invalid_response.json()["error"]["code"], "INVALID_DATE")
+
+    def test_debug_recent_tolerates_bad_log_lines_and_validates_date_format(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            log_file = Path(directory) / "service.jsonl"
+            with mock.patch.dict(
+                "os.environ",
+                {"STQB_LOG_PATH": str(log_file)},
+                clear=False,
+            ):
+                auth = AuthService(database_path)
+                platform = PlatformService(database_path)
+                client = TestClient(
+                    create_app(
+                        _sample_index(),
+                        auth_service=auth,
+                        platform_service=platform,
+                        require_auth=True,
+                    )
+                )
+                client.post("/auth/register", json={"username": "owner", "password": "password123"})
+                owner_headers = {
+                    "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'owner', 'password': 'password123'}).json()['token']}"
+                }
+
+                path = log_path()
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with path.open("wb") as handle:
+                    handle.write(
+                        b'{"ts":"2026-06-27T08:00:00+08:00","event":"query","title":"ok"}\n'
+                    )
+                    handle.write(b'{"ts":"2026-06-27T08:01:00+08:00","event":"query"\n')
+                    handle.write(b'\xff\xfe\xfd\n')
+                    handle.write(
+                        b'{"ts":"2026-06-28T08:00:00+08:00","event":"query","title":"next"}\n'
+                    )
+
+                valid_response = client.get(
+                    "/debug/recent",
+                    params={"start_date": "2026-06-27", "end_date": "2026-06-27"},
+                    headers=owner_headers,
+                )
+                invalid_response = client.get(
+                    "/debug/recent",
+                    params={"start_date": "bad-date"},
+                    headers=owner_headers,
+                )
+
+        self.assertEqual(valid_response.status_code, 200)
+        self.assertTrue(valid_response.json()["ok"])
+        self.assertEqual(len(valid_response.json()["events"]), 1)
+        self.assertEqual(valid_response.json()["events"][0]["title"], "ok")
+        self.assertEqual(invalid_response.status_code, 400)
+        self.assertEqual(invalid_response.json()["error"]["code"], "INVALID_DATE")
+
+    def test_record_usage_is_atomic_when_usage_log_commit_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            user = auth.register("alice", "password123")
+            auth.set_points("alice", 25)
+
+            with mock.patch.object(
+                platform.repository,
+                "commit_usage_transaction",
+                side_effect=RuntimeError("write failed"),
+            ):
+                with self.assertRaises(RuntimeError):
+                    platform.record_usage(
+                        user_id=user["user_id"],
+                        username="alice",
+                        token_id=None,
+                        title="失败题目",
+                        question_type="single",
+                        resolution_mode="local_hit",
+                        answer="A",
+                        confidence=1.0,
+                        provider="local",
+                        points_cost=3,
+                        elapsed_ms=88.0,
+                    )
+
+            current_user = auth.get_user("alice")
+            logs = platform.list_usage_logs(username="alice")
+
+        self.assertEqual(current_user["points"], 25)
+        self.assertEqual(len(logs), 0)
+
+    def test_token_quota_rejection_keeps_points_and_counters_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                )
+            )
+
+            client.post("/auth/register", json={"username": "alice", "password": "password123"})
+            auth.set_points("alice", 10)
+            alice_headers = {
+                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'alice', 'password': 'password123'}).json()['token']}"
+            }
+            token_res = client.post(
+                "/tokens",
+                json={"description": "quota", "quota_limit": 1},
+                headers=alice_headers,
+            )
+            raw_token = token_res.json()["token"]
+            token_id = token_res.json()["token_info"]["token_id"]
+            first = client.get(
+                "/ocs/query",
+                params={"title": "示例题", "type": "single"},
+                headers={"Authorization": f"Bearer {raw_token}"},
+            )
+            points_after_first = auth.get_user("alice")["points"]
+            second = client.get(
+                "/ocs/query",
+                params={"title": "示例题", "type": "single"},
+                headers={"Authorization": f"Bearer {raw_token}"},
+            )
+            points_after_second = auth.get_user("alice")["points"]
+            token_after = next(
+                item
+                for item in platform.list_tokens(user_id=auth.get_user("alice")["user_id"])
+                if item["token_id"] == token_id
+            )
+            logs = platform.list_usage_logs(username="alice")
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 401)
+        self.assertEqual(second.json()["error"]["code"], "TOKEN_QUOTA_EXCEEDED")
+        self.assertEqual(points_after_first, 9)
+        self.assertEqual(points_after_second, 9)
+        self.assertEqual(token_after["usage_count"], 1)
+        self.assertEqual(token_after["quota_used"], 1)
+        self.assertEqual(len(logs), 1)
 
     def test_legacy_usage_logs_table_gets_elapsed_ms_compat_column(self) -> None:
         engine = create_engine("sqlite:///:memory:", future=True)
@@ -1032,6 +1329,93 @@ class FastAPILocalServerTests(unittest.TestCase):
             self.assertEqual(len(alice_workbench.json()["workbench"]["ranking_preview"]), 0)
             self.assertEqual(len(alice_rankings.json()["rankings"]), 0)
 
+    def test_dashboard_scope_defaults_and_admin_can_switch_between_global_and_self(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                )
+            )
+
+            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            client.post("/auth/register", json={"username": "alice", "password": "password123"})
+            owner_headers = {
+                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'owner', 'password': 'password123'}).json()['token']}"
+            }
+            alice_headers = {
+                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'alice', 'password': 'password123'}).json()['token']}"
+            }
+
+            owner_token = client.post(
+                "/tokens", json={"description": "owner"}, headers=owner_headers
+            ).json()["token"]
+            alice_token = client.post(
+                "/tokens", json={"description": "alice"}, headers=alice_headers
+            ).json()["token"]
+            client.get(
+                "/ocs/query",
+                params={"title": "示例题", "type": "single"},
+                headers={"Authorization": f"Bearer {owner_token}"},
+            )
+            client.get(
+                "/ocs/query",
+                params={"title": "示例题", "type": "single"},
+                headers={"Authorization": f"Bearer {alice_token}"},
+            )
+
+            owner_default = client.get("/dashboard/workbench", headers=owner_headers)
+            owner_self = client.get("/dashboard/workbench", params={"scope": "self"}, headers=owner_headers)
+            alice_global = client.get(
+                "/dashboard/summary",
+                params={"scope": "global", "days": 1},
+                headers=alice_headers,
+            )
+
+        self.assertEqual(owner_default.status_code, 200)
+        self.assertEqual(owner_default.json()["workbench"]["scope"], "global")
+        self.assertEqual(owner_default.json()["workbench"]["overview"]["today_calls"], 2)
+        self.assertEqual(owner_self.json()["workbench"]["scope"], "self")
+        self.assertEqual(owner_self.json()["workbench"]["overview"]["today_calls"], 1)
+        self.assertEqual(alice_global.json()["summary"]["scope"], "self")
+        self.assertEqual(alice_global.json()["summary"]["query_count"], 1)
+
+    def test_usage_audit_reports_usage_logs_token_totals_and_runtime_log_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                )
+            )
+
+            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            owner_headers = {
+                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'owner', 'password': 'password123'}).json()['token']}"
+            }
+            raw_token = client.post(
+                "/tokens", json={"description": "owner"}, headers=owner_headers
+            ).json()["token"]
+            client.get(
+                "/ocs/query",
+                params={"title": "示例题", "type": "single"},
+                headers={"Authorization": f"Bearer {raw_token}"},
+            )
+            date_text = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d")
+            audit = client.get("/debug/usage-audit", params={"date": date_text}, headers=owner_headers)
+
+        self.assertEqual(audit.status_code, 200)
+        self.assertTrue(audit.json()["ok"])
+        self.assertEqual(audit.json()["audit"]["usage_logs"]["count"], 1)
+        self.assertEqual(audit.json()["audit"]["api_tokens"]["usage_count_total"], 1)
+        self.assertEqual(audit.json()["audit"]["api_tokens"]["quota_used_total"], 1)
+        self.assertFalse(audit.json()["audit"]["api_tokens"]["daily_count_available"])
+        self.assertGreaterEqual(audit.json()["audit"]["runtime_logs"]["query_event_count"], 1)
+
     def test_api_key_quota_limits_and_deletion(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
@@ -1065,28 +1449,42 @@ class FastAPILocalServerTests(unittest.TestCase):
             self.assertEqual(token_res.json()["token_info"]["quota_limit"], 2)
             self.assertEqual(token_res.json()["token_info"]["quota_used"], 0)
 
-            # 3. Call OCS query once (this key consumes 2 points on OCS query local hit)
+            # 3. Call OCS query once
             query_headers = {"Authorization": f"Bearer {raw_token}"}
             q1 = client.get(
                 "/ocs/query", params={"title": "示例题", "type": "single"}, headers=query_headers
             )
             self.assertEqual(q1.status_code, 200)
 
-            # Check token info -> quota_used should be 2
+            # Check token info -> quota_used should be 1
             tokens_after = client.get("/tokens", headers=alice_headers)
             target_token = next(
                 t for t in tokens_after.json()["tokens"] if t["token_id"] == token_id
             )
-            self.assertEqual(target_token["quota_used"], 2)
+            self.assertEqual(target_token["quota_used"], 1)
+            self.assertEqual(target_token["usage_count"], 1)
 
-            # 4. Call OCS query a second time -> should be blocked because quota_used (2) >= quota_limit (2)
+            # 4. Call OCS query a second time -> still allowed
             q2 = client.get(
                 "/ocs/query", params={"title": "示例题", "type": "single"}, headers=query_headers
             )
-            self.assertEqual(q2.status_code, 401)
-            self.assertEqual(q2.json()["error"]["code"], "TOKEN_QUOTA_EXCEEDED")
+            self.assertEqual(q2.status_code, 200)
 
-            # 5. Update token quota_limit to 5
+            tokens_after_second = client.get("/tokens", headers=alice_headers)
+            target_token_after_second = next(
+                t for t in tokens_after_second.json()["tokens"] if t["token_id"] == token_id
+            )
+            self.assertEqual(target_token_after_second["quota_used"], 2)
+            self.assertEqual(target_token_after_second["usage_count"], 2)
+
+            # 5. 第三次请求应被额度拦截
+            q3 = client.get(
+                "/ocs/query", params={"title": "示例题", "type": "single"}, headers=query_headers
+            )
+            self.assertEqual(q3.status_code, 401)
+            self.assertEqual(q3.json()["error"]["code"], "TOKEN_QUOTA_EXCEEDED")
+
+            # 6. Update token quota_limit to 5
             update_res = client.post(
                 f"/tokens/{token_id}",
                 json={"description": "Updated Limit Key", "quota_limit": 5},
@@ -1095,25 +1493,25 @@ class FastAPILocalServerTests(unittest.TestCase):
             self.assertTrue(update_res.json()["ok"])
             self.assertEqual(update_res.json()["token"]["quota_limit"], 5)
 
-            # 6. Call OCS query again -> should work now!
-            q3 = client.get(
-                "/ocs/query", params={"title": "示例题", "type": "single"}, headers=query_headers
-            )
-            self.assertEqual(q3.status_code, 200)
-
-            # 7. Delete token
-            del_res = client.delete(f"/tokens/{token_id}", headers=alice_headers)
-            self.assertTrue(del_res.json()["ok"])
-
-            # 8. Listing tokens -> deleted token should be gone!
-            tokens_final = client.get("/tokens", headers=alice_headers)
-            self.assertEqual(len(tokens_final.json()["tokens"]), 0)
-
-            # 9. Query OCS using deleted token -> should return 401 (invalid key)
+            # 7. Call OCS query again -> should work now
             q4 = client.get(
                 "/ocs/query", params={"title": "示例题", "type": "single"}, headers=query_headers
             )
-            self.assertEqual(q4.status_code, 401)
+            self.assertEqual(q4.status_code, 200)
+
+            # 8. Delete token
+            del_res = client.delete(f"/tokens/{token_id}", headers=alice_headers)
+            self.assertTrue(del_res.json()["ok"])
+
+            # 9. Listing tokens -> deleted token should be gone
+            tokens_final = client.get("/tokens", headers=alice_headers)
+            self.assertEqual(len(tokens_final.json()["tokens"]), 0)
+
+            # 10. Query OCS using deleted token -> should return 401 (invalid key)
+            q5 = client.get(
+                "/ocs/query", params={"title": "示例题", "type": "single"}, headers=query_headers
+            )
+            self.assertEqual(q5.status_code, 401)
 
     def test_token_import_script_requires_token_or_returns_template(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

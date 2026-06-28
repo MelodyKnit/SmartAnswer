@@ -40,7 +40,7 @@ def public_token_dict(token: ApiTokenRecord) -> dict:
         "last_used_at": token.last_used_at,
         "usage_count": token.usage_count,
         "quota_limit": token.quota_limit,
-        "quota_used": token.usage_count,
+        "quota_used": token.quota_used,
         "reject_low_confidence": token.reject_low_confidence,
         "min_answer_confidence": token.min_answer_confidence,
     }

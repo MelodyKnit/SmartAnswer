@@ -2,21 +2,16 @@
 
 from __future__ import annotations
 
-import time
-
 from fastapi import APIRouter, Request
 from starlette.responses import JSONResponse
 
 from ....auth import AuthError
+from ....platform.service import local_day_window_from_dates
 from ...context import (
     auth_error_response,
     current_user,
     get_platform_service,
     unauthorized_response,
-)
-from ...route_support import (
-    build_daily_trend,
-    count_by_key,
 )
 
 
@@ -25,7 +20,7 @@ def build_workbench_router() -> APIRouter:
     router = APIRouter()
 
     @router.get("/dashboard/workbench")
-    def dashboard_workbench(request: Request) -> JSONResponse:
+    def dashboard_workbench(request: Request, scope: str = "") -> JSONResponse:
         user = current_user(request)
         if user is None:
             return unauthorized_response("请先登录")
@@ -35,6 +30,7 @@ def build_workbench_router() -> APIRouter:
             username=str(user["username"]),
             points=int(user["points"]),
             role=str(user["role"]),
+            scope=scope,
         )
         return JSONResponse({"ok": True, "workbench": payload})
 
@@ -43,40 +39,38 @@ def build_workbench_router() -> APIRouter:
         request: Request,
         days: int = 1,
         limit: int = 10,
-        dimension: str = "integration",
+        dimension: str = "provider",
+        scope: str = "",
     ) -> JSONResponse:
         user = current_user(request)
         if user is None:
             return unauthorized_response("请先登录")
         platform = get_platform_service(request)
-        username = None
-        if user["role"] not in {"admin", "superadmin"}:
-            username = str(user["username"])
         rankings = platform.dashboard_rankings(
-            days=days, limit=limit, dimension=dimension, username=username
+            days=days,
+            limit=limit,
+            dimension=dimension,
+            username=str(user["username"]),
+            role=str(user["role"]),
+            scope=scope,
         )
         return JSONResponse({"ok": True, "rankings": rankings})
 
     @router.get("/dashboard/summary")
-    def dashboard_summary(request: Request, days: int = 30) -> JSONResponse:
+    def dashboard_summary(request: Request, days: int = 30, scope: str = "") -> JSONResponse:
         user = current_user(request)
         if user is None:
             return unauthorized_response("请先登录")
         platform = get_platform_service(request)
-        logs = platform.list_usage_logs(username=str(user["username"]), limit=1000)
-        since = time.time() - max(1, min(days, 365)) * 86400
-        scoped = [log for log in logs if float(log["created_at"]) >= since]
-        trend = build_daily_trend(scoped, days)
         return JSONResponse(
             {
                 "ok": True,
-                "summary": {
-                    "days": days,
-                    "points_used": sum(int(log["points_cost"]) for log in scoped),
-                    "query_count": len(scoped),
-                    "resolution_modes": count_by_key(scoped, "resolution_mode"),
-                    "trend": trend,
-                },
+                "summary": platform.dashboard_summary(
+                    username=str(user["username"]),
+                    role=str(user["role"]),
+                    scope=scope,
+                    days=days,
+                ),
             }
         )
 
@@ -87,6 +81,8 @@ def build_workbench_router() -> APIRouter:
         token_id: str = "",
         api_key_id: str = "",
         keyword: str = "",
+        start_date: str = "",
+        end_date: str = "",
         limit: int = 100,
         page: int = 1,
     ) -> JSONResponse:
@@ -96,6 +92,20 @@ def build_workbench_router() -> APIRouter:
         platform = get_platform_service(request)
         if user["role"] not in {"admin", "superadmin"}:
             username = str(user["username"])
+        try:
+            start_time, end_time = local_day_window_from_dates(start_date, end_date)
+        except ValueError:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": {
+                        "code": "INVALID_DATE",
+                        "message": "日期格式必须为 YYYY-MM-DD，且开始日期不能晚于结束日期",
+                    },
+                },
+                status_code=400,
+            )
+
         page = max(1, int(page))
         limit = max(1, min(int(limit), 500))
         offset = (page - 1) * limit
@@ -106,9 +116,15 @@ def build_workbench_router() -> APIRouter:
             keyword=keyword,
             limit=limit,
             offset=offset,
+            start_time=start_time,
+            end_time=end_time,
         )
         total = platform.count_usage_logs(
-            username=username, token_id=selected_token_id, keyword=keyword
+            username=username,
+            token_id=selected_token_id,
+            keyword=keyword,
+            start_time=start_time,
+            end_time=end_time,
         )
         return JSONResponse(
             {"ok": True, "logs": logs, "total": total, "page": page, "limit": limit}

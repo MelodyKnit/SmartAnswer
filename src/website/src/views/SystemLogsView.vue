@@ -15,6 +15,16 @@ const errorMsg = ref('')
 const autoRefresh = ref(true)
 let timer: number | undefined
 
+const getLocalDateString = (d = new Date()) => {
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+const todayStr = getLocalDateString()
+const dateRange = ref<[string, string] | null>([todayStr, todayStr])
+
 const EVENT_META: Record<string, { label: string; type: string }> = {
   query: { label: '查题', type: 'primary' },
   model_request: { label: '模型请求', type: 'info' },
@@ -36,8 +46,13 @@ async function load() {
   loading.value = true
   errorMsg.value = ''
   try {
+    const params: Record<string, string> = {}
+    if (dateRange.value && dateRange.value.length === 2) {
+      params.start_date = dateRange.value[0]
+      params.end_date = dateRange.value[1]
+    }
     const [ev, st] = await Promise.all([
-      systemApi.recentEvents(),
+      systemApi.recentEvents(params),
       systemApi.status().catch(() => null),
     ])
     events.value = [...ev.events].reverse()
@@ -85,16 +100,15 @@ function toggleAuto() {
 
 function setupTimer() {
   if (timer) window.clearInterval(timer)
-  if (autoRefresh.value) {
-    load()
-  }
+  timer = undefined
+  if (!autoRefresh.value) return
+  load()
   timer = window.setInterval(() => {
     load()
   }, SYSTEM_DEFAULTS.LOG_REFRESH_INTERVAL_MS)
 }
 
 onMounted(() => {
-  load()
   setupTimer()
 })
 onUnmounted(() => {
@@ -125,9 +139,24 @@ onUnmounted(() => {
 
     <!-- 事件流 -->
     <div class="app-card p-5">
-      <h3 class="mb-3 text-base font-semibold text-ink">运行事件（最近）</h3>
+      <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <h3 class="text-base font-semibold text-ink">运行事件</h3>
+        <!-- 时间段选择器，支持当天或自定义范围 -->
+        <el-date-picker
+          v-model="dateRange"
+          type="daterange"
+          range-separator="至"
+          start-placeholder="开始日期"
+          end-placeholder="结束日期"
+          value-format="YYYY-MM-DD"
+          :clearable="false"
+          class="!w-80"
+          @change="load"
+        />
+      </div>
+      
       <div v-if="events.length === 0" class="py-10 text-center text-sm text-ink-muted">
-        暂无运行事件
+        该时间区间内暂无运行事件
       </div>
       <el-timeline v-else>
         <el-timeline-item

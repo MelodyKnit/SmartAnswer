@@ -74,6 +74,7 @@ def ensure_sqlite_compat_columns(engine: Engine) -> None:
     """为旧 SQLite 运行库补齐恢复后新增的轻量字段。"""
     table_columns = {
         "api_tokens": {
+            "quota_used": "INTEGER DEFAULT 0",
             "quota_limit": "INTEGER DEFAULT -1",
             "reject_low_confidence": "INTEGER DEFAULT 0",
             "min_answer_confidence": "REAL DEFAULT 0.0",
@@ -96,6 +97,7 @@ def ensure_sqlite_compat_columns(engine: Engine) -> None:
         },
         "usage_logs": {
             "elapsed_ms": "REAL DEFAULT 0.0",
+            "request_id": "TEXT DEFAULT ''",
         },
         "questions": {
             "title_normalized": "TEXT DEFAULT ''",
@@ -127,6 +129,12 @@ def ensure_sqlite_compat_columns(engine: Engine) -> None:
         },
     }
     with engine.begin() as connection:
+        existing_tables = {
+            row[0]
+            for row in connection.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table'")
+            ).fetchall()
+        }
         for table, columns in table_columns.items():
             existing = {
                 row[1] for row in connection.execute(text(f"PRAGMA table_info({table})")).fetchall()
@@ -138,6 +146,13 @@ def ensure_sqlite_compat_columns(engine: Engine) -> None:
                     connection.execute(
                         text(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
                     )
+        if "api_tokens" in existing_tables:
+            connection.execute(
+                text(
+                    "UPDATE api_tokens SET quota_used = usage_count "
+                    "WHERE COALESCE(quota_used, 0) = 0 AND COALESCE(usage_count, 0) > 0"
+                )
+            )
 
 
 def ensure_sql_compat_columns(engine: Engine) -> None:
@@ -145,11 +160,13 @@ def ensure_sql_compat_columns(engine: Engine) -> None:
 
     table_columns = {
         "api_tokens": {
+            "quota_used": "INTEGER DEFAULT 0",
             "reject_low_confidence": "INTEGER DEFAULT 0",
             "min_answer_confidence": "FLOAT DEFAULT 0.0",
         },
         "usage_logs": {
             "elapsed_ms": "FLOAT DEFAULT 0.0",
+            "request_id": "VARCHAR(64) DEFAULT ''",
         },
         "questions": {
             "title_normalized": "TEXT DEFAULT ''",
@@ -199,6 +216,13 @@ def ensure_sql_compat_columns(engine: Engine) -> None:
                         f"数据库兼容字段补齐失败：无法为 {table} 添加字段 {column}，"
                         "请手动迁移数据库后再启动服务。"
                     ) from exc
+        if "api_tokens" in existing_tables:
+            connection.execute(
+                text(
+                    "UPDATE api_tokens SET quota_used = usage_count "
+                    "WHERE COALESCE(quota_used, 0) = 0 AND COALESCE(usage_count, 0) > 0"
+                )
+            )
 
 
 def ensure_obsolete_platform_schema_cleanup(engine: Engine) -> None:

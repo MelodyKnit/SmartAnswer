@@ -40,7 +40,11 @@ def build_query_router() -> APIRouter:
         return JSONResponse(status_payload(get_lookup_service(request)))
 
     @router.get("/debug/recent")
-    def debug_recent(request: Request) -> JSONResponse:
+    def debug_recent(
+        request: Request,
+        start_date: str = "",
+        end_date: str = "",
+    ) -> JSONResponse:
         denied = guard_protected_request(request)
         if denied:
             return denied
@@ -50,7 +54,47 @@ def build_query_router() -> APIRouter:
         denied = require_permissions(request, {"system:read"})
         if denied:
             return denied
-        return JSONResponse(debug_events_payload())
+        try:
+            payload = debug_events_payload(start_date, end_date)
+        except ValueError:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": {
+                        "code": "INVALID_DATE",
+                        "message": "日期格式必须为 YYYY-MM-DD，且开始日期不能晚于结束日期",
+                    },
+                },
+                status_code=400,
+            )
+        return JSONResponse(payload)
+
+    @router.get("/debug/usage-audit")
+    def debug_usage_audit(request: Request, date: str = "") -> JSONResponse:
+        denied = guard_protected_request(request)
+        if denied:
+            return denied
+        denied = require_roles(request, {"admin", "superadmin"})
+        if denied:
+            return denied
+        denied = require_permissions(request, {"system:read"})
+        if denied:
+            return denied
+        platform = get_platform_service(request)
+        try:
+            payload = platform.usage_audit(date)
+        except ValueError:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": {
+                        "code": "INVALID_DATE",
+                        "message": "日期格式必须为 YYYY-MM-DD",
+                    },
+                },
+                status_code=400,
+            )
+        return JSONResponse({"ok": True, "audit": payload})
 
     @router.get("/configs/ocs-local-study-bank.json")
     def ocs_config(request: Request) -> JSONResponse:
