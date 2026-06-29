@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** 登录页：账号密码 + 记住我，链接注册与找回密码。 */
+/** 登录页：支持用户名或邮箱 + 密码，链接注册与找回密码。 */
 import { reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
@@ -17,7 +17,7 @@ const loading = ref(false)
 const form = reactive({ username: '', password: '', remember: true })
 
 const rules: FormRules = {
-  username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
+  username: [{ required: true, message: '请输入用户名或邮箱', trigger: 'blur' }],
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
 }
 
@@ -43,7 +43,7 @@ async function submit() {
   <AuthShell title="欢迎回来" subtitle="登录答题接入管理平台，继续管理你的接入能力">
     <el-form ref="formRef" :model="form" :rules="rules" size="large" @submit.prevent="submit">
       <el-form-item prop="username">
-        <el-input v-model="form.username" placeholder="用户名" :prefix-icon="'User'" />
+        <el-input v-model="form.username" placeholder="用户名或邮箱" :prefix-icon="'User'" />
       </el-form-item>
       <el-form-item prop="password">
         <el-input

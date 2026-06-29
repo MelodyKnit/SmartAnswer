@@ -63,13 +63,15 @@ class AuthService:
     ) -> dict:
         """注册新用户。首个注册用户自动成为 superadmin。"""
         username = (username or "").strip()
-        email = (email or "").strip() or None
+        email = (email or "").strip().lower() or None
         self.validate_username(username)
         self.validate_password(password)
 
         with self._lock:
             if self.repository.get_user(username) is not None:
                 raise AuthError("USERNAME_TAKEN", "该用户名已被注册", http_status=409)
+            if email and self.repository.get_user_by_email(email) is not None:
+                raise AuthError("EMAIL_TAKEN", "该邮箱已被注册", http_status=409)
             role = "superadmin" if not self.repository.has_users() else "user"
             salt = secrets.token_hex(SALT_BYTES)
             user = UserRecord(
@@ -89,12 +91,12 @@ class AuthService:
     def login(
         self, username: str, password: str, *, remember: bool = False, client_ip: str = ""
     ) -> tuple[str, dict, int]:
-        """校验账号密码并签发会话令牌。"""
-        username = (username or "").strip()
-        throttle_key = f"{username}\n{client_ip}"
+        """校验用户名或邮箱与密码并签发会话令牌。"""
+        login_id = (username or "").strip()
+        throttle_key = f"{login_id}\n{client_ip}"
         with self._lock:
             self.assert_not_locked(throttle_key)
-            user = self.repository.get_user(username)
+            user = self.repository.get_user_by_login(login_id)
             if user is not None and user.status != "active":
                 raise AuthError("ACCOUNT_DISABLED", "账号已被禁用", http_status=403)
             ok = user is not None and hmac.compare_digest(
@@ -102,7 +104,7 @@ class AuthService:
             )
             if not user or not ok:
                 self.record_failure(throttle_key)
-                raise AuthError("BAD_CREDENTIALS", "用户名或密码错误", http_status=401)
+                raise AuthError("BAD_CREDENTIALS", "用户名、邮箱或密码错误", http_status=401)
 
             self._failures.pop(throttle_key, None)
             ttl = SESSION_TTL_REMEMBER if remember else SESSION_TTL_DEFAULT

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from ..auth.records import UserRecord
 from .database import get_session_factory
@@ -23,6 +23,29 @@ class SqlAlchemyAuthRepository:
         with self.session_factory() as session:
             entity = session.scalar(select(UserEntity).where(UserEntity.username == username))
             return self._to_record(entity) if entity else None
+
+    def get_user_by_email(self, email: str) -> UserRecord | None:
+        """按邮箱读取用户记录，邮箱匹配大小写不敏感。"""
+
+        normalized = (email or "").strip().lower()
+        if not normalized:
+            return None
+        with self.session_factory() as session:
+            entity = session.scalar(
+                select(UserEntity).where(func.lower(UserEntity.email) == normalized)
+            )
+            return self._to_record(entity) if entity else None
+
+    def get_user_by_login(self, login_id: str) -> UserRecord | None:
+        """按用户名或邮箱读取用户记录。"""
+
+        normalized = (login_id or "").strip()
+        if not normalized:
+            return None
+        user = self.get_user(normalized)
+        if user is not None:
+            return user
+        return self.get_user_by_email(normalized)
 
     def get_user_by_id(self, user_id: str) -> UserRecord | None:
         with self.session_factory() as session:

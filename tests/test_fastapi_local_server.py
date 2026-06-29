@@ -186,6 +186,57 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(session.json()["user"]["username"], "tester")
         self.assertTrue(status.json()["ok"])
 
+    def test_login_accepts_email_instead_of_username(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            auth = AuthService(self._runtime_database_path(directory))
+            client = TestClient(create_app(_sample_index(), auth_service=auth, require_auth=True))
+
+            registered = client.post(
+                "/auth/register",
+                json={
+                    "username": "tester",
+                    "password": "password123",
+                    "email": "tester@example.com",
+                },
+            )
+            login = client.post(
+                "/auth/login",
+                json={"username": "Tester@Example.com", "password": "password123"},
+            )
+            token = login.json()["token"]
+            session = client.get("/auth/session", headers={"Authorization": f"Bearer {token}"})
+
+        self.assertTrue(registered.json()["ok"])
+        self.assertTrue(login.json()["ok"])
+        self.assertEqual(session.json()["user"]["username"], "tester")
+        self.assertEqual(session.json()["user"]["email"], "tester@example.com")
+
+    def test_register_rejects_duplicate_email_even_with_different_case(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            auth = AuthService(self._runtime_database_path(directory))
+            client = TestClient(create_app(_sample_index(), auth_service=auth, require_auth=True))
+
+            first = client.post(
+                "/auth/register",
+                json={
+                    "username": "tester",
+                    "password": "password123",
+                    "email": "tester@example.com",
+                },
+            )
+            second = client.post(
+                "/auth/register",
+                json={
+                    "username": "tester2",
+                    "password": "password123",
+                    "email": "Tester@Example.com",
+                },
+            )
+
+        self.assertTrue(first.json()["ok"])
+        self.assertEqual(second.status_code, 409)
+        self.assertEqual(second.json()["error"]["code"], "EMAIL_TAKEN")
+
     def test_ocs_bearer_key_can_bypass_session_when_auth_is_required(self) -> None:
         previous = __import__("os").environ.get("STQB_OCS_API_KEYS")
         __import__("os").environ["STQB_OCS_API_KEYS"] = "local-test-key"
