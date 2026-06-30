@@ -6,6 +6,7 @@ import type { FormInstance, FormItemRule, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { ApiException } from '@/api/http'
+import { authApi } from '@/api/endpoints'
 import AuthShell from './AuthShell.vue'
 
 const auth = useAuthStore()
@@ -14,11 +15,22 @@ const route = useRoute()
 
 const formRef = ref<FormInstance>()
 const loading = ref(false)
+const registrationEnabled = ref(true)
+const statusLoading = ref(false)
 const form = reactive({ username: '', password: '', confirm: '', email: '', invite_code: '' })
 
-onMounted(() => {
+onMounted(async () => {
   const invite = route.query.invite
   if (typeof invite === 'string') form.invite_code = invite
+  statusLoading.value = true
+  try {
+    const status = await authApi.registerStatus()
+    registrationEnabled.value = status.registration_enabled
+  } catch {
+    registrationEnabled.value = true
+  } finally {
+    statusLoading.value = false
+  }
 })
 
 const validateConfirm: FormItemRule['validator'] = (_rule, value, callback) => {
@@ -47,6 +59,10 @@ const rules: FormRules = {
 }
 
 async function submit() {
+  if (!registrationEnabled.value) {
+    ElMessage.warning('系统已关闭用户注册')
+    return
+  }
   if (!formRef.value) return
   const valid = await formRef.value.validate().catch(() => false)
   if (!valid) return
@@ -65,6 +81,14 @@ async function submit() {
 
 <template>
   <AuthShell title="创建账号" subtitle="注册后即可创建 API Key 并接入答题能力">
+    <el-alert
+      v-if="!registrationEnabled"
+      type="warning"
+      :closable="false"
+      class="mb-4"
+      title="系统已关闭用户注册"
+      description="请联系管理员创建账号或重新开启注册入口。"
+    />
     <el-form ref="formRef" :model="form" :rules="rules" size="large" @submit.prevent="submit">
       <el-form-item prop="username">
         <el-input v-model="form.username" placeholder="用户名" :prefix-icon="'User'" />
@@ -93,7 +117,14 @@ async function submit() {
       <el-form-item prop="invite_code">
         <el-input v-model="form.invite_code" placeholder="邀请码（可选，填写后按当前系统策略发放奖励）" :prefix-icon="'Promotion'" @keyup.enter="submit" />
       </el-form-item>
-      <el-button type="primary" class="w-full" size="large" :loading="loading" @click="submit">
+      <el-button
+        type="primary"
+        class="w-full"
+        size="large"
+        :loading="loading || statusLoading"
+        :disabled="!registrationEnabled"
+        @click="submit"
+      >
         注册
       </el-button>
     </el-form>

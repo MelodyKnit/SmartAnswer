@@ -243,6 +243,7 @@ export interface SystemConfig {
   manual_grant_default_points?: string
   redeem_code_default_points?: string
   answer_retry_times?: string
+  registration_enabled?: string
   [key: string]: string | boolean | undefined
 }
 

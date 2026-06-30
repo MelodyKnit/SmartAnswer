@@ -38,6 +38,13 @@ export const authApi = {
     email?: string
     invite_code?: string
   }) => api.post<{ ok: true; user: User }>('/auth/register', body),
+  registerStatus: () =>
+    api.get<{
+      ok: true
+      registration_enabled: boolean
+      config_enabled: boolean
+      first_user_allowed: boolean
+    }>('/auth/register-status'),
   login: (body: { username: string; password: string; remember: boolean }) =>
     api.post<{ ok: true; user: User; token: string; expires_in: number }>('/auth/login', body),
   session: () => api.get<{ ok: true; user: User }>('/auth/session'),

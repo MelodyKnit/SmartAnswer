@@ -19,6 +19,7 @@ from .config import (
     LLM_RUNTIME_ENV_MAP,
     SYSTEM_CONFIG_DEFAULTS,
     SYSTEM_CONFIG_ENV_MAP,
+    SYSTEM_CONFIG_BOOLEAN_KEYS,
     SYSTEM_CONFIG_KEYS,
     SYSTEM_CONFIG_SECRET_KEYS,
 )
@@ -142,7 +143,11 @@ class PlatformService:
         template_id: str | None = None,
     ) -> dict:
         """为普通用户即时生成导入脚本和 OCS 题库配置。"""
-        tokens = self.repository.list_tokens(user_id=user_id)
+        tokens = [
+            token
+            for token in self.repository.list_tokens(user_id=user_id)
+            if token.status == "active"
+        ]
         if not tokens:
             raise AuthError("TOKEN_REQUIRED", "请先创建密钥", http_status=404)
         if token_id is None and len(tokens) > 1:
@@ -271,6 +276,12 @@ class PlatformService:
         """返回注册邀请码奖励积分。"""
 
         return self.system_points_value("invite_bonus_points")
+
+    def is_registration_enabled(self) -> bool:
+        """返回公开注册入口是否启用。"""
+
+        raw = self.get_system_config().get("registration_enabled", "true")
+        return str(raw).strip().lower() not in {"0", "false", "no", "off", "disabled"}
 
     def get_points_policy(self) -> dict[str, int]:
         """返回前端表单需要展示或预填的积分策略。"""
@@ -1547,7 +1558,11 @@ class PlatformService:
             if key not in SYSTEM_CONFIG_KEYS:
                 raise AuthError("INVALID_INPUT", f"不支持的系统配置项: {key}", http_status=400)
             text = "" if value is None else str(value).strip()
-            if key.endswith("_points") or key == "answer_retry_times":
+            if key in SYSTEM_CONFIG_BOOLEAN_KEYS:
+                text = (
+                    "false" if text.lower() in {"0", "false", "no", "off", "disabled"} else "true"
+                )
+            elif key.endswith("_points") or key == "answer_retry_times":
                 try:
                     parsed = max(0, int(text or "0"))
                 except ValueError as exc:

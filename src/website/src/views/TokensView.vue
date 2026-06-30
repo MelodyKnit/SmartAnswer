@@ -7,6 +7,7 @@ import type { ApiToken, OcsConfig } from '@/api/types'
 import { ApiException, getApiTokenSecret, removeApiTokenSecret, setApiTokenSecret } from '@/api/http'
 import { formatDateTime } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
+import ImportScriptCopyDialog from '@/components/ImportScriptCopyDialog.vue'
 
 const loading = ref(false)
 const tokens = ref<ApiToken[]>([])
@@ -31,6 +32,7 @@ const editForm = ref({
 const revealVisible = ref(false)
 const revealToken = ref('')
 const revealConfig = ref<OcsConfig | null>(null)
+const importScriptDialog = ref<InstanceType<typeof ImportScriptCopyDialog>>()
 
 async function load() {
   loading.value = true
@@ -168,6 +170,10 @@ async function copy(text: string) {
   }
 }
 
+function openImportScript(token?: ApiToken) {
+  importScriptDialog.value?.open(token?.token_id)
+}
+
 const ocsConfigText = (config: OcsConfig | null) =>
   config ? JSON.stringify(config, null, 2) : ''
 
@@ -178,6 +184,7 @@ onMounted(load)
   <div>
     <PageHeader title="API Key 管理" description="创建并管理用于 OCS 等客户端接入答题服务的 API 令牌。">
       <template #actions>
+        <el-button :icon="'DocumentCopy'" @click="openImportScript()">复制导入脚本</el-button>
         <el-button type="primary" :icon="'Plus'" @click="openCreate">创建 API Key</el-button>
       </template>
     </PageHeader>
@@ -240,10 +247,17 @@ onMounted(load)
         <el-table-column label="创建时间" width="170">
           <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="150" align="right">
+        <el-table-column label="操作" width="230" align="right">
           <template #default="{ row }">
             <div class="flex justify-end gap-2">
               <template v-if="row.status === 'active'">
+                <el-button
+                  link
+                  type="primary"
+                  @click="openImportScript(row)"
+                >
+                  导入脚本
+                </el-button>
                 <el-button
                   link
                   type="primary"
@@ -359,5 +373,7 @@ onMounted(load)
         <el-button type="primary" @click="revealVisible = false">我已保存</el-button>
       </template>
     </el-dialog>
+
+    <ImportScriptCopyDialog ref="importScriptDialog" />
   </div>
 </template>

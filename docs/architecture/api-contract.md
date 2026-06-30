@@ -155,6 +155,8 @@
 
 #### `POST /auth/register`
 
+公开注册入口受系统配置 `registration_enabled` 控制；当系统已有用户且注册关闭时返回 `403 REGISTRATION_DISABLED`。空库初始化时仍允许创建第一个 `superadmin`。
+
 请求：
 
 ```json
@@ -265,6 +267,19 @@
   "description": "我的 OCS",
   "reject_low_confidence": false,
   "min_answer_confidence": 0.0
+}
+```
+
+#### `GET /auth/register-status`
+
+公开读取当前注册入口状态，用于登录页和注册页展示：
+
+```json
+{
+  "ok": true,
+  "registration_enabled": true,
+  "config_enabled": true,
+  "first_user_allowed": false
 }
 ```
 
@@ -398,6 +413,8 @@
   - `redeem_code_default_points`
   - `smart_proto_enabled`
   - `custom_proto_header`
+  - `answer_retry_times`
+  - `registration_enabled`
 
 大模型推理、联网搜索和 LLM 学习缓存配置统一通过 `/llm-runtime-config` 维护，系统配置页不再展示这些字段。
 
@@ -412,7 +429,9 @@
     "default_user_points": "100",
     "invite_bonus_points": "0",
     "manual_grant_default_points": "100",
-    "redeem_code_default_points": "50"
+    "redeem_code_default_points": "50",
+    "answer_retry_times": "3",
+    "registration_enabled": "true"
   },
   "reload_required": false
 }

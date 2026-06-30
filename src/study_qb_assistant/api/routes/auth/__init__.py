@@ -34,6 +34,10 @@ def build_auth_router() -> APIRouter:
     def register(request: Request, payload: RegisterPayload) -> JSONResponse:
         auth = get_auth_service(request)
         platform = get_platform_service(request)
+        if auth.has_users() and not platform.is_registration_enabled():
+            return auth_error_response(
+                AuthError("REGISTRATION_DISABLED", "系统已关闭用户注册", http_status=403)
+            )
         try:
             user = auth.register(
                 payload.username,
@@ -46,6 +50,21 @@ def build_auth_router() -> APIRouter:
         except AuthError as exc:
             return auth_error_response(exc)
         return JSONResponse({"ok": True, "user": user})
+
+    @router.get("/auth/register-status")
+    def register_status(request: Request) -> JSONResponse:
+        auth = get_auth_service(request)
+        platform = get_platform_service(request)
+        config_enabled = platform.is_registration_enabled()
+        first_user_allowed = not auth.has_users()
+        return JSONResponse(
+            {
+                "ok": True,
+                "registration_enabled": config_enabled or first_user_allowed,
+                "config_enabled": config_enabled,
+                "first_user_allowed": first_user_allowed,
+            }
+        )
 
     @router.post("/auth/login")
     def login(request: Request, payload: LoginPayload) -> JSONResponse:

@@ -237,6 +237,77 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(second.status_code, 409)
         self.assertEqual(second.json()["error"]["code"], "EMAIL_TAKEN")
 
+    def test_registration_can_be_disabled_after_first_user_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                )
+            )
+
+            first_status = client.get("/auth/register-status")
+            first = client.post(
+                "/auth/register", json={"username": "owner", "password": "password123"}
+            )
+            login = client.post(
+                "/auth/login", json={"username": "owner", "password": "password123"}
+            )
+            headers = {"Authorization": f"Bearer {login.json()['token']}"}
+            config = client.patch(
+                "/system-config",
+                json={"registration_enabled": "false"},
+                headers=headers,
+            )
+            disabled_status = client.get("/auth/register-status")
+            blocked = client.post(
+                "/auth/register",
+                json={"username": "blocked", "password": "password123"},
+            )
+
+        self.assertTrue(first_status.json()["registration_enabled"])
+        self.assertTrue(first.json()["ok"])
+        self.assertFalse(config.json()["reload_required"])
+        self.assertEqual(config.json()["config"]["registration_enabled"], "false")
+        self.assertFalse(disabled_status.json()["registration_enabled"])
+        self.assertFalse(disabled_status.json()["config_enabled"])
+        self.assertFalse(disabled_status.json()["first_user_allowed"])
+        self.assertEqual(blocked.status_code, 403)
+        self.assertEqual(blocked.json()["error"]["code"], "REGISTRATION_DISABLED")
+
+    def test_first_superadmin_registration_still_works_when_registration_is_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            platform.set_system_config({"registration_enabled": "false"})
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                )
+            )
+
+            status_before = client.get("/auth/register-status")
+            first = client.post(
+                "/auth/register", json={"username": "owner", "password": "password123"}
+            )
+            status_after = client.get("/auth/register-status")
+            second = client.post(
+                "/auth/register",
+                json={"username": "second", "password": "password123"},
+            )
+
+        self.assertTrue(status_before.json()["registration_enabled"])
+        self.assertFalse(status_before.json()["config_enabled"])
+        self.assertTrue(status_before.json()["first_user_allowed"])
+        self.assertTrue(first.json()["ok"])
+        self.assertEqual(first.json()["user"]["role"], "superadmin")
+        self.assertFalse(status_after.json()["registration_enabled"])
+        self.assertEqual(second.status_code, 403)
+        self.assertEqual(second.json()["error"]["code"], "REGISTRATION_DISABLED")
+
     def test_ocs_bearer_key_can_bypass_session_when_auth_is_required(self) -> None:
         previous = __import__("os").environ.get("STQB_OCS_API_KEYS")
         __import__("os").environ["STQB_OCS_API_KEYS"] = "local-test-key"
@@ -378,6 +449,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                     "manual_grant_default_points": "88",
                     "redeem_code_default_points": "66",
                     "answer_retry_times": "4",
+                    "registration_enabled": "true",
                 },
                 headers=headers,
             )
@@ -399,18 +471,18 @@ class FastAPILocalServerTests(unittest.TestCase):
                 headers=headers,
             )
             llm_models = client.get("/llm-models", headers=headers)
-            
+
             # 测试模型连通性测试接口（未登录拦截验证）
             model_id_for_test = llm_models.json()["models"][0]["model_id"]
             # 创建一个全新的未授权客户端来检验 401 拦截（因为 client 原有 Cookie 缓存了之前的会话）
             unauth_client = TestClient(client.app)
             blocked_test = unauth_client.post(f"/llm-models/{model_id_for_test}/test")
             self.assertEqual(blocked_test.status_code, 401)
-            
+
             # 使用超级管理员进行连通性测试调用（因 mock，连接被拦截或失败是预期结果，主要验证逻辑链路畅通）
             test_response = client.post(f"/llm-models/{model_id_for_test}/test", headers=headers)
             self.assertIn("ok", test_response.json())
-            
+
             platform.save_llm_call_trace(
                 {
                     "request_id": "req-evidence",
@@ -498,6 +570,7 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(system_config_get.json()["config"]["smart_proto_enabled"], "false")
         self.assertEqual(system_config_get.json()["config"]["custom_proto_header"], "https")
         self.assertEqual(system_config_get.json()["config"]["answer_retry_times"], "4")
+        self.assertEqual(system_config_get.json()["config"]["registration_enabled"], "true")
         self.assertNotIn("llm_base_url", system_config_get.json()["config"])
         self.assertNotIn("ai_cache_enabled", system_config_get.json()["config"])
         self.assertIn("https://example.com/ocs/query", ocs_config_after_proto_change.text)

@@ -151,6 +151,7 @@ class SystemConfigPayload(BaseModel):
     manual_grant_default_points: str | None = None
     redeem_code_default_points: str | None = None
     answer_retry_times: str | None = None
+    registration_enabled: str | None = None
 
 
 class LlmRuntimeConfigPayload(BaseModel):

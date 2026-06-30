@@ -19,6 +19,7 @@ const form = reactive({
   manual_grant_default_points: 100,
   redeem_code_default_points: 50,
   answer_retry_times: 3,
+  registration_enabled: 'true',
 })
 
 const billingForm = reactive({
@@ -40,6 +41,7 @@ async function load() {
     form.manual_grant_default_points = Number(res.config.manual_grant_default_points || 100)
     form.redeem_code_default_points = Number(res.config.redeem_code_default_points || 50)
     form.answer_retry_times = Number(res.config.answer_retry_times || 3)
+    form.registration_enabled = (res.config.registration_enabled as string) || 'true'
     billingForm.local_hit = Number(billing.billing.local_hit || 0)
     billingForm.web_search = Number(billing.billing.web_search || 0)
     billingForm.llm_fallback = Number(billing.billing.llm_fallback || 0)
@@ -59,6 +61,7 @@ async function save() {
       manual_grant_default_points: String(form.manual_grant_default_points),
       redeem_code_default_points: String(form.redeem_code_default_points),
       answer_retry_times: String(form.answer_retry_times),
+      registration_enabled: form.registration_enabled,
     }
 
     await systemConfigApi.update(body)
@@ -124,8 +127,11 @@ onMounted(load)
 
       <!-- 服务协议配置 -->
       <div class="app-card p-6">
-        <h3 class="mb-4 text-base font-semibold text-ink">服务协议配置</h3>
+        <h3 class="mb-4 text-base font-semibold text-ink">账号与服务配置</h3>
         <el-form label-position="top" class="grid grid-cols-1 gap-x-6 md:grid-cols-2">
+          <el-form-item label="允许用户注册">
+            <el-switch v-model="form.registration_enabled" active-value="true" inactive-value="false" />
+          </el-form-item>
           <el-form-item label="智能检测协议头（优先获取 X-Forwarded-Proto 与 Host）">
             <el-switch v-model="form.smart_proto_enabled" active-value="true" inactive-value="false" />
           </el-form-item>
@@ -137,7 +143,7 @@ onMounted(load)
           </el-form-item>
         </el-form>
         <p class="text-xs text-ink-muted">
-          开启智能检测后，系统会自动根据客户端发送的 HTTP/HTTPS 头或穿透网关识别协议。关闭智能检测时，可手动指定以该协议头作为基础接入 URL。
+          关闭注册后，已有用户仍可登录；空库部署时仍允许创建第一个超级管理员。开启智能检测后，系统会自动根据客户端发送的 HTTP/HTTPS 头或穿透网关识别协议。
         </p>
       </div>
     </div>

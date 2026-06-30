@@ -1,11 +1,12 @@
 <script setup lang="ts">
 /** 登录页：支持用户名或邮箱 + 密码，链接注册与找回密码。 */
-import { reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { ApiException } from '@/api/http'
+import { authApi } from '@/api/endpoints'
 import AuthShell from './AuthShell.vue'
 
 const auth = useAuthStore()
@@ -14,7 +15,17 @@ const route = useRoute()
 
 const formRef = ref<FormInstance>()
 const loading = ref(false)
+const registrationEnabled = ref(true)
 const form = reactive({ username: '', password: '', remember: true })
+
+onMounted(async () => {
+  try {
+    const status = await authApi.registerStatus()
+    registrationEnabled.value = status.registration_enabled
+  } catch {
+    registrationEnabled.value = true
+  }
+})
 
 const rules: FormRules = {
   username: [{ required: true, message: '请输入用户名或邮箱', trigger: 'blur' }],
@@ -66,10 +77,12 @@ async function submit() {
       </el-button>
     </el-form>
     <template #footer>
-      还没有账号？
-      <router-link to="/register" class="font-medium text-brand-600 hover:underline">
-        立即注册
-      </router-link>
+      <span v-if="registrationEnabled">
+        还没有账号？
+        <router-link to="/register" class="font-medium text-brand-600 hover:underline">
+          立即注册
+        </router-link>
+      </span>
     </template>
   </AuthShell>
 </template>
