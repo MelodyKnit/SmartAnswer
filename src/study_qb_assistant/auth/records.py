@@ -21,6 +21,8 @@ class UserRecord:
     email: str | None
     points: int
     created_at: float
+    invite_code: str = ""
+    invited_by: str = ""
     reset_token_hash: str | None = None
     reset_expires_at: float = 0.0
 
@@ -36,6 +38,8 @@ class UserRecord:
             "email": self.email,
             "points": self.points,
             "created_at": self.created_at,
+            "invite_code": self.invite_code,
+            "invited_by": self.invited_by,
             "reset_token_hash": self.reset_token_hash,
             "reset_expires_at": self.reset_expires_at,
         }
@@ -53,6 +57,8 @@ class UserRecord:
             email=(str(payload["email"]) if payload.get("email") else None),
             points=int(payload.get("points") or int(os.getenv("STQB_DEFAULT_USER_POINTS", "100"))),
             created_at=float(payload.get("created_at") or time.time()),
+            invite_code=str(payload.get("invite_code") or ""),
+            invited_by=str(payload.get("invited_by") or ""),
             reset_token_hash=(
                 str(payload["reset_token_hash"]) if payload.get("reset_token_hash") else None
             ),

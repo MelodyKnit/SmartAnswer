@@ -265,7 +265,7 @@ onMounted(load)
 </script>
 
 <template>
-  <div v-loading="loading" class="flex min-h-0 flex-col xl:h-[calc(100vh-7rem)] xl:overflow-hidden">
+  <div v-loading="loading" class="roles-page flex min-h-0 flex-col xl:h-full xl:overflow-hidden">
     <PageHeader title="角色权限" description="集中管理角色可访问的功能范围。">
       <template #actions>
         <el-input
@@ -286,8 +286,8 @@ onMounted(load)
       title="当前为只读视图，仅超级管理员可修改角色权限。"
     />
 
-    <div class="grid min-h-0 grid-cols-1 gap-5 xl:flex-1 xl:grid-cols-[360px_minmax(0,1fr)]">
-      <aside class="app-card h-full min-h-0 overflow-hidden">
+    <div class="grid min-h-0 grid-cols-1 gap-5 xl:flex-1 xl:grid-cols-[360px_minmax(0,1fr)] xl:overflow-hidden">
+      <aside class="app-card flex min-h-0 flex-col overflow-hidden">
         <div class="border-b border-line px-5 py-4">
           <div class="flex items-center justify-between">
             <h3 class="text-base font-semibold text-ink">角色列表</h3>
@@ -295,7 +295,7 @@ onMounted(load)
           </div>
         </div>
 
-        <div class="space-y-3 p-4">
+        <div class="min-h-0 space-y-3 p-4 xl:flex-1">
           <button
             v-for="role in sortedRoles"
             :key="role.role_id"
@@ -360,19 +360,22 @@ onMounted(load)
           <el-collapse v-else v-model="openGroups" class="roles-permission-collapse">
             <el-collapse-item v-for="group in filteredGroups" :key="group.key" :name="group.key">
               <template #title>
-                <div class="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 pr-2">
-                  <div class="flex min-w-0 items-center gap-3">
+                <div class="flex min-w-0 flex-1 items-center justify-between gap-4 pr-2">
+                  <div class="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-3">
                     <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-brand-50 text-brand-600">
                       <el-icon><component :is="group.icon" /></el-icon>
                     </span>
-                    <div class="flex min-w-0 items-center gap-2">
-                      <span class="truncate font-semibold text-ink">{{ group.label }}</span>
-                      <span class="shrink-0 text-xs text-ink-muted">
-                        {{ groupSelectedCount(group) }} / {{ group.permissions.length }}
-                      </span>
+                    <div class="min-w-0">
+                      <div class="flex min-w-0 items-center gap-2">
+                        <span class="truncate font-semibold text-ink">{{ group.label }}</span>
+                        <span class="shrink-0 text-xs text-ink-muted">
+                          {{ groupSelectedCount(group) }} / {{ group.permissions.length }}
+                        </span>
+                      </div>
+                      <p class="mt-0.5 truncate text-xs text-ink-muted">{{ group.description }}</p>
                     </div>
                   </div>
-                  <div class="hidden items-center justify-end gap-3 text-xs sm:flex" @click.stop>
+                  <div class="hidden shrink-0 items-center justify-end gap-3 text-xs sm:flex" @click.stop>
                     <button
                       type="button"
                       class="cursor-pointer text-brand-600 transition hover:text-brand-700 disabled:cursor-not-allowed disabled:text-ink-muted"
@@ -410,7 +413,7 @@ onMounted(load)
                     <span class="mt-0.5 block text-xs text-ink-muted">{{ permission.description }}</span>
                   </span>
                   <code
-                    class="col-start-2 w-fit justify-self-start rounded-md bg-card-soft px-2 py-0.5 font-mono text-[10px] text-ink-muted opacity-80 sm:col-start-auto sm:justify-self-end"
+                    class="permission-code col-start-2 w-fit justify-self-start rounded-md px-1.5 py-0.5 font-mono text-[10px] sm:col-start-auto sm:justify-self-end"
                   >
                     {{ permission.key }}
                   </code>
@@ -446,6 +449,10 @@ onMounted(load)
 </template>
 
 <style scoped>
+.roles-page {
+  min-height: 0;
+}
+
 .roles-permission-collapse {
   --el-collapse-border-color: transparent;
   border: 0;
@@ -461,11 +468,16 @@ onMounted(load)
 
 .roles-permission-collapse :deep(.el-collapse-item__header) {
   height: auto;
-  min-height: 56px;
-  padding: 12px 16px;
+  min-height: 64px;
+  padding: 12px 14px 12px 16px;
   border-bottom-color: var(--c-line);
   background: var(--c-card-soft);
   line-height: 1.2;
+}
+
+.roles-permission-collapse :deep(.el-collapse-item__arrow) {
+  margin-left: 6px;
+  color: var(--c-ink-muted);
 }
 
 .roles-permission-collapse :deep(.el-collapse-item__wrap) {
@@ -474,6 +486,12 @@ onMounted(load)
 }
 
 .roles-permission-collapse :deep(.el-collapse-item__content) {
-  padding: 0 16px 6px;
+  padding: 0 14px 6px;
+}
+
+.permission-code {
+  color: color-mix(in srgb, var(--c-ink-muted) 72%, transparent);
+  background: color-mix(in srgb, var(--c-card-soft) 78%, transparent);
+  border: 1px solid color-mix(in srgb, var(--c-line) 80%, transparent);
 }
 </style>

@@ -25,6 +25,8 @@ class UserEntity(Base):
     email: Mapped[str | None] = mapped_column(String(256), nullable=True)
     points: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[float] = mapped_column(Float)
+    invite_code: Mapped[str] = mapped_column(String(64), default="", index=True)
+    invited_by: Mapped[str] = mapped_column(String(64), default="", index=True)
     reset_token_hash: Mapped[str | None] = mapped_column(String(256), nullable=True)
     reset_expires_at: Mapped[float] = mapped_column(Float, default=0.0)
 

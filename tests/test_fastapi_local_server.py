@@ -285,6 +285,38 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(second.status_code, 409)
         self.assertEqual(second.json()["error"]["code"], "EMAIL_TAKEN")
 
+    def test_user_list_exposes_inviter_when_registered_by_invite_code(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            auth = AuthService(self._runtime_database_path(directory))
+            client = TestClient(create_app(_sample_index(), auth_service=auth, require_auth=True))
+
+            owner = client.post(
+                "/auth/register",
+                json={"username": "owner", "password": "password123"},
+            )
+            invite_code = owner.json()["user"]["invite_code"]
+            invited = client.post(
+                "/auth/register",
+                json={
+                    "username": "alice",
+                    "password": "password123",
+                    "invite_code": invite_code,
+                },
+            )
+            login = client.post(
+                "/auth/login",
+                json={"username": "owner", "password": "password123"},
+            )
+            users = client.get(
+                "/users",
+                headers={"Authorization": f"Bearer {login.json()['token']}"},
+            )
+
+        alice = next(item for item in users.json()["users"] if item["username"] == "alice")
+        self.assertTrue(owner.json()["user"]["invite_code"])
+        self.assertEqual(invited.json()["user"]["invited_by"], "owner")
+        self.assertEqual(alice["invited_by"], "owner")
+
     def test_registration_can_be_disabled_after_first_user_exists(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)

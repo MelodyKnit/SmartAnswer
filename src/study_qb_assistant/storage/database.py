@@ -73,6 +73,10 @@ def get_session_factory(path_or_url: str | Path | None) -> sessionmaker[Session]
 def ensure_sqlite_compat_columns(engine: Engine) -> None:
     """为旧 SQLite 运行库补齐恢复后新增的轻量字段。"""
     table_columns = {
+        "users": {
+            "invite_code": "TEXT DEFAULT ''",
+            "invited_by": "TEXT DEFAULT ''",
+        },
         "api_tokens": {
             "quota_used": "INTEGER DEFAULT 0",
             "quota_limit": "INTEGER DEFAULT -1",
@@ -159,6 +163,10 @@ def ensure_sql_compat_columns(engine: Engine) -> None:
     """为非 SQLite 运行库补齐轻量兼容字段。"""
 
     table_columns = {
+        "users": {
+            "invite_code": "VARCHAR(64) DEFAULT ''",
+            "invited_by": "VARCHAR(64) DEFAULT ''",
+        },
         "api_tokens": {
             "quota_used": "INTEGER DEFAULT 0",
             "reject_low_confidence": "INTEGER DEFAULT 0",

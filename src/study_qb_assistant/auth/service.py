@@ -73,6 +73,7 @@ class AuthService:
             if email and self.repository.get_user_by_email(email) is not None:
                 raise AuthError("EMAIL_TAKEN", "该邮箱已被注册", http_status=409)
             role = "superadmin" if not self.repository.has_users() else "user"
+            inviter = self.repository.get_user_by_invite_code(invite_code)
             salt = secrets.token_hex(SALT_BYTES)
             user = UserRecord(
                 user_id=secrets.token_hex(16),
@@ -84,6 +85,8 @@ class AuthService:
                 email=email,
                 points=max(0, int(initial_points)) + max(0, int(invite_bonus)),
                 created_at=time.time(),
+                invite_code=self.generate_unique_invite_code(),
+                invited_by=inviter.username if inviter else "",
             )
             self.repository.save_user(user)
             return self.public_user_dict(user)
@@ -356,6 +359,15 @@ class AuthService:
         """兼容旧调用，返回全部用户记录。"""
         return self.repository.list_users()
 
+    def generate_unique_invite_code(self) -> str:
+        """生成当前用户可分享的邀请码。"""
+
+        for _ in range(16):
+            code = secrets.token_hex(4)
+            if self.repository.get_user_by_invite_code(code) is None:
+                return code
+        return secrets.token_hex(8)
+
     def save_users(self) -> None:
         """兼容旧调用，无需额外操作。"""
         return None
@@ -369,5 +381,7 @@ class AuthService:
             "status": user.status,
             "email": user.email,
             "points": user.points,
+            "invite_code": user.invite_code,
+            "invited_by": user.invited_by,
             "created_at": user.created_at,
         }

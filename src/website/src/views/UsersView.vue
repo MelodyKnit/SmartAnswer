@@ -133,6 +133,9 @@ onMounted(async () => {
         <el-table-column label="邮箱" min-width="160">
           <template #default="{ row }">{{ row.email || '—' }}</template>
         </el-table-column>
+        <el-table-column label="邀请人" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.invited_by || '—' }}</template>
+        </el-table-column>
         <el-table-column label="注册时间" width="170">
           <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
         </el-table-column>

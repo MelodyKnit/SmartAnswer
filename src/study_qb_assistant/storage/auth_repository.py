@@ -52,6 +52,18 @@ class SqlAlchemyAuthRepository:
             entity = session.scalar(select(UserEntity).where(UserEntity.user_id == user_id))
             return self._to_record(entity) if entity else None
 
+    def get_user_by_invite_code(self, invite_code: str) -> UserRecord | None:
+        """按邀请码读取用户记录。"""
+
+        normalized = (invite_code or "").strip()
+        if not normalized:
+            return None
+        with self.session_factory() as session:
+            entity = session.scalar(
+                select(UserEntity).where(UserEntity.invite_code == normalized)
+            )
+            return self._to_record(entity) if entity else None
+
     def list_users(self) -> list[UserRecord]:
         with self.session_factory() as session:
             entities = session.scalars(select(UserEntity)).all()
@@ -88,6 +100,8 @@ class SqlAlchemyAuthRepository:
         entity.email = record.email
         entity.points = record.points
         entity.created_at = record.created_at
+        entity.invite_code = record.invite_code
+        entity.invited_by = record.invited_by
         entity.reset_token_hash = record.reset_token_hash
         entity.reset_expires_at = record.reset_expires_at
 
@@ -102,6 +116,8 @@ class SqlAlchemyAuthRepository:
             email=entity.email,
             points=entity.points,
             created_at=entity.created_at,
+            invite_code=entity.invite_code or "",
+            invited_by=entity.invited_by or "",
             reset_token_hash=entity.reset_token_hash,
             reset_expires_at=entity.reset_expires_at,
         )

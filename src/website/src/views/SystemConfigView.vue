@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** 系统配置：积分策略与服务协议配置。仅超级管理员可访问与修改。
+/** 系统配置：积分策略、账户与服务配置。仅超级管理员可访问与修改。
  *  敏感项后端只返回 *_configured 标志，不回明文；留空表示不修改。 */
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
@@ -84,7 +84,7 @@ onMounted(load)
 
 <template>
   <div v-loading="loading">
-    <PageHeader title="系统配置" description="配置积分策略与服务协议。大模型推理、联网搜索和 AI 学习缓存请到“大模型配置”中维护。">
+    <PageHeader title="系统配置" description="配置积分策略、账户开关与服务协议。大模型相关能力请到“大模型配置”中维护。">
       <template #actions>
         <el-button type="primary" :loading="saving" @click="save">保存配置</el-button>
       </template>
@@ -125,13 +125,23 @@ onMounted(load)
         </p>
       </div>
 
-      <!-- 服务协议配置 -->
+      <!-- 账户配置 -->
       <div class="app-card p-6">
-        <h3 class="mb-4 text-base font-semibold text-ink">账号与服务配置</h3>
+        <h3 class="mb-4 text-base font-semibold text-ink">账户配置</h3>
         <el-form label-position="top" class="grid grid-cols-1 gap-x-6 md:grid-cols-2">
           <el-form-item label="允许用户注册">
             <el-switch v-model="form.registration_enabled" active-value="true" inactive-value="false" />
           </el-form-item>
+        </el-form>
+        <p class="text-xs text-ink-muted">
+          关闭注册后，已有用户仍可登录；空库部署时仍允许创建第一个超级管理员。
+        </p>
+      </div>
+
+      <!-- 服务配置 -->
+      <div class="app-card p-6">
+        <h3 class="mb-4 text-base font-semibold text-ink">服务配置</h3>
+        <el-form label-position="top" class="grid grid-cols-1 gap-x-6 md:grid-cols-2">
           <el-form-item label="智能检测协议头（优先获取 X-Forwarded-Proto 与 Host）">
             <el-switch v-model="form.smart_proto_enabled" active-value="true" inactive-value="false" />
           </el-form-item>
@@ -143,7 +153,7 @@ onMounted(load)
           </el-form-item>
         </el-form>
         <p class="text-xs text-ink-muted">
-          关闭注册后，已有用户仍可登录；空库部署时仍允许创建第一个超级管理员。开启智能检测后，系统会自动根据客户端发送的 HTTP/HTTPS 头或穿透网关识别协议。
+          开启智能检测后，系统会自动根据客户端发送的 HTTP/HTTPS 头或穿透网关识别协议。
         </p>
       </div>
     </div>

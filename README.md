@@ -122,7 +122,8 @@ Docker one-command deployment:
 docker compose up -d --build
 ```
 
-Before any server sync or deployment, bump the version in `pyproject.toml` first.
+Before any server sync or deployment, bump the version in `pyproject.toml` first
+and create the matching Git tag, for example `v0.1.6`.
 Treat code upload, image rebuild, and `docker compose up -d --build` on the server as a release step,
 not as ordinary local debugging.
 
@@ -131,7 +132,8 @@ Recommended release order:
 1. Finish the code change and self-check it locally.
 2. Update `pyproject.toml` `version`.
 3. Run the minimal required validation.
-4. Then sync to the server or rebuild the deployment.
+4. Commit the release change and create the matching `vX.Y.Z` tag.
+5. Then sync to the server or rebuild the deployment.
 
 The Docker image builds the frontend and backend together. Runtime data is written to
 `deploy-data/` on the server and starts empty by default; local `data/` files are not
