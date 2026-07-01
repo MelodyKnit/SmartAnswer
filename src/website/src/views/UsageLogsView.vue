@@ -186,7 +186,7 @@ onMounted(load)
         end-placeholder="结束日期"
         value-format="YYYY-MM-DD"
         :clearable="false"
-        class="!w-80"
+        class="usage-date-range"
         @change="search"
       />
       <el-select
@@ -359,3 +359,17 @@ onMounted(load)
     </el-dialog>
   </div>
 </template>
+
+<style scoped>
+.usage-date-range {
+  width: 320px !important;
+  flex: 0 0 320px;
+}
+
+@media (max-width: 768px) {
+  .usage-date-range {
+    width: 100% !important;
+    flex-basis: 100%;
+  }
+}
+</style>

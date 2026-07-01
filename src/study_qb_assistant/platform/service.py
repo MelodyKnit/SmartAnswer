@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import secrets
 import time
 from datetime import datetime, timedelta
@@ -649,6 +650,14 @@ class PlatformService:
 
         if kind != "points":
             raise AuthError("INVALID_INPUT", "兑换码类型仅支持 points", http_status=400)
+        now = time.time()
+        expires_at_value = float(expires_at or 0.0)
+        if not math.isfinite(expires_at_value):
+            raise AuthError("INVALID_INPUT", "兑换码有效期必须是有效时间戳", http_status=400)
+        if expires_at_value < 0:
+            raise AuthError("INVALID_INPUT", "兑换码有效期不能为负数", http_status=400)
+        if expires_at_value and expires_at_value <= now:
+            raise AuthError("INVALID_INPUT", "兑换码有效期必须晚于当前时间", http_status=400)
         record = RedeemCodeRecord(
             code_id=secrets.token_hex(12),
             code="rc_" + secrets.token_urlsafe(10),
@@ -658,8 +667,8 @@ class PlatformService:
             used_uses=0,
             status="active",
             created_by=created_by,
-            created_at=time.time(),
-            expires_at=max(0.0, float(expires_at)),
+            created_at=now,
+            expires_at=expires_at_value,
         )
         with self._lock:
             self.repository.save_redeem_code(record)

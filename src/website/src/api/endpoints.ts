@@ -274,6 +274,8 @@ export const questionApi = {
     type?: string
     source?: string
     status?: string
+    updated_start_date?: string
+    updated_end_date?: string
     subject?: string
     topic?: string
     question_type?: string

@@ -329,6 +329,7 @@
   - `type`：题型筛选。
   - `source`：来源筛选。
   - `status`：状态筛选，支持 `active`、`trusted`、`low_confidence`、`pending`、`conflict`。
+  - `updated_start_date` / `updated_end_date`：按修改日期范围筛选，格式为 `YYYY-MM-DD`，结束日期包含当天。
   - `page` / `limit`：分页。
 
 #### `PATCH /questions/{question_id}`
@@ -488,9 +489,12 @@
 {
   "kind": "points",
   "points": 50,
-  "max_uses": 10
+  "max_uses": 10,
+  "expires_at": 1782892800
 }
 ```
+
+`expires_at` 为可选秒级 Unix 时间戳，`0` 或省略表示永久有效；如果传入时间早于当前时间，请求会返回 `INVALID_INPUT`。
 
 #### `POST /wallet/redeem`
 

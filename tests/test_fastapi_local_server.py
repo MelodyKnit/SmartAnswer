@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+import time
 import unittest
 from datetime import datetime
 from pathlib import Path
@@ -738,6 +739,91 @@ class FastAPILocalServerTests(unittest.TestCase):
         )
         self.assertEqual(disable_ok.json()["user"]["status"], "disabled")
 
+    def test_redeem_code_expiry_contract(self) -> None:
+        """兑换码创建支持可选有效期，并拒绝创建已过期兑换码。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                )
+            )
+            client.post("/auth/register", json={"username": "boss", "password": "password123"})
+            headers = {
+                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
+            }
+
+            future_expires_at = time.time() + 3600
+            permanent = client.post(
+                "/wallet/redeem-codes",
+                json={"kind": "points", "points": 10, "max_uses": 1},
+                headers=headers,
+            )
+            limited = client.post(
+                "/wallet/redeem-codes",
+                json={
+                    "kind": "points",
+                    "points": 20,
+                    "max_uses": 2,
+                    "expires_at": future_expires_at,
+                },
+                headers=headers,
+            )
+            expired_create = client.post(
+                "/wallet/redeem-codes",
+                json={
+                    "kind": "points",
+                    "points": 20,
+                    "max_uses": 1,
+                    "expires_at": time.time() - 60,
+                },
+                headers=headers,
+            )
+            negative_create = client.post(
+                "/wallet/redeem-codes",
+                json={"kind": "points", "points": 20, "max_uses": 1, "expires_at": -1},
+                headers=headers,
+            )
+            code_list = client.get("/wallet/redeem-codes", headers=headers)
+
+            engine = create_engine(f"sqlite:///{database_path}")
+            with engine.begin() as connection:
+                connection.execute(
+                    text("UPDATE redeem_codes SET expires_at = :expires_at WHERE code_id = :code_id"),
+                    {
+                        "expires_at": time.time() - 60,
+                        "code_id": limited.json()["redeem_code"]["code_id"],
+                    },
+                )
+            engine.dispose()
+            expired_redeem = client.post(
+                "/wallet/redeem",
+                json={"code": limited.json()["redeem_code"]["code"]},
+                headers=headers,
+            )
+
+        self.assertEqual(permanent.status_code, 200)
+        self.assertEqual(permanent.json()["redeem_code"]["expires_at"], 0.0)
+        self.assertEqual(limited.status_code, 200)
+        self.assertAlmostEqual(
+            limited.json()["redeem_code"]["expires_at"], future_expires_at, delta=1
+        )
+        listed_limited = next(
+            item
+            for item in code_list.json()["redeem_codes"]
+            if item["code_id"] == limited.json()["redeem_code"]["code_id"]
+        )
+        self.assertAlmostEqual(listed_limited["expires_at"], future_expires_at, delta=1)
+        self.assertEqual(expired_create.status_code, 400)
+        self.assertEqual(expired_create.json()["error"]["code"], "INVALID_INPUT")
+        self.assertEqual(negative_create.status_code, 400)
+        self.assertEqual(negative_create.json()["error"]["code"], "INVALID_INPUT")
+        self.assertEqual(expired_redeem.status_code, 400)
+        self.assertEqual(expired_redeem.json()["error"]["code"], "REDEEM_CODE_EXPIRED")
+
     def test_admin_can_list_and_update_questions_but_regular_user_cannot(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
@@ -828,6 +914,93 @@ class FastAPILocalServerTests(unittest.TestCase):
             res_missing_delete = client.delete("/questions/missing", headers=admin_headers)
             self.assertEqual(res_missing_delete.status_code, 404)
             self.assertEqual(res_missing_delete.json()["error"]["code"], "QUESTION_NOT_FOUND")
+
+    def test_questions_can_filter_by_updated_date_range(self) -> None:
+        """题库管理列表支持按修改日期自然日范围过滤。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            july_first = CanonicalQuestionRecord(
+                question_id="updated_q_1",
+                title_raw="7月1日修改题目",
+                question_type="single",
+                options_raw=("A", "B"),
+                answer_raw="A",
+                explanation="first",
+                subject="general",
+                chapter=None,
+                tags=(),
+                source_name="UpdatedSource",
+                source_url="",
+                source_license="",
+                source_split="",
+                source_record_path="",
+            )
+            july_second = CanonicalQuestionRecord(
+                question_id="updated_q_2",
+                title_raw="7月2日修改题目",
+                question_type="single",
+                options_raw=("A", "B"),
+                answer_raw="B",
+                explanation="second",
+                subject="general",
+                chapter=None,
+                tags=(),
+                source_name="UpdatedSource",
+                source_url="",
+                source_license="",
+                source_split="",
+                source_record_path="",
+            )
+            index = LocalQuestionIndex((july_first, july_second))
+            client = TestClient(
+                create_app(index, auth_service=auth, platform_service=platform, require_auth=True)
+            )
+            client.post("/auth/register", json={"username": "boss", "password": "password123"})
+            headers = {
+                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
+            }
+
+            first_ts = datetime(2026, 7, 1, 12, 0, tzinfo=ZoneInfo("Asia/Shanghai")).timestamp()
+            second_ts = datetime(2026, 7, 2, 12, 0, tzinfo=ZoneInfo("Asia/Shanghai")).timestamp()
+            engine = create_engine(f"sqlite:///{database_path}")
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "UPDATE questions SET updated_at = :updated_at "
+                        "WHERE question_id = :question_id"
+                    ),
+                    {"updated_at": first_ts, "question_id": "updated_q_1"},
+                )
+                connection.execute(
+                    text(
+                        "UPDATE questions SET updated_at = :updated_at "
+                        "WHERE question_id = :question_id"
+                    ),
+                    {"updated_at": second_ts, "question_id": "updated_q_2"},
+                )
+            engine.dispose()
+
+            filtered = client.get(
+                "/questions",
+                params={"updated_start_date": "2026-07-02", "updated_end_date": "2026-07-02"},
+                headers=headers,
+            )
+            unfiltered = client.get("/questions", headers=headers)
+            invalid_date = client.get(
+                "/questions",
+                params={"updated_start_date": "bad-date", "updated_end_date": "2026-07-02"},
+                headers=headers,
+            )
+
+        self.assertEqual(filtered.status_code, 200)
+        self.assertEqual(filtered.json()["total"], 1)
+        self.assertEqual(filtered.json()["questions"][0]["question_id"], "updated_q_2")
+        self.assertEqual(unfiltered.json()["total"], 2)
+        self.assertEqual(invalid_date.status_code, 200)
+        self.assertEqual(invalid_date.json()["total"], 2)
 
     def test_completion_request_ignores_noisy_options_in_get(self) -> None:
         import os

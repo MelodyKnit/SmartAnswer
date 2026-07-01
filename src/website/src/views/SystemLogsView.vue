@@ -150,7 +150,7 @@ onUnmounted(() => {
           end-placeholder="结束日期"
           value-format="YYYY-MM-DD"
           :clearable="false"
-          class="!w-80"
+          class="system-log-date-range"
           @change="load"
         />
       </div>
@@ -190,3 +190,17 @@ onUnmounted(() => {
     </div>
   </div>
 </template>
+
+<style scoped>
+.system-log-date-range {
+  width: 320px !important;
+  flex: 0 0 320px;
+}
+
+@media (max-width: 768px) {
+  .system-log-date-range {
+    width: 100% !important;
+    flex-basis: 100%;
+  }
+}
+</style>

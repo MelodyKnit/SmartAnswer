@@ -158,6 +158,8 @@ class SqlAlchemyQuestionRepository:
         source_name: str = "",
         status: str = "",
         is_active: bool = True,
+        updated_start_time: float | None = None,
+        updated_end_time: float | None = None,
     ) -> int:
         """统计符合筛选条件的题目数量。"""
 
@@ -170,6 +172,8 @@ class SqlAlchemyQuestionRepository:
                 source_name=source_name,
                 status=status,
                 is_active=is_active,
+                updated_start_time=updated_start_time,
+                updated_end_time=updated_end_time,
             )
             return int(session.scalar(stmt) or 0)
 
@@ -181,6 +185,8 @@ class SqlAlchemyQuestionRepository:
         source_name: str = "",
         status: str = "",
         is_active: bool = True,
+        updated_start_time: float | None = None,
+        updated_end_time: float | None = None,
         limit: int = 20,
         offset: int = 0,
     ) -> list[CanonicalQuestionRecord]:
@@ -195,6 +201,8 @@ class SqlAlchemyQuestionRepository:
                 source_name=source_name,
                 status=status,
                 is_active=is_active,
+                updated_start_time=updated_start_time,
+                updated_end_time=updated_end_time,
             )
             entities = session.scalars(
                 stmt.offset(max(0, int(offset))).limit(max(1, min(int(limit), 500)))
@@ -272,6 +280,8 @@ class SqlAlchemyQuestionRepository:
         source_name: str,
         status: str,
         is_active: bool,
+        updated_start_time: float | None,
+        updated_end_time: float | None,
     ):
         normalized_keyword = keyword.strip()
         normalized_type = question_type.strip()
@@ -285,6 +295,10 @@ class SqlAlchemyQuestionRepository:
             stmt = stmt.where(QuestionEntity.source_name == normalized_source)
         if normalized_status:
             stmt = stmt.where(QuestionEntity.status == normalized_status)
+        if updated_start_time is not None:
+            stmt = stmt.where(QuestionEntity.updated_at >= updated_start_time)
+        if updated_end_time is not None:
+            stmt = stmt.where(QuestionEntity.updated_at < updated_end_time)
         if normalized_keyword:
             like = f"%{normalized_keyword}%"
             stmt = stmt.where(
@@ -403,6 +417,8 @@ class IndexQuestionRepository:
         source_name: str = "",
         status: str = "",
         is_active: bool = True,
+        updated_start_time: float | None = None,
+        updated_end_time: float | None = None,
     ) -> int:
         """统计符合筛选条件的题目数量。"""
 
@@ -413,6 +429,8 @@ class IndexQuestionRepository:
                 source_name=source_name,
                 status=status,
                 is_active=is_active,
+                updated_start_time=updated_start_time,
+                updated_end_time=updated_end_time,
             )
         )
 
@@ -424,6 +442,8 @@ class IndexQuestionRepository:
         source_name: str = "",
         status: str = "",
         is_active: bool = True,
+        updated_start_time: float | None = None,
+        updated_end_time: float | None = None,
         limit: int = 20,
         offset: int = 0,
     ) -> list[CanonicalQuestionRecord]:
@@ -435,6 +455,8 @@ class IndexQuestionRepository:
             source_name=source_name,
             status=status,
             is_active=is_active,
+            updated_start_time=updated_start_time,
+            updated_end_time=updated_end_time,
         )
         start = max(0, int(offset))
         end = start + max(1, min(int(limit), 500))
@@ -489,6 +511,8 @@ class IndexQuestionRepository:
         source_name: str,
         status: str,
         is_active: bool,
+        updated_start_time: float | None,
+        updated_end_time: float | None,
     ) -> list[CanonicalQuestionRecord]:
         normalized_keyword = normalize_text(keyword)
         normalized_type = question_type.strip()
@@ -505,6 +529,11 @@ class IndexQuestionRepository:
             if normalized_source and record.source_name != normalized_source:
                 continue
             if normalized_status and record_status != normalized_status:
+                continue
+            updated_at = record.to_dict().get("updated_at") or 0
+            if updated_start_time is not None and float(updated_at) < updated_start_time:
+                continue
+            if updated_end_time is not None and float(updated_at) >= updated_end_time:
                 continue
             searchable = " ".join(
                 (

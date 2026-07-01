@@ -7,6 +7,7 @@ import { ApiException } from '@/api/http'
 import { questionApi } from '@/api/endpoints'
 import type { QuestionRecord } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
+import { formatDateTime } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
 import { DEFAULT_PAGE_SIZE } from '@/config/constants'
 
@@ -31,6 +32,7 @@ const filter = reactive({
   type: '',
   status: '',
   question_type: '',
+  updatedDateRange: [] as string[],
   limit: DEFAULT_PAGE_SIZE.QUESTIONS,
 })
 
@@ -139,6 +141,8 @@ async function loadList() {
       type: filter.type || undefined,
       source: filter.source || undefined,
       status: filter.status || undefined,
+      updated_start_date: filter.updatedDateRange[0] || undefined,
+      updated_end_date: filter.updatedDateRange[1] || undefined,
     })
     questions.value = res.questions
     total.value = res.total
@@ -157,6 +161,7 @@ function resetFilter() {
   filter.type = ''
   filter.source = ''
   filter.status = ''
+  filter.updatedDateRange = []
   filter.page = 1
   loadList()
 }
@@ -263,6 +268,7 @@ function reset() {
   filter.question_type = ''
   filter.type = ''
   filter.status = ''
+  filter.updatedDateRange = []
   filter.limit = DEFAULT_PAGE_SIZE.QUESTIONS
   filter.page = 1
   loadList()
@@ -284,19 +290,22 @@ onMounted(loadList)
 
     <div class="space-y-4">
       <!-- 搜索过滤条 -->
-      <div class="app-card p-4">
-        <el-form :inline="true" :model="filter" class="flex flex-wrap items-center gap-y-3">
+      <div class="question-filter-card app-card p-4">
+        <el-form
+          :model="filter"
+          class="question-filter-form grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(260px,1fr)_150px_190px_160px_300px_auto] xl:items-end"
+        >
           <el-form-item label="关键字" class="mb-0">
             <el-input
               v-model="filter.keyword"
               placeholder="搜索题干/选项/解析..."
               clearable
-              class="w-64"
+              class="w-full"
               @keyup.enter="handleSearch"
             />
           </el-form-item>
           <el-form-item label="题型" class="mb-0">
-            <el-select v-model="filter.type" placeholder="全部题型" clearable class="w-36">
+            <el-select v-model="filter.type" placeholder="全部题型" clearable class="w-full">
               <el-option value="single" label="单选题" />
               <el-option value="multiple" label="多选题" />
               <el-option value="completion" label="填空题" />
@@ -305,12 +314,12 @@ onMounted(loadList)
             </el-select>
           </el-form-item>
           <el-form-item label="数据源" class="mb-0">
-            <el-select v-model="filter.source" placeholder="全部来源" clearable class="w-48">
+            <el-select v-model="filter.source" placeholder="全部来源" clearable class="w-full">
               <el-option v-for="src in allSources" :key="src" :value="src" :label="src" />
             </el-select>
           </el-form-item>
           <el-form-item label="状态" class="mb-0">
-            <el-select v-model="filter.status" placeholder="全部状态" clearable class="w-40">
+            <el-select v-model="filter.status" placeholder="全部状态" clearable class="w-full">
               <el-option value="active" label="基础题库" />
               <el-option value="trusted" label="可信 AI" />
               <el-option value="low_confidence" label="低信任度" />
@@ -318,12 +327,27 @@ onMounted(loadList)
               <el-option value="conflict" label="冲突" />
             </el-select>
           </el-form-item>
-          <el-form-item class="mb-0 ml-auto flex gap-2">
-            <el-button type="primary" @click="handleSearch">
-              <el-icon class="mr-1"><Search /></el-icon>
-              搜索
-            </el-button>
-            <el-button @click="resetFilter">重置</el-button>
+          <el-form-item label="修改时间" class="mb-0">
+            <el-date-picker
+              v-model="filter.updatedDateRange"
+              type="daterange"
+              range-separator="至"
+              start-placeholder="开始日期"
+              end-placeholder="结束日期"
+              value-format="YYYY-MM-DD"
+              clearable
+              class="question-updated-range"
+              @change="handleSearch"
+            />
+          </el-form-item>
+          <el-form-item class="mb-0">
+            <div class="flex w-full gap-2 xl:justify-end">
+              <el-button type="primary" class="flex-1 xl:flex-none" @click="handleSearch">
+                <el-icon class="mr-1"><Search /></el-icon>
+                搜索
+              </el-button>
+              <el-button class="flex-1 xl:flex-none" @click="resetFilter">重置</el-button>
+            </div>
           </el-form-item>
         </el-form>
       </div>
@@ -376,6 +400,12 @@ onMounted(loadList)
               <el-tag size="small" :type="row.status === 'trusted' ? 'success' : row.status === 'low_confidence' ? 'warning' : 'info'">
                 {{ row.status || 'active' }}
               </el-tag>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="修改时间" width="170">
+            <template #default="{ row }">
+              <span class="text-sm text-ink-soft">{{ formatDateTime(row.updated_at) }}</span>
             </template>
           </el-table-column>
 
@@ -574,5 +604,34 @@ onMounted(loadList)
 <style scoped>
 .custom-radio-answer {
   margin-right: 0 !important;
+}
+
+.question-filter-card {
+  display: flex;
+  min-height: 96px;
+  align-items: center;
+}
+
+.question-filter-form {
+  width: 100%;
+}
+
+.question-filter-form :deep(.el-form-item) {
+  margin-bottom: 0;
+  align-items: center;
+}
+
+.question-filter-form :deep(.el-form-item__label) {
+  height: 38px;
+  margin-bottom: 0;
+  line-height: 38px;
+}
+
+.question-filter-form :deep(.el-form-item__content) {
+  width: 100%;
+}
+
+.question-updated-range {
+  width: 100% !important;
 }
 </style>

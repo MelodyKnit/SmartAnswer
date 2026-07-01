@@ -8,6 +8,7 @@ from starlette.responses import JSONResponse
 from ....answering import AnswerService
 from ....auth import AuthError
 from ....models import CanonicalQuestionRecord
+from ....platform.service import local_day_window_from_dates
 from ....storage.question_repository import question_record_status, question_status_is_indexable
 from ...context import (
     auth_error_response,
@@ -78,6 +79,8 @@ def build_catalog_router() -> APIRouter:
         type: str | None = None,
         source: str | None = None,
         status: str | None = None,
+        updated_start_date: str | None = None,
+        updated_end_date: str | None = None,
     ) -> JSONResponse:
         denied = require_roles(request, {"admin", "superadmin"})
         if denied:
@@ -86,12 +89,17 @@ def build_catalog_router() -> APIRouter:
         if denied:
             return denied
         repository = get_question_repository(request)
+        updated_start_time, updated_end_time = question_updated_window(
+            updated_start_date or "", updated_end_date or ""
+        )
         total = repository.count_questions(
             keyword=keyword or "",
             question_type=type or "",
             source_name=source or "",
             status=status or "",
             is_active=True,
+            updated_start_time=updated_start_time,
+            updated_end_time=updated_end_time,
         )
         paginated = repository.list_question_records(
             keyword=keyword or "",
@@ -99,6 +107,8 @@ def build_catalog_router() -> APIRouter:
             source_name=source or "",
             status=status or "",
             is_active=True,
+            updated_start_time=updated_start_time,
+            updated_end_time=updated_end_time,
             limit=limit,
             offset=max(0, (page - 1) * limit),
         )
@@ -259,3 +269,14 @@ def string_list(value: object) -> list[str]:
     if isinstance(value, (list, tuple, set)):
         return [str(item) for item in value]
     return []
+
+
+def question_updated_window(
+    updated_start_date: str, updated_end_date: str
+) -> tuple[float | None, float | None]:
+    """把题库修改日期筛选转换为时间窗口；非法日期忽略筛选。"""
+
+    try:
+        return local_day_window_from_dates(updated_start_date, updated_end_date)
+    except ValueError:
+        return None, None

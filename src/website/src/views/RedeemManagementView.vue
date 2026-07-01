@@ -28,7 +28,11 @@ const grantVisible = ref(false)
 const pointsPolicy = reactive({ manualGrant: 1, redeemCode: 1 })
 const grantForm = reactive({ username: '', points: pointsPolicy.manualGrant })
 const codeVisible = ref(false)
-const codeForm = reactive({ points: pointsPolicy.redeemCode, max_uses: 1 })
+const codeForm = reactive<{
+  points: number
+  max_uses: number
+  expires_at_ms: string | number
+}>({ points: pointsPolicy.redeemCode, max_uses: 1, expires_at_ms: '' })
 
 const sourceOptions = [
   { value: 'manual_credit', label: '管理员发放' },
@@ -39,7 +43,7 @@ const sourceOptions = [
 const summaryCards = computed(() => {
   if (activeTab.value === 'codes') {
     const totalCodes = codes.value.length
-    const activeCodes = codes.value.filter((c) => c.status === 'active').length
+    const activeCodes = codes.value.filter(isRedeemCodeUsable).length
     const fullyUsedCodes = codes.value.filter((c) => (c.used_uses || 0) >= (c.max_uses || 0)).length
     const totalUses = codes.value.reduce((sum, c) => sum + (c.used_uses || 0), 0)
     const limitUses = codes.value.reduce((sum, c) => sum + (c.max_uses || 0), 0)
@@ -60,6 +64,39 @@ const summaryCards = computed(() => {
     ]
   }
 })
+
+function currentSeconds() {
+  return Math.floor(Date.now() / 1000)
+}
+
+function isRedeemCodeExpired(code: RedeemCode) {
+  return Boolean(code.expires_at && code.expires_at <= currentSeconds())
+}
+
+function isRedeemCodeExhausted(code: RedeemCode) {
+  return (code.used_uses || 0) >= (code.max_uses || 0)
+}
+
+function redeemCodeStatus(code: RedeemCode): { label: string; type: 'success' | 'info' | 'warning' | 'danger' } {
+  if (code.status === 'expired' || isRedeemCodeExpired(code)) return { label: '已过期', type: 'danger' }
+  if (code.status === 'exhausted' || isRedeemCodeExhausted(code)) return { label: '已用完', type: 'warning' }
+  if (code.status !== 'active') return { label: '失效', type: 'info' }
+  return { label: '可用', type: 'success' }
+}
+
+function isRedeemCodeUsable(code: RedeemCode) {
+  return redeemCodeStatus(code).label === '可用'
+}
+
+function codeExpiryTimestamp() {
+  if (!codeForm.expires_at_ms) return 0
+  const timestamp = Math.floor(Number(codeForm.expires_at_ms) / 1000)
+  if (!Number.isFinite(timestamp) || timestamp <= currentSeconds()) {
+    ElMessage.warning('有效期必须晚于当前时间')
+    return null
+  }
+  return timestamp
+}
 
 async function loadCodes() {
   codesLoading.value = true
@@ -148,16 +185,20 @@ async function submitGrant() {
 }
 
 async function submitCode() {
+  const expiresAt = codeExpiryTimestamp()
+  if (expiresAt === null) return
   try {
     await walletApi.createRedeemCode({
       kind: 'points',
       points: codeForm.points,
       max_uses: codeForm.max_uses,
+      expires_at: expiresAt,
     })
     ElMessage.success('兑换码已创建')
     codeVisible.value = false
     codeForm.points = pointsPolicy.redeemCode
     codeForm.max_uses = 1
+    codeForm.expires_at_ms = ''
     await loadCodes()
   } catch (error) {
     ElMessage.error(error instanceof ApiException ? error.message : '创建失败')
@@ -227,9 +268,16 @@ onMounted(load)
               </el-table-column>
               <el-table-column label="状态" width="110">
                 <template #default="{ row }">
-                  <el-tag size="small" :type="row.status === 'active' ? 'success' : 'info'" effect="light">
-                    {{ row.status === 'active' ? '可用' : '失效' }}
+                  <el-tag size="small" :type="redeemCodeStatus(row).type" effect="light">
+                    {{ redeemCodeStatus(row).label }}
                   </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="有效期" min-width="170">
+                <template #default="{ row }">
+                  <el-tag v-if="!row.expires_at" size="small" type="info" effect="plain">永久有效</el-tag>
+                  <el-tag v-else-if="isRedeemCodeExpired(row)" size="small" type="danger" effect="light">已过期</el-tag>
+                  <span v-else class="text-ink">{{ formatDateTime(row.expires_at) }}</span>
                 </template>
               </el-table-column>
               <el-table-column label="创建人" width="140" prop="created_by" />
@@ -335,6 +383,17 @@ onMounted(load)
         </el-form-item>
         <el-form-item label="可用次数">
           <el-input-number v-model="codeForm.max_uses" :min="1" class="w-full" />
+        </el-form-item>
+        <el-form-item label="有效期">
+          <el-date-picker
+            v-model="codeForm.expires_at_ms"
+            type="datetime"
+            value-format="x"
+            placeholder="不设置则永久有效"
+            clearable
+            class="w-full"
+          />
+          <div class="mt-1 text-xs text-ink-muted">留空表示永久有效，设置后到期将无法兑换。</div>
         </el-form-item>
       </el-form>
       <template #footer>
