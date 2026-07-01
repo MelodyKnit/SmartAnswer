@@ -72,6 +72,7 @@ jwt_secret*
 *.sqlite
 *.sqlite3
 *.jsonl
+!src/study_qb_assistant/platform/import_script_templates.jsonl
 # 排除 data 目录下本地生成的文件与日志
 data/raw/
 data/normalized/
