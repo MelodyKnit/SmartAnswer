@@ -114,7 +114,13 @@ def logger_name_for_event(event: str) -> str:
         return f"{LOGGER_NAME}.model"
     if event.startswith("web_search"):
         return f"{LOGGER_NAME}.search"
-    if event in {"service_start"}:
+    if event in {
+        "service_start",
+        "question_index_sync_start",
+        "question_index_sync_complete",
+        "question_index_load_start",
+        "question_index_load_complete",
+    }:
         return f"{LOGGER_NAME}.server"
     if event in {"query", "ocs_answer_fallback_used"}:
         return f"{LOGGER_NAME}.api"
@@ -139,6 +145,21 @@ def message_for_event(event: str, entry: dict[str, Any]) -> str:
     if event == "service_start":
         auth = "on" if entry.get("require_auth") else "off"
         return f"Service starting at http://{entry.get('host')}:{entry.get('port')} (auth={auth})"
+    if event == "question_index_sync_start":
+        return (
+            f"Question bank sync starting records={entry.get('record_count')} "
+            f"source={shorten(str(entry.get('source_path') or ''), limit=96)}"
+        )
+    if event == "question_index_sync_complete":
+        status = "skipped" if entry.get("skipped") else "completed"
+        return (
+            f"Question bank sync {status} records={entry.get('record_count')} "
+            f"synced={entry.get('synced_count')}"
+        )
+    if event == "question_index_load_start":
+        return "Question bank runtime index loading"
+    if event == "question_index_load_complete":
+        return f"Question bank runtime index ready records={entry.get('record_count')}"
     if event == "query":
         title = shorten(str(entry.get("title") or ""), limit=72)
         return (

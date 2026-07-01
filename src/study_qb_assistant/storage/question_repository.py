@@ -6,9 +6,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from collections.abc import Iterable
+from dataclasses import dataclass
 
 from sqlalchemy import func, or_, select
 
@@ -16,7 +18,7 @@ from ..models import CanonicalQuestionRecord
 from ..normalization import normalize_text
 from ..search import LocalQuestionIndex
 from .database import get_session_factory
-from .orm import QuestionEntity
+from .orm import QuestionEntity, SettingEntity
 
 
 NON_ACTIVE_QUESTION_STATUSES = {"disabled", "deleted", "inactive"}
@@ -25,6 +27,19 @@ NON_INDEXABLE_QUESTION_STATUSES = NON_ACTIVE_QUESTION_STATUSES | {
     "pending",
     "conflict",
 }
+SYNC_SETTINGS_SCOPE = "question_repository"
+SYNC_SIGNATURE_KEY = "startup_index_signature"
+SYNC_RECORD_COUNT_KEY = "startup_index_record_count"
+
+
+@dataclass(frozen=True)
+class QuestionIndexSyncResult:
+    """题库启动同步结果，用于日志和启动诊断。"""
+
+    record_count: int
+    synced_count: int
+    skipped: bool
+    signature: str
 
 
 class SqlAlchemyQuestionRepository:
@@ -33,10 +48,36 @@ class SqlAlchemyQuestionRepository:
     def __init__(self, path_or_url) -> None:
         self.session_factory = get_session_factory(path_or_url)
 
-    def sync_from_index(self, index: LocalQuestionIndex) -> int:
+    def sync_from_index(self, index: LocalQuestionIndex) -> QuestionIndexSyncResult:
         """把启动时加载的 JSONL 内存索引同步到数据库题库表。"""
 
-        synced = 0
+        signature = question_index_signature(index.records)
+        record_count = len(index.records)
+        with self.session_factory() as session:
+            existing_signature = setting_value(
+                session,
+                scope=SYNC_SETTINGS_SCOPE,
+                key=SYNC_SIGNATURE_KEY,
+            )
+            expected_count = setting_value(
+                session,
+                scope=SYNC_SETTINGS_SCOPE,
+                key=SYNC_RECORD_COUNT_KEY,
+            )
+            existing_question_count = int(
+                session.scalar(select(func.count()).select_from(QuestionEntity)) or 0
+            )
+            if (
+                existing_signature == signature
+                and existing_question_count >= json_int(expected_count)
+            ):
+                return QuestionIndexSyncResult(
+                    record_count=record_count,
+                    synced_count=0,
+                    skipped=True,
+                    signature=signature,
+                )
+
         with self.session_factory() as session:
             deleted_ids = set(
                 session.scalars(
@@ -48,12 +89,40 @@ class SqlAlchemyQuestionRepository:
                     )
                 ).all()
             )
-        for record in index.records:
-            if record.question_id in deleted_ids:
-                continue
-            self.save_question_record(record)
-            synced += 1
-        return synced
+            existing_entities = {
+                entity.question_id: entity
+                for entity in session.scalars(select(QuestionEntity)).all()
+            }
+            synced = 0
+            now = time.time()
+            for record in index.records:
+                if record.question_id in deleted_ids:
+                    continue
+                entity = existing_entities.get(record.question_id)
+                if entity is None:
+                    entity = QuestionEntity(question_id=record.question_id, created_at=now)
+                    session.add(entity)
+                self._apply_record_to_entity(entity, record, updated_at=now)
+                synced += 1
+            set_setting_value(
+                session,
+                scope=SYNC_SETTINGS_SCOPE,
+                key=SYNC_SIGNATURE_KEY,
+                value=signature,
+            )
+            set_setting_value(
+                session,
+                scope=SYNC_SETTINGS_SCOPE,
+                key=SYNC_RECORD_COUNT_KEY,
+                value=str(record_count),
+            )
+            session.commit()
+        return QuestionIndexSyncResult(
+            record_count=record_count,
+            synced_count=synced,
+            skipped=False,
+            signature=signature,
+        )
 
     def list_all_active_records(self) -> list[CanonicalQuestionRecord]:
         """返回所有未禁用题目。"""
@@ -498,6 +567,55 @@ def question_record_confidence(record: CanonicalQuestionRecord) -> float:
         return float(str(raw))
     except (TypeError, ValueError):
         return 0.0
+
+
+def question_index_signature(records: Iterable[CanonicalQuestionRecord]) -> str:
+    """计算启动题库内容签名，避免热重载时重复全量写库。"""
+
+    digest = hashlib.sha256()
+    count = 0
+    for record in records:
+        count += 1
+        payload = {
+            "question_id": record.question_id,
+            "title_raw": record.title_raw,
+            "question_type": record.question_type,
+            "options_raw": list(record.options_raw),
+            "answer_raw": record.answer_raw,
+            "explanation": record.explanation,
+            "subject": record.subject,
+            "chapter": record.chapter,
+            "tags": list(record.tags),
+            "source_name": record.source_name,
+            "source_split": record.source_split,
+            "source_record_path": record.source_record_path,
+            "metadata": dict(record.metadata),
+        }
+        digest.update(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8"))
+        digest.update(b"\n")
+    digest.update(f"count={count}".encode("ascii"))
+    return digest.hexdigest()
+
+
+def setting_value(session, *, scope: str, key: str) -> str:
+    """读取仓储私有设置值。"""
+
+    entity = session.scalar(
+        select(SettingEntity).where(SettingEntity.scope == scope, SettingEntity.key == key)
+    )
+    return str(entity.value) if entity is not None else ""
+
+
+def set_setting_value(session, *, scope: str, key: str, value: str) -> None:
+    """写入仓储私有设置值。"""
+
+    entity = session.scalar(
+        select(SettingEntity).where(SettingEntity.scope == scope, SettingEntity.key == key)
+    )
+    if entity is None:
+        session.add(SettingEntity(scope=scope, key=key, value=value))
+        return
+    entity.value = value
 
 
 def json_list(payload: str | None) -> list[str]:

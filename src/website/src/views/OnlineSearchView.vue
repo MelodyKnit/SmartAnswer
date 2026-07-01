@@ -1,14 +1,14 @@
 <script setup lang="ts">
-/** 站内搜题：用户输入题目，系统调用内部/网页检索引擎返回可能的答案。 */
+/** 站内搜题：用户输入题目，系统调用内部检索与 AI 链路返回候选答案。 */
 import { computed, reactive, ref } from 'vue'
+import { DocumentChecked, Search } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import { ApiException } from '@/api/http'
 import { queryApi } from '@/api/endpoints'
 import type { QueryResultPayload } from '@/api/types'
-import { Search } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
-import { useAuthStore } from '@/stores/auth'
 import PageHeader from '@/components/PageHeader.vue'
-import { resolutionLabel } from '@/utils/format'
+import SearchResultPanel from '@/components/online-search/SearchResultPanel.vue'
+import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
 
@@ -31,6 +31,10 @@ const optionList = computed(() =>
     .map((s) => s.trim())
     .filter(Boolean),
 )
+
+const titleLength = computed(() => form.title.trim().length)
+const optionCount = computed(() => optionList.value.length)
+const localHitCost = computed(() => auth.billing?.local_hit ?? 0)
 
 async function search() {
   if (!form.title.trim()) {
@@ -61,145 +65,109 @@ function reset() {
   result.value = null
   errorMsg.value = ''
 }
-
-const confidencePercent = computed(() =>
-  result.value ? Math.round(result.value.result.confidence * 100) : 0,
-)
-
-const localHitCost = computed(() => auth.billing?.local_hit ?? 0)
 </script>
 
 <template>
   <div class="space-y-4">
-    <PageHeader title="在线搜题" :description="`输入题目即可检索答案。系统搜题每次消耗 ${localHitCost} 积分，搜索失败不扣分。`" />
+    <PageHeader
+      title="在线搜题"
+      :description="`输入题目即可检索答案。系统搜题每次消耗 ${localHitCost} 积分，搜索失败不扣分。`"
+    />
 
-    <!-- 搜题入口卡片 -->
-    <div class="app-card overflow-hidden">
-      <!-- Header -->
-      <div class="border-b border-line bg-canvas/30 px-6 py-4">
-        <h3 class="text-base font-semibold text-ink flex items-center gap-2">
-          <el-icon class="text-brand-500"><Search /></el-icon>
-          输入题目信息
-        </h3>
-        <p class="mt-1 text-xs text-ink-soft">每次搜题将消耗 {{ localHitCost }} 积分，搜索失败不会扣除积分。</p>
-      </div>
-
-      <div class="p-6">
-        <!-- 输入 -->
-        <el-form label-position="top">
-          <el-form-item label="题型">
-            <el-select v-model="form.type" class="w-full">
-              <el-option v-for="t in TYPES" :key="t.value" :value="t.value" :label="t.label" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="题目题干" required>
-            <el-input
-              v-model="form.title"
-              type="textarea"
-              :rows="3"
-              placeholder="粘贴或输入题目题干"
-            />
-          </el-form-item>
-          <el-form-item label="选项（可选，每行一个）">
-            <el-input
-              v-model="form.optionsText"
-              type="textarea"
-              :rows="4"
-              placeholder="例如：&#10;A. 选项一&#10;B. 选项二"
-            />
-          </el-form-item>
-          <div class="flex gap-3">
-            <el-button type="primary" :loading="loading" class="flex-1" @click="search">
-              开始搜题
-            </el-button>
-            <el-button @click="reset">清空</el-button>
-          </div>
-        </el-form>
-
-        <!-- 结果 -->
-        <div class="flex flex-col p-5">
-          <h3 class="mb-3 text-base font-semibold text-ink">搜题结果</h3>
-
-          <div v-if="loading" class="flex flex-1 items-center justify-center text-ink-muted">
-            <el-icon class="mr-2 animate-spin"><Loading /></el-icon> 检索中…
-          </div>
-
-          <el-result
-            v-else-if="errorMsg"
-            icon="warning"
-            title="未获取到答案"
-            :sub-title="errorMsg"
-          />
-
-          <div v-else-if="result" class="flex-1 space-y-4">
-            <div class="rounded-xl bg-success/10 p-4">
-              <div class="text-sm text-ink-soft">推荐答案</div>
-              <div class="mt-1 text-2xl font-bold text-success">
-                {{ result.result.candidate_answer || result.result.answer_text || '—' }}
-              </div>
-              <div v-if="result.result.answer_text" class="mt-1 text-sm text-ink">
-                {{ result.result.answer_text }}
-              </div>
-            </div>
-
-            <div class="flex flex-wrap gap-4 text-sm">
-              <div>
-                <span class="text-ink-muted">命中方式：</span>
-                <el-tag size="small" type="success" effect="light">
-                  {{ resolutionLabel(result.result.resolution_mode) }}
-                </el-tag>
-              </div>
-              <div class="flex items-center gap-2">
-                <span class="text-ink-muted">置信度：</span>
-                <el-progress
-                  :percentage="confidencePercent"
-                  :stroke-width="8"
-                  style="width: 120px"
-                />
-              </div>
-              <div v-if="result.result.review_required">
-                <el-tag size="small" type="warning" effect="light">建议人工复核</el-tag>
-              </div>
-            </div>
-
-            <div v-if="result.result.explanation">
-              <div class="mb-1 text-sm text-ink-muted">解析</div>
-              <p class="whitespace-pre-wrap rounded-lg bg-card-soft p-3 text-sm text-ink-soft">
-                {{ result.result.explanation }}
+    <div class="grid items-start gap-4 xl:grid-cols-[minmax(360px,0.86fr)_minmax(480px,1.14fr)]">
+      <section class="app-card overflow-hidden">
+        <div class="border-b border-line bg-canvas/30 px-5 py-4">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <p class="text-xs font-semibold uppercase tracking-[0.18em] text-brand-500">
+                Question Input
               </p>
+              <h3 class="mt-1 flex items-center gap-2 text-lg font-semibold text-ink">
+                <el-icon class="text-brand-500"><Search /></el-icon>
+                输入题目信息
+              </h3>
             </div>
+            <el-tag type="info" effect="plain">每次 {{ localHitCost }} 积分</el-tag>
+          </div>
+          <p class="mt-2 text-xs leading-5 text-ink-soft">
+            题干越完整、选项越规范，越容易优先命中本地题库；未命中时才进入 AI 与联网增强链路。
+          </p>
+        </div>
 
-            <div v-if="result.sources.length">
-              <div class="mb-1 text-sm text-ink-muted">来源</div>
-              <div class="flex flex-wrap gap-2">
-                <el-tag
-                  v-for="(s, i) in result.sources"
-                  :key="i"
-                  size="small"
-                  effect="plain"
-                >
-                  {{ s.source_name }}（{{ (s.score * 100).toFixed(0) }}%）
-                </el-tag>
-              </div>
+        <div class="space-y-5 p-5">
+          <div class="grid gap-3 sm:grid-cols-3">
+            <div class="rounded-xl border border-line bg-canvas/40 p-3">
+              <div class="text-xs text-ink-muted">题干字符</div>
+              <div class="mt-1 text-lg font-semibold text-ink">{{ titleLength }}</div>
+            </div>
+            <div class="rounded-xl border border-line bg-canvas/40 p-3">
+              <div class="text-xs text-ink-muted">选项数量</div>
+              <div class="mt-1 text-lg font-semibold text-ink">{{ optionCount }}</div>
+            </div>
+            <div class="rounded-xl border border-line bg-canvas/40 p-3">
+              <div class="text-xs text-ink-muted">失败扣费</div>
+              <div class="mt-1 text-lg font-semibold text-success">0</div>
             </div>
           </div>
 
-          <div v-else class="flex flex-1 items-center justify-center text-sm text-ink-muted">
-            在左侧输入题目后开始搜题
+          <el-form label-position="top" @submit.prevent>
+            <el-form-item label="题型">
+              <el-select v-model="form.type" class="w-full">
+                <el-option v-for="t in TYPES" :key="t.value" :value="t.value" :label="t.label" />
+              </el-select>
+            </el-form-item>
+
+            <el-form-item label="题目题干" required>
+              <el-input
+                v-model="form.title"
+                type="textarea"
+                :rows="5"
+                maxlength="2000"
+                show-word-limit
+                placeholder="粘贴或输入完整题目题干，例如：国家资本主义的高级形式是【1】____。"
+              />
+            </el-form-item>
+
+            <el-form-item label="选项（可选，每行一个）">
+              <el-input
+                v-model="form.optionsText"
+                type="textarea"
+                :rows="5"
+                maxlength="3000"
+                show-word-limit
+                placeholder="例如：&#10;A. 初级形式&#10;B. 公私合营&#10;C. 统购统销&#10;D. 合作社"
+              />
+            </el-form-item>
+
+            <div class="flex flex-col gap-3 sm:flex-row">
+              <el-button type="primary" :loading="loading" class="min-h-10 flex-1" @click="search">
+                <el-icon class="mr-1"><Search /></el-icon>
+                开始搜题
+              </el-button>
+              <el-button class="min-h-10 sm:w-28" @click="reset">清空</el-button>
+            </div>
+          </el-form>
+
+          <div class="rounded-2xl border border-brand-500/20 bg-brand-500/5 p-4">
+            <div class="mb-2 flex items-center gap-2 text-sm font-semibold text-ink">
+              <el-icon class="text-brand-500"><DocumentChecked /></el-icon>
+              结果判断提示
+            </div>
+            <p class="text-xs leading-6 text-ink-soft">
+              优先看推荐答案，再结合置信度、命中方式、解析和来源判断是否需要复核。低置信度结果不会被界面强行包装成高可信答案。
+            </p>
           </div>
         </div>
-      </div>
+      </section>
+
+      <SearchResultPanel
+        class="xl:sticky xl:top-4"
+        :result="result"
+        :loading="loading"
+        :error-message="errorMsg"
+        @retry="search"
+        @clear="reset"
+      />
     </div>
   </div>
 </template>
-
-<style scoped>
-.animate-spin {
-  animation: spin 1s linear infinite;
-}
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-</style>

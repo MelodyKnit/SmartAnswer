@@ -13,4 +13,4 @@ export STQB_HOST="$HOST"
 export STQB_PORT="$PORT"
 export STQB_RELOAD="false"
 
-exec uvicorn study_qb_assistant.runtime:create_runtime_app --factory --host "$HOST" --port "$PORT" --app-dir src
+exec python -m uvicorn study_qb_assistant.runtime:create_runtime_app --factory --host "$HOST" --port "$PORT" --app-dir src

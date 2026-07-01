@@ -11,6 +11,7 @@ from starlette.responses import FileResponse
 from ..answering import AnswerService
 from ..auth import AuthService
 from ..config import get_global_config
+from ..logger import log_event
 from ..platform import PlatformService
 from ..search import LocalQuestionIndex
 from ..storage.question_repository import SqlAlchemyQuestionRepository
@@ -51,10 +52,24 @@ def create_app(
     question_repository = SqlAlchemyQuestionRepository(database_locator)
     auth_required = bool_env("STQB_REQUIRE_AUTH") if require_auth is None else require_auth
     lookup_index = lookup.index if isinstance(lookup, AnswerService) else lookup
-    question_repository.sync_from_index(lookup_index)
+    log_event(
+        "question_index_sync_start",
+        {"record_count": len(lookup_index.records), "source_path": lookup_index.source_path},
+    )
+    sync_result = question_repository.sync_from_index(lookup_index)
+    log_event(
+        "question_index_sync_complete",
+        {
+            "record_count": sync_result.record_count,
+            "synced_count": sync_result.synced_count,
+            "skipped": sync_result.skipped,
+        },
+    )
     # 只有显式接入平台/鉴权服务时，才把数据库视为运行时索引的权威来源。
     if auth_service is not None or platform_service is not None:
+        log_event("question_index_load_start", {})
         lookup_index.replace_records(tuple(question_repository.list_indexable_records()))
+        log_event("question_index_load_complete", {"record_count": len(lookup_index.records)})
     if isinstance(lookup, AnswerService):
         lookup.question_repository = question_repository
     app = FastAPI(title="Study Question Bank Assistant", version="0.1.0")

@@ -70,6 +70,40 @@ class FastAPILocalServerTests(unittest.TestCase):
         """为测试场景生成统一的 SQLite 运行时数据库路径。"""
         return Path(directory) / "study-qb.sqlite3"
 
+    def test_question_repository_skips_unchanged_startup_index_sync(self) -> None:
+        """同一批启动题库重复同步时应跳过，避免开发热重载反复全量写库。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            record = CanonicalQuestionRecord(
+                question_id="startup:q1",
+                title_raw="单选题(1分)热重载不应重复同步题库。",
+                question_type="single",
+                options_raw=("应该跳过", "应该重写"),
+                answer_raw="A",
+                explanation="同内容启动索引应被签名识别。",
+                subject="test",
+                chapter=None,
+                tags=("startup",),
+                source_name="UnitTest",
+                source_url="",
+                source_license="test-only",
+                source_split="active",
+                source_record_path="",
+                passage=None,
+                metadata={"status": "active"},
+            )
+            index = LocalQuestionIndex((record,))
+            repository = SqlAlchemyQuestionRepository(database_path)
+
+            first = repository.sync_from_index(index)
+            second = repository.sync_from_index(index)
+
+        self.assertFalse(first.skipped)
+        self.assertEqual(first.synced_count, 1)
+        self.assertTrue(second.skipped)
+        self.assertEqual(second.synced_count, 0)
+
     @staticmethod
     def _register_owner_and_create_token(client: TestClient) -> tuple[dict[str, str], str]:
         """注册首个管理员用户，并返回后台会话头与原始 API Key。"""
