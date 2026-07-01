@@ -8,6 +8,7 @@ import re
 from ...models import ModelAnswer, QuestionQuery
 from ...option_labels import canonicalize_label_answer
 from ...logger import log_event
+from ...question_types import has_blank_marker
 
 
 def strip_json_fence(content: str) -> str:
@@ -146,8 +147,7 @@ def is_completion_without_options(query: QuestionQuery | None) -> bool:
     return (
         normalized_type in {"completion", "blank", "fill", "填空", "填空题"}
         or title.startswith("填空题")
-        or "____" in title
-        or "___" in title
+        or has_blank_marker(title)
     )
 
 

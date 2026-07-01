@@ -205,6 +205,26 @@ class ProviderParsingTests(unittest.TestCase):
         self.assertEqual(answer.candidate_answer, '["第一空答案", "第二空答案"]')
         self.assertEqual(answer.answer_text, "第一空答案；第二空答案")
 
+    def test_open_text_completion_uses_full_answer_text_as_candidate(self) -> None:
+        """测试无空位的 completion 开放题使用正文作为可回填答案。"""
+        provider = OpenAICompatibleProvider(base_url="http://example.test/v1", model="mock")
+        query = QuestionQuery(
+            title="操作系统学习总结及心得体会，不少于2000字",
+            options=(),
+            question_type="completion",
+        )
+        long_answer = "这是一篇完整心得正文。" * 30
+
+        answer = provider._parse_model_answer(
+            '{"candidate_answer":"操作系统学习总结及心得体会",'
+            f'"answer_text":"{long_answer}",'
+            '"explanation":"开放写作题应回填正文。","confidence":0.98}',
+            query,
+        )
+
+        self.assertEqual(answer.candidate_answer, long_answer)
+        self.assertEqual(answer.answer_text, long_answer)
+
     def test_render_question_uses_public_option_label_helper_without_name_error(self) -> None:
         """测试渲染带选项题目时不会因为旧私有函数名残留而抛出异常。"""
         provider = OpenAICompatibleProvider(base_url="http://example.test/v1", model="mock")

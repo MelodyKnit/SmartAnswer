@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from ...models import CanonicalQuestionRecord, ModelAnswer, QuestionQuery
 from ...option_labels import canonicalize_label_answer
+from ...question_types import is_open_text_completion
 
 
 def cache_record_key(record: CanonicalQuestionRecord, cache_key_builder) -> str:
@@ -28,6 +29,16 @@ def is_cacheable_model_answer(
     if not answer.candidate_answer:
         return False
     return answer_shape_is_valid(query, answer.candidate_answer)
+
+
+def cache_candidate_for_answer(query: QuestionQuery, answer: ModelAnswer) -> str:
+    """按题型选择适合沉淀和复用的答案正文。"""
+
+    if is_open_text_completion(query) and answer.answer_text:
+        return answer.answer_text.strip()
+    return canonicalize_label_answer(query, str(answer.candidate_answer or "").strip()) or str(
+        answer.candidate_answer or ""
+    ).strip()
 
 
 def answer_shape_is_valid(query: QuestionQuery, candidate_answer: str) -> bool:

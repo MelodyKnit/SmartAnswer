@@ -15,6 +15,7 @@ from .records import CachedLlmAnswer
 from .support import (
     answer_shape_is_valid,
     cache_record_key,
+    cache_candidate_for_answer,
     canonical_candidate_from_payload,
     float_value,
     int_value,
@@ -78,10 +79,7 @@ class LlmAnswerCache:
 
         now = time.time()
         key = cache_key(query)
-        candidate = (
-            canonicalize_label_answer(query, str(answer.candidate_answer or "").strip())
-            or str(answer.candidate_answer).strip()
-        )
+        candidate = cache_candidate_for_answer(query, answer)
         with self._lock:
             existing = self._entries.get(key)
             if existing is None:

@@ -133,6 +133,28 @@ class OcsAdapterTests(unittest.TestCase):
         self.assertEqual(payload["data"]["answer"], '["第一空答案", "第二空答案"]')
         self.assertEqual(payload["data"]["answer_raw"], '["第一空答案", "第二空答案"]')
 
+    def test_open_text_completion_response_prefers_full_answer_text(self) -> None:
+        """测试开放写作类 completion 题优先把完整正文返回给 OCS。"""
+        full_text = "操作系统学习心得正文。" * 20
+        result = QueryResult(
+            ok=True,
+            query=QuestionQuery(
+                title="操作系统学习总结及心得体会，不少于2000字",
+                question_type="completion",
+            ),
+            candidate_answer="操作系统学习总结及心得体会",
+            answer_text=full_text,
+            explanation="开放写作题应回填正文。",
+            confidence=0.98,
+            resolution_mode="ai_cache",
+            review_required=False,
+        )
+
+        payload = to_ocs_response(result)
+
+        self.assertEqual(payload["data"]["answer"], full_text)
+        self.assertEqual(payload["data"]["answer_raw"], "操作系统学习总结及心得体会")
+
 
 def _cmmlu_index() -> LocalQuestionIndex:
     """初始化用于测试的 CMMLU 题库本地索引。

@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from ...http_client import HttpClientError, normalize_container_loopback_url, request_text
 from ...models import ModelAnswer, QuestionQuery
 from ...logger import log_event
+from ...question_types import is_open_text_completion
 from ..tracing import record_trace
 from .openai_answer_parser import (
     answer_field,
@@ -354,8 +355,12 @@ class OpenAICompatibleProvider:
         candidate_answer = answer_field(payload.get("candidate_answer"))
         answer_text = text_field(payload.get("answer_text"))
         if is_completion_without_options(query):
-            candidate_answer = completion_answer_field(
-                payload.get("candidate_answer"), payload.get("answer_text")
+            candidate_answer = (
+                answer_text
+                if answer_text and is_open_text_completion(query)
+                else completion_answer_field(
+                    payload.get("candidate_answer"), payload.get("answer_text")
+                )
             )
         answer = ModelAnswer(
             candidate_answer=candidate_answer,

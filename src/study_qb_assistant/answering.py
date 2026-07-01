@@ -9,10 +9,10 @@ import time
 from typing import Protocol
 
 from .llm.cache import CachedLlmAnswer, LlmAnswerCache, cache_key
+from .llm.cache.support import cache_candidate_for_answer
 from .answer_quality import direct_known_answer, is_cache_safe_answer, repair_model_answer
 from .models import CanonicalQuestionRecord, ModelAnswer, QueryResult, QuestionQuery
 from .llm.providers import ModelProvider
-from .option_labels import canonicalize_label_answer
 from .search import LocalQuestionIndex
 from .logger import log_event
 
@@ -407,11 +407,7 @@ class AnswerService:
         repository = self.question_repository
         if repository is None:
             return None
-        candidate = (
-            canonicalize_label_answer(query, str(answer.candidate_answer or "").strip())
-            or str(answer.candidate_answer or "").strip()
-            or str(answer.answer_text or "").strip()
-        )
+        candidate = cache_candidate_for_answer(query, answer) or str(answer.answer_text or "").strip()
         if not candidate:
             return None
         now = time.time()

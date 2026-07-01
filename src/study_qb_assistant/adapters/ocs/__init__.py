@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from ...models import QueryResult
+from ...question_types import is_open_text_completion
 from .config import build_ocs_config
 
 _JUDGEMENT_TRUE_LABELS = {"A"}
@@ -92,6 +93,12 @@ def to_ocs_low_confidence_response(result: QueryResult, *, threshold: float) -> 
 def _ocs_answer(result: QueryResult) -> str | None:
     """Return the answer shape OCS can click on the current page."""
     if not _is_judgement_result(result):
+        if (
+            is_open_text_completion(result.query)
+            and result.answer_text
+            and not _looks_like_json_array(result.candidate_answer)
+        ):
+            return result.answer_text
         return result.candidate_answer or result.answer_text
     normalized_text = _normalize_judgement_text(result.answer_text)
     if normalized_text is not None:
@@ -123,3 +130,8 @@ def _normalize_judgement_text(value: str | None) -> str | None:
     if normalized in _JUDGEMENT_FALSE_TEXTS:
         return "错"
     return None
+
+
+def _looks_like_json_array(value: str | None) -> bool:
+    text = (value or "").strip()
+    return text.startswith("[") and text.endswith("]")
