@@ -572,6 +572,9 @@ const phaseLabel: Record<string, string> = {
   answer_with_evidence: '证据作答',
   verify_answer: '答案自检',
   verify_answer_with_evidence: '证据复核',
+  model_request: '模型请求',
+  model_decode: '响应解码',
+  model_parse: '答案解析',
   web_search: '联网检索',
   failover: '主备降级',
 }
@@ -946,6 +949,9 @@ onMounted(async () => {
             <el-option value="answer_with_evidence" label="证据作答" />
             <el-option value="verify_answer" label="答案自检" />
             <el-option value="verify_answer_with_evidence" label="证据复核" />
+            <el-option value="model_request" label="模型请求" />
+            <el-option value="model_decode" label="响应解码" />
+            <el-option value="model_parse" label="答案解析" />
             <el-option value="web_search" label="联网检索" />
             <el-option value="failover" label="主备降级" />
           </el-select>

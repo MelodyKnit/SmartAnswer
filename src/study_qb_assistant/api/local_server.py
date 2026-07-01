@@ -14,6 +14,7 @@ from ..config import get_global_config
 from ..platform import PlatformService
 from ..search import LocalQuestionIndex
 from ..storage.question_repository import SqlAlchemyQuestionRepository
+from ..llm.tracing import set_trace_sink
 from .context import bool_env, cors_headers
 from .query_parser import build_query_from_mapping, split_options
 from .route_support import (
@@ -62,6 +63,7 @@ def create_app(
     app.state.platform = platform
     app.state.question_repository = question_repository
     app.state.require_auth = auth_required
+    set_trace_sink(platform.save_llm_call_trace)
 
     @app.middleware("http")
     async def cors_and_options(request: Request, call_next) -> Response:

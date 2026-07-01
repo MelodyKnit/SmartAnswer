@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass
 
 from ...http_client import HttpClientError, normalize_container_loopback_url, request_text
 from ...models import ModelAnswer, QuestionQuery
 from ...logger import log_event
+from ..tracing import record_trace
 from .openai_answer_parser import (
     answer_field,
     bool_from_env,
@@ -99,7 +101,7 @@ class OpenAICompatibleProvider:
             ModelAnswer: 结构化的模型回答。
         """
 
-        return self._answer(query)
+        return self._answer(query, phase="answer")
 
     def answer_with_evidence(
         self,
@@ -116,11 +118,11 @@ class OpenAICompatibleProvider:
             ModelAnswer: 结构化的模型回答。
         """
 
-        return self._answer(query, evidence=evidence)
+        return self._answer(query, evidence=evidence, phase="answer_with_evidence")
 
     def verify_answer(self, query: QuestionQuery, initial_answer: ModelAnswer) -> ModelAnswer:
         """对已有答案执行一次无证据复核，并返回结构化结果。"""
-        return self._answer(query, verification_answer=initial_answer)
+        return self._answer(query, verification_answer=initial_answer, phase="verify_answer")
 
     def verify_answer_with_evidence(
         self,
@@ -129,13 +131,19 @@ class OpenAICompatibleProvider:
         initial_answer: ModelAnswer,
     ) -> ModelAnswer:
         """结合联网证据对已有答案执行复核，并返回结构化结果。"""
-        return self._answer(query, evidence=evidence, verification_answer=initial_answer)
+        return self._answer(
+            query,
+            evidence=evidence,
+            verification_answer=initial_answer,
+            phase="verify_answer_with_evidence",
+        )
 
     def _answer(
         self,
         query: QuestionQuery,
         evidence: tuple[WebSearchResult, ...] = (),
         verification_answer: ModelAnswer | None = None,
+        phase: str = "answer",
     ) -> ModelAnswer:
         """发送请求并获取模型生成的结构化答案。
 
@@ -167,6 +175,11 @@ class OpenAICompatibleProvider:
                 " Verify the previous answer and correct it if necessary. "
                 "Still return only the same JSON object."
             )
+        prompt = self._render_question(
+            query,
+            evidence=evidence,
+            verification_answer=verification_answer,
+        )
         # 构建请求载荷
         payload = {
             "model": self.model,
@@ -180,11 +193,7 @@ class OpenAICompatibleProvider:
                 },
                 {
                     "role": "user",
-                    "content": self._render_question(
-                        query,
-                        evidence=evidence,
-                        verification_answer=verification_answer,
-                    ),
+                    "content": prompt,
                 },
             ],
         }
@@ -201,26 +210,77 @@ class OpenAICompatibleProvider:
                 "evidence_count": len(evidence),
             },
         )
-        raw_response = self._post_json(self._chat_url(), payload)
-        content = raw_response["choices"][0]["message"]["content"]
-        # 解析返回的文本为 ModelAnswer
-        answer = self._parse_model_answer(content, query)
-        # 记录模型响应事件
-        log_event(
-            "model_response",
-            {
-                "provider": self.provider_name,
-                "model": self.model,
-                "candidate_answer": answer.candidate_answer,
-                "confidence": answer.confidence,
-                "content_preview": content[:500],
-            },
-        )
-        return answer
+        started = time.time()
+        response_text = ""
+        try:
+            raw_response = self._post_json(self._chat_url(), payload)
+            content = self._response_content(raw_response)
+            response_text = content
+            # 解析返回的文本为 ModelAnswer
+            try:
+                answer = self._parse_model_answer(content, query)
+            except Exception as exc:
+                setattr(exc, "stqb_trace_phase", "model_parse")
+                setattr(exc, "stqb_response_preview", content[:1000])
+                raise
+            elapsed_ms = round((time.time() - started) * 1000, 2)
+            self._record_model_trace(
+                phase=phase,
+                query=query,
+                prompt=prompt,
+                response_text=content,
+                answer=answer,
+                ok=True,
+                elapsed_ms=elapsed_ms,
+            )
+            # 记录模型响应事件
+            log_event(
+                "model_response",
+                {
+                    "provider": self.provider_name,
+                    "model": self.model,
+                    "candidate_answer": answer.candidate_answer,
+                    "confidence": answer.confidence,
+                    "content_preview": content[:500],
+                },
+            )
+            return answer
+        except Exception as exc:
+            elapsed_ms = round((time.time() - started) * 1000, 2)
+            trace_phase = str(getattr(exc, "stqb_trace_phase", phase) or phase)
+            response_preview = str(
+                getattr(exc, "stqb_response_preview", response_text[:1000]) or ""
+            )
+            self._record_model_trace(
+                phase=trace_phase,
+                query=query,
+                prompt=prompt,
+                response_text=response_preview,
+                ok=False,
+                error=str(exc),
+                elapsed_ms=elapsed_ms,
+            )
+            raise
 
     def _chat_url(self) -> str:
         """获取聊天补全接口的完整 URL 请求地址。"""
         return f"{self.base_url.rstrip('/')}/chat/completions"
+
+    def _response_content(self, raw_response: dict) -> str:
+        """从兼容 OpenAI 的响应体中提取消息内容。"""
+
+        try:
+            content = raw_response["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            error = RuntimeError(f"model provider returned malformed chat response: {exc}")
+            setattr(error, "stqb_trace_phase", "model_decode")
+            setattr(
+                error,
+                "stqb_response_preview",
+                json.dumps(raw_response, ensure_ascii=False)[:1000],
+            )
+            raise error from exc
+        return str(content or "")
 
     def _post_json(self, url: str, payload: dict) -> dict:
         """向指定的 URL 发送 POST 请求并返回解析后的 JSON 字典。
@@ -258,11 +318,17 @@ class OpenAICompatibleProvider:
                         "response_preview": response_body[:1000],
                     },
                 )
-                raise RuntimeError(f"model provider returned invalid response: {exc}") from exc
+                error = RuntimeError(f"model provider returned invalid response: {exc}")
+                setattr(error, "stqb_trace_phase", "model_decode")
+                setattr(error, "stqb_response_preview", response_body[:1000])
+                raise error from exc
         except HttpClientError as exc:
             detail = str(exc)
             log_event("model_error", {"provider": self.provider_name, "url": url, "error": detail})
-            raise RuntimeError(f"model provider request failed: {detail}") from exc
+            error = RuntimeError(f"model provider request failed: {detail}")
+            setattr(error, "stqb_trace_phase", "model_request")
+            setattr(error, "stqb_response_preview", getattr(exc, "response_body", "")[:1000])
+            raise error from exc
 
     def _parse_model_answer(self, content: str, query: QuestionQuery | None = None) -> ModelAnswer:
         """从模型输出的字符串中提取结构化的 ModelAnswer 实例。
@@ -303,6 +369,36 @@ class OpenAICompatibleProvider:
             confidence=max(0.0, min(confidence, 1.0)),
         )
         return normalize_answer_for_query(answer, query)
+
+    def _record_model_trace(
+        self,
+        *,
+        phase: str,
+        query: QuestionQuery,
+        prompt: str,
+        response_text: str = "",
+        answer: ModelAnswer | None = None,
+        ok: bool,
+        error: str = "",
+        elapsed_ms: float,
+    ) -> None:
+        """记录模型调用追溯，不让追溯失败影响答题主链路。"""
+
+        record_trace(
+            phase=phase,
+            model_id=self.model_id,
+            model_name=self.display_name or self.model,
+            base_url=self.base_url,
+            provider=self.provider_name,
+            question_title=query.title,
+            prompt=prompt,
+            response_text=response_text[:4000],
+            candidate_answer=answer.candidate_answer if answer else None,
+            confidence=answer.confidence if answer else 0.0,
+            ok=ok,
+            error=error,
+            elapsed_ms=elapsed_ms,
+        )
 
     def _render_question(
         self,

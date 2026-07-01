@@ -1687,11 +1687,26 @@ def count_query_events_for_date(date_label: str) -> tuple[int, int]:
                 if f'"ts": "{date_label}' in line and '"event": "query"' in line:
                     query_count += 1
                 continue
-            if str(payload.get("ts") or "")[:10] != date_label:
+            if local_date_from_log_timestamp(str(payload.get("ts") or "")) != date_label:
                 continue
             if str(payload.get("event") or "") == "query":
                 query_count += 1
     return query_count, malformed_lines
+
+
+def local_date_from_log_timestamp(value: str) -> str:
+    """把运行日志 UTC/带时区时间戳转换成上海自然日标签。"""
+
+    timestamp = value.strip()
+    if not timestamp:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except ValueError:
+        return timestamp[:10]
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=LOCAL_TIMEZONE)
+    return parsed.astimezone(LOCAL_TIMEZONE).strftime("%Y-%m-%d")
 
 
 def normalized_confidence(value: object) -> float:

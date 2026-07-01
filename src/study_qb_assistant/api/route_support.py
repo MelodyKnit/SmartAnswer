@@ -19,6 +19,7 @@ from ..platform import PlatformService
 from ..platform.service import local_day_range_from_text
 from ..logger import log_event, log_path, recent_events
 from ..search import LocalQuestionIndex
+from ..llm.tracing import reset_request_id, set_request_id
 from .context import auth_error_response, authorization_bearer, current_user
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -42,14 +43,18 @@ def run_lookup(
     if not query.request_id:
         query.request_id = secrets.token_hex(12)
     started = time.time()
-    result = lookup.query(query)
-    elapsed_seconds = time.time() - started
     try:
-        token = record_usage(platform, auth, request, query, result, elapsed_seconds)
-    except AuthError as exc:
-        return auth_error_response(exc)
-    log_query(path, method, query, result, elapsed_seconds)
-    return JSONResponse(response_for_path(path, result, platform=platform, token=token))
+        set_request_id(str(query.request_id or ""))
+        result = lookup.query(query)
+        elapsed_seconds = time.time() - started
+        try:
+            token = record_usage(platform, auth, request, query, result, elapsed_seconds)
+        except AuthError as exc:
+            return auth_error_response(exc)
+        log_query(path, method, query, result, elapsed_seconds)
+        return JSONResponse(response_for_path(path, result, platform=platform, token=token))
+    finally:
+        reset_request_id()
 
 
 def should_serve_spa_shell(request: Request, path: str) -> bool:

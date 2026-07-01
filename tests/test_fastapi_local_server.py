@@ -25,6 +25,8 @@ from study_qb_assistant.auth import AuthService  # noqa: E402
 from study_qb_assistant.logger import log_path  # noqa: E402
 from study_qb_assistant.models import CanonicalQuestionRecord, ModelAnswer, QuestionQuery  # noqa: E402
 from study_qb_assistant.platform import PlatformService  # noqa: E402
+from study_qb_assistant.http_client import HttpClientError  # noqa: E402
+from study_qb_assistant.llm.providers import OpenAICompatibleProvider  # noqa: E402
 from study_qb_assistant.search import LocalQuestionIndex  # noqa: E402
 from study_qb_assistant.storage import database as database_module  # noqa: E402
 from study_qb_assistant.storage.question_repository import SqlAlchemyQuestionRepository  # noqa: E402
@@ -67,6 +69,18 @@ class FastAPILocalServerTests(unittest.TestCase):
     def _runtime_database_path(directory: str) -> Path:
         """为测试场景生成统一的 SQLite 运行时数据库路径。"""
         return Path(directory) / "study-qb.sqlite3"
+
+    @staticmethod
+    def _register_owner_and_create_token(client: TestClient) -> tuple[dict[str, str], str]:
+        """注册首个管理员用户，并返回后台会话头与原始 API Key。"""
+
+        client.post("/auth/register", json={"username": "owner", "password": "password123"})
+        session = client.post(
+            "/auth/login", json={"username": "owner", "password": "password123"}
+        )
+        headers = {"Authorization": f"Bearer {session.json()['token']}"}
+        token_create = client.post("/tokens", json={"description": "trace"}, headers=headers)
+        return headers, token_create.json()["token"]
 
     def test_query_and_ocs_routes_keep_existing_wire_shape(self) -> None:
         import os
@@ -1923,6 +1937,191 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertIsNone(response.json()["data"]["answer"])
         self.assertEqual(response.json()["data"]["ai"]["error_code"], "LOW_CONFIDENCE_ANSWER")
         self.assertEqual(questions.json()["total"], 1)
+
+    def test_openai_provider_records_success_and_retry_traces_for_one_request(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            provider = OpenAICompatibleProvider(
+                base_url="http://example.test/v1",
+                model="mock-model",
+                stream=False,
+                model_id="model-trace-1",
+                display_name="追溯测试模型",
+            )
+            lookup = AnswerService(
+                LocalQuestionIndex(()),
+                model_provider=provider,
+                allow_model_fallback=True,
+                answer_retry_times=1,
+            )
+            client = TestClient(
+                create_app(lookup, auth_service=auth, platform_service=platform, require_auth=True)
+            )
+            _headers, raw_api_token = self._register_owner_and_create_token(client)
+
+            calls = {"count": 0}
+
+            def fake_request_text(*_args, **_kwargs) -> str:
+                calls["count"] += 1
+                if calls["count"] == 1:
+                    raise HttpClientError("temporary network failure")
+                return json.dumps(
+                    {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": (
+                                        '{"candidate_answer":"A","answer_text":"正确项",'
+                                        '"explanation":"重试后成功。","confidence":0.99}'
+                                    )
+                                }
+                            }
+                        ]
+                    },
+                    ensure_ascii=False,
+                )
+
+            with mock.patch(
+                "study_qb_assistant.llm.providers.openai_compatible.request_text",
+                side_effect=fake_request_text,
+            ):
+                response = client.get(
+                    "/ocs/query",
+                    params={
+                        "title": "单选题(1分)追溯重试成功",
+                        "type": "single",
+                        "options": "正确项#干扰项",
+                    },
+                    headers={"Authorization": f"Bearer {raw_api_token}"},
+                )
+            usage_logs = platform.list_usage_logs(username="owner")
+            traces = platform.list_llm_call_traces(request_id=usage_logs[0]["request_id"])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["code"], 0)
+        self.assertEqual(response.json()["data"]["answer"], "A")
+        self.assertEqual(calls["count"], 2)
+        self.assertEqual(len(usage_logs), 1)
+        self.assertGreaterEqual(len(traces), 2)
+        self.assertEqual({trace["request_id"] for trace in traces}, {usage_logs[0]["request_id"]})
+        self.assertIn("model_request", {trace["phase"] for trace in traces})
+        self.assertIn("answer", {trace["phase"] for trace in traces})
+        success_trace = next(trace for trace in traces if trace["phase"] == "answer")
+        self.assertTrue(success_trace["ok"])
+        self.assertEqual(success_trace["model_id"], "model-trace-1")
+        self.assertEqual(success_trace["candidate_answer"], "A")
+        self.assertIn("追溯重试成功", success_trace["prompt"])
+        failure_trace = next(trace for trace in traces if trace["phase"] == "model_request")
+        self.assertFalse(failure_trace["ok"])
+        self.assertIn("temporary network failure", failure_trace["error"])
+
+    def test_openai_provider_records_decode_error_trace(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            provider = OpenAICompatibleProvider(
+                base_url="http://example.test/v1",
+                model="mock-model",
+                stream=True,
+                model_id="model-decode",
+                display_name="解码失败模型",
+            )
+            lookup = AnswerService(
+                LocalQuestionIndex(()),
+                model_provider=provider,
+                allow_model_fallback=True,
+                answer_retry_times=0,
+            )
+            client = TestClient(
+                create_app(lookup, auth_service=auth, platform_service=platform, require_auth=True)
+            )
+            _headers, raw_api_token = self._register_owner_and_create_token(client)
+
+            with mock.patch(
+                "study_qb_assistant.llm.providers.openai_compatible.request_text",
+                return_value="data: [DONE]\n\n",
+            ):
+                response = client.get(
+                    "/ocs/query",
+                    params={"title": "单选题(1分)空流式响应", "type": "single"},
+                    headers={"Authorization": f"Bearer {raw_api_token}"},
+                )
+            usage_logs = platform.list_usage_logs(username="owner")
+            traces = platform.list_llm_call_traces(request_id=usage_logs[0]["request_id"])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["code"], 1)
+        self.assertEqual(usage_logs[0]["resolution_mode"], "model_error")
+        self.assertEqual(len(usage_logs), 1)
+        self.assertEqual(len(traces), 1)
+        self.assertEqual(traces[0]["phase"], "model_decode")
+        self.assertFalse(traces[0]["ok"])
+        self.assertIn("streaming model response contained no answer content", traces[0]["error"])
+        self.assertIn("[DONE]", traces[0]["response_text"])
+
+    def test_openai_provider_records_parse_error_trace(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            provider = OpenAICompatibleProvider(
+                base_url="http://example.test/v1",
+                model="mock-model",
+                stream=False,
+                model_id="model-parse",
+                display_name="解析失败模型",
+            )
+            lookup = AnswerService(
+                LocalQuestionIndex(()),
+                model_provider=provider,
+                allow_model_fallback=True,
+                answer_retry_times=0,
+            )
+            client = TestClient(
+                create_app(lookup, auth_service=auth, platform_service=platform, require_auth=True)
+            )
+            _headers, raw_api_token = self._register_owner_and_create_token(client)
+
+            with mock.patch(
+                "study_qb_assistant.llm.providers.openai_compatible.request_text",
+                return_value=json.dumps(
+                    {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": (
+                                        '{"candidate_answer":"A","answer_text":"正确项",'
+                                        '"explanation":"置信度格式错误。","confidence":"abc"}'
+                                    )
+                                }
+                            }
+                        ]
+                    },
+                    ensure_ascii=False,
+                ),
+            ):
+                response = client.get(
+                    "/ocs/query",
+                    params={
+                        "title": "单选题(1分)解析失败",
+                        "type": "single",
+                        "options": "正确项#干扰项",
+                    },
+                    headers={"Authorization": f"Bearer {raw_api_token}"},
+                )
+            usage_logs = platform.list_usage_logs(username="owner")
+            traces = platform.list_llm_call_traces(request_id=usage_logs[0]["request_id"])
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["code"], 1)
+        self.assertEqual(usage_logs[0]["resolution_mode"], "model_error")
+        self.assertEqual(len(traces), 1)
+        self.assertEqual(traces[0]["phase"], "model_parse")
+        self.assertFalse(traces[0]["ok"])
+        self.assertIn("abc", traces[0]["response_text"])
 
     def test_model_fallback_retries_and_only_records_usage_once(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
