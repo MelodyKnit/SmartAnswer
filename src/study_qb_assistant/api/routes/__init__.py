@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 from fastapi import APIRouter
 
+from .announcements import build_announcement_router
 from .auth import build_auth_router
 from .catalog import build_catalog_router
 from .feedback import build_feedback_router
@@ -24,6 +25,7 @@ RouterFactory = Callable[[], APIRouter]
 PLATFORM_ROUTE_BUILDERS: tuple[RouterFactory, ...] = (
     build_user_router,
     build_token_router,
+    build_announcement_router,
     build_feedback_router,
     build_wallet_router,
     build_workbench_router,
@@ -48,6 +50,7 @@ __all__ = [
     "build_static_router",
     "build_platform_router",
     "build_feedback_router",
+    "build_announcement_router",
     "build_token_router",
     "build_user_router",
     "build_wallet_router",

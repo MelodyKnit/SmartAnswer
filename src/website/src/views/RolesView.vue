@@ -106,6 +106,16 @@ const permissionGroups: PermissionGroup[] = [
     ],
   },
   {
+    key: 'announcements',
+    label: '公告管理',
+    description: '维护系统公告和投放范围',
+    icon: 'BellFilled',
+    permissions: [
+      { key: 'announcements:read', label: '查看公告', description: '查看公告列表和发布状态' },
+      { key: 'announcements:write', label: '管理公告', description: '创建、编辑和归档系统公告' },
+    ],
+  },
+  {
     key: 'scripts',
     label: '导入脚本',
     description: '维护第三方平台接入脚本',

@@ -186,6 +186,26 @@ export interface NotificationItem {
   created_at: number
 }
 
+export type AnnouncementLevel = 'info' | 'success' | 'warning' | 'danger'
+export type AnnouncementAudience = 'all' | 'user' | 'admin' | 'superadmin'
+export type AnnouncementStatus = 'draft' | 'published' | 'archived'
+
+export interface Announcement {
+  announcement_id: string
+  title: string
+  content: string
+  level: AnnouncementLevel
+  audience: AnnouncementAudience
+  status: AnnouncementStatus
+  pinned: boolean
+  starts_at: number
+  ends_at: number
+  created_by: string
+  created_at: number
+  updated_at: number
+  published_at: number
+}
+
 export interface RankingItem {
   rank: number
   label: string

@@ -215,6 +215,27 @@ class NotificationEntity(Base):
     created_at: Mapped[float] = mapped_column(Float, index=True)
 
 
+class AnnouncementEntity(Base):
+    """系统公告表。"""
+
+    __tablename__ = "announcements"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    announcement_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    title: Mapped[str] = mapped_column(String(120), default="", index=True)
+    content: Mapped[str] = mapped_column(Text, default="")
+    level: Mapped[str] = mapped_column(String(32), default="info", index=True)
+    audience: Mapped[str] = mapped_column(String(32), default="all", index=True)
+    status: Mapped[str] = mapped_column(String(32), default="draft", index=True)
+    pinned: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    starts_at: Mapped[float] = mapped_column(Float, default=0.0, index=True)
+    ends_at: Mapped[float] = mapped_column(Float, default=0.0, index=True)
+    created_by: Mapped[str] = mapped_column(String(64), default="")
+    created_at: Mapped[float] = mapped_column(Float, index=True)
+    updated_at: Mapped[float] = mapped_column(Float, index=True)
+    published_at: Mapped[float] = mapped_column(Float, default=0.0, index=True)
+
+
 class ImportScriptEntity(Base):
     """导入脚本表。"""
 

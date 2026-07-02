@@ -266,6 +266,36 @@ class NotificationReadPayload(BaseModel):
     read: bool = True
 
 
+class AnnouncementCreatePayload(BaseModel):
+    """创建公告时使用的参数。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    title: str = ""
+    content: str = ""
+    level: str = "info"
+    audience: str = "all"
+    status: str = "draft"
+    pinned: bool = False
+    starts_at: float = 0.0
+    ends_at: float = 0.0
+
+
+class AnnouncementUpdatePayload(BaseModel):
+    """更新公告时使用的参数。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    title: str | None = None
+    content: str | None = None
+    level: str | None = None
+    audience: str | None = None
+    status: str | None = None
+    pinned: bool | None = None
+    starts_at: float | None = None
+    ends_at: float | None = None
+
+
 class ImportScriptGeneratePayload(BaseModel):
     """生成导入脚本参数。"""
 

@@ -117,6 +117,100 @@ class FastAPILocalServerTests(unittest.TestCase):
         token_create = client.post("/tokens", json={"description": "trace"}, headers=headers)
         return headers, token_create.json()["token"]
 
+    def test_announcement_management_and_active_visibility(self) -> None:
+        """公告管理接口应按状态、时间窗口和角色返回用户侧有效公告。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(),
+                    auth_service=auth,
+                    platform_service=platform,
+                    require_auth=True,
+                )
+            )
+            owner_headers, _token = self._register_owner_and_create_token(client)
+            client.post(
+                "/auth/register",
+                json={"username": "student", "password": "password123"},
+            )
+            student_login = client.post(
+                "/auth/login",
+                json={"username": "student", "password": "password123"},
+            )
+            student_headers = {"Authorization": f"Bearer {student_login.json()['token']}"}
+            now = time.time()
+
+            visible = client.post(
+                "/announcements",
+                json={
+                    "title": "用户公告",
+                    "content": "这条公告应展示给普通用户。",
+                    "level": "warning",
+                    "audience": "user",
+                    "status": "published",
+                    "pinned": True,
+                    "ends_at": now + 3600,
+                },
+                headers=owner_headers,
+            )
+            client.post(
+                "/announcements",
+                json={
+                    "title": "草稿公告",
+                    "content": "草稿不展示。",
+                    "audience": "all",
+                    "status": "draft",
+                },
+                headers=owner_headers,
+            )
+            client.post(
+                "/announcements",
+                json={
+                    "title": "过期公告",
+                    "content": "过期不展示。",
+                    "audience": "all",
+                    "status": "published",
+                    "ends_at": now - 10,
+                },
+                headers=owner_headers,
+            )
+            client.post(
+                "/announcements",
+                json={
+                    "title": "管理员公告",
+                    "content": "普通用户不展示。",
+                    "audience": "admin",
+                    "status": "published",
+                    "ends_at": now + 3600,
+                },
+                headers=owner_headers,
+            )
+
+            active = client.get("/announcements/active", headers=student_headers)
+            managed = client.get(
+                "/announcements",
+                params={"status": "published", "limit": 10},
+                headers=owner_headers,
+            )
+            forbidden = client.get("/announcements", headers=student_headers)
+            archived = client.delete(
+                f"/announcements/{visible.json()['announcement']['announcement_id']}",
+                headers=owner_headers,
+            )
+            active_after_archive = client.get("/announcements/active", headers=student_headers)
+
+        self.assertEqual(visible.status_code, 200)
+        self.assertEqual(active.status_code, 200)
+        self.assertEqual([item["title"] for item in active.json()["announcements"]], ["用户公告"])
+        self.assertEqual(managed.json()["total"], 3)
+        self.assertEqual(forbidden.status_code, 403)
+        self.assertEqual(archived.json()["status"], "archived")
+        self.assertEqual(active_after_archive.json()["announcements"], [])
+
     def test_query_and_ocs_routes_keep_existing_wire_shape(self) -> None:
         import os
 

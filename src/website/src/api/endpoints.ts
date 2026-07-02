@@ -1,6 +1,10 @@
 /** 平台业务接口封装。所有函数返回已解包的数据片段。 */
 import { api } from './http'
 import type {
+  Announcement,
+  AnnouncementAudience,
+  AnnouncementLevel,
+  AnnouncementStatus,
   ApiToken,
   Billing,
   DashboardSummary,
@@ -181,6 +185,58 @@ export const notificationApi = {
       `/notifications/${encodeURIComponent(id)}/read`,
     ),
   readAll: () => api.post<{ ok: true; count: number }>('/notifications/read-all'),
+}
+
+/* ---------------- 公告 ---------------- */
+export const announcementApi = {
+  list: (params: {
+    keyword?: string
+    status?: string
+    level?: string
+    audience?: string
+    page?: number
+    limit?: number
+  } = {}) =>
+    api.get<{
+      ok: true
+      announcements: Announcement[]
+      total: number
+      page: number
+      limit: number
+    }>('/announcements', params),
+  active: (limit = 10) =>
+    api.get<{ ok: true; announcements: Announcement[] }>('/announcements/active', { limit }),
+  create: (body: {
+    title: string
+    content: string
+    level: AnnouncementLevel
+    audience: AnnouncementAudience
+    status: AnnouncementStatus
+    pinned: boolean
+    starts_at?: number
+    ends_at?: number
+  }) => api.post<{ ok: true; announcement: Announcement }>('/announcements', body),
+  update: (
+    announcementId: string,
+    body: Partial<{
+      title: string
+      content: string
+      level: AnnouncementLevel
+      audience: AnnouncementAudience
+      status: AnnouncementStatus
+      pinned: boolean
+      starts_at: number
+      ends_at: number
+    }>,
+  ) =>
+    api.patch<{ ok: true; announcement: Announcement }>(
+      `/announcements/${encodeURIComponent(announcementId)}`,
+      body,
+    ),
+  archive: (announcementId: string) =>
+    api.delete<{ ok: true; announcement_id: string; status: string }>(
+      `/announcements/${encodeURIComponent(announcementId)}`,
+    ),
 }
 
 /* ---------------- 计费 / 系统配置 ---------------- */

@@ -107,6 +107,12 @@ const routes: RouteRecordRaw[] = [
         meta: { access: 'admin', title: '题库管理' },
       },
       {
+        path: 'announcements',
+        name: 'announcements',
+        component: () => import('@/views/AnnouncementsView.vue'),
+        meta: { access: 'admin', title: '公告管理' },
+      },
+      {
         path: 'system-config',
         name: 'system-config',
         component: () => import('@/views/SystemConfigView.vue'),

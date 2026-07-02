@@ -700,6 +700,55 @@
 
 管理员通过前端 `/redeem-management` 使用现有钱包接口管理积分兑换码、手动发放积分并查看全平台积分流水。后端不再提供 `/quota-packages` 套餐目录接口。
 
+### 4.17 公告管理
+
+公告是独立资源，不复用消息通知表作为主模型，避免全局通知的已读状态在多用户之间串扰。用户侧只读取当前角色可见且有效的公告，管理侧维护公告生命周期。
+
+#### `GET /announcements`
+
+- 角色：`admin` / `superadmin`
+- 权限：`announcements:read`
+- 查询参数：
+  - `keyword`：按标题或内容搜索。
+  - `status`：`draft` / `published` / `archived`。
+  - `level`：`info` / `success` / `warning` / `danger`。
+  - `audience`：`all` / `user` / `admin` / `superadmin`。
+  - `page` / `limit`：分页。
+- 返回：`announcements`、`total`、`page`、`limit`。
+
+#### `GET /announcements/active`
+
+- 角色：登录用户
+- 返回当前用户角色可见的有效公告。
+- 有效条件：`status=published`，且当前时间位于 `starts_at` / `ends_at` 窗口内；`0` 表示不限制。
+- 前端用于登录后全局顶部横幅展示，置顶公告优先。
+
+#### `POST /announcements`
+
+- 角色：`admin` / `superadmin`
+- 权限：`announcements:write`
+- 请求字段：
+  - `title`：公告标题，必填。
+  - `content`：公告正文，必填，纯文本。
+  - `level`：公告等级，默认 `info`。
+  - `audience`：投放范围，默认 `all`。
+  - `status`：公告状态，默认 `draft`。
+  - `pinned`：是否置顶。
+  - `starts_at` / `ends_at`：秒级 Unix 时间戳，`0` 表示不限制。
+
+#### `PATCH /announcements/{announcement_id}`
+
+- 角色：`admin` / `superadmin`
+- 权限：`announcements:write`
+- 支持局部更新公告字段。
+- 首次将公告状态改为 `published` 时写入 `published_at`。
+
+#### `DELETE /announcements/{announcement_id}`
+
+- 角色：`admin` / `superadmin`
+- 权限：`announcements:write`
+- 采用软删除语义：将公告状态改为 `archived`，不物理删除数据库记录。
+
 ### 4.17 角色权限
 
 #### `GET /roles`

@@ -11,6 +11,7 @@ import { useThemeStore, type ThemeMode } from '@/stores/theme'
 import { notificationApi } from '@/api/endpoints'
 import type { NotificationItem } from '@/api/types'
 import { relativeTime } from '@/utils/format'
+import AnnouncementBanner from '@/components/AnnouncementBanner.vue'
 import SidebarNav from './SidebarNav.vue'
 
 const auth = useAuthStore()
@@ -55,6 +56,7 @@ const allGroups: MenuGroup[] = [
       { index: '/redeem-management', label: '兑换管理', icon: 'Coin', access: 'admin' },
       { index: '/llm-models', label: '大模型配置', icon: 'Cpu', access: 'admin' },
       { index: '/questions', label: '题库管理', icon: 'Notebook', access: 'admin' },
+      { index: '/announcements', label: '公告管理', icon: 'BellFilled', access: 'admin' },
       { index: '/users', label: '用户管理', icon: 'UserFilled', access: 'admin' },
       { index: '/roles', label: '角色权限', icon: 'Lock', access: 'admin' },
       { index: '/system-logs', label: '系统日志', icon: 'Monitor', access: 'admin' },
@@ -274,6 +276,8 @@ onMounted(loadNotifications)
           </el-dropdown>
         </div>
       </header>
+
+      <AnnouncementBanner />
 
       <!-- 内容区 -->
       <main class="min-w-0 flex-1 overflow-y-auto p-4 sm:p-6">
