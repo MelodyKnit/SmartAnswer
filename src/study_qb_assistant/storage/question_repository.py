@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from sqlalchemy import func, or_, select
 
+from ..answer_reuse import NON_REUSABLE_STATUS, record_should_be_indexable_by_reuse_policy
 from ..models import CanonicalQuestionRecord
 from ..normalization import normalize_text
 from ..search import LocalQuestionIndex
@@ -26,6 +27,7 @@ NON_INDEXABLE_QUESTION_STATUSES = NON_ACTIVE_QUESTION_STATUSES | {
     "low_confidence",
     "pending",
     "conflict",
+    NON_REUSABLE_STATUS,
 }
 SYNC_SETTINGS_SCOPE = "question_repository"
 SYNC_SIGNATURE_KEY = "startup_index_signature"
@@ -145,14 +147,16 @@ class SqlAlchemyQuestionRepository:
                 select(QuestionEntity).order_by(QuestionEntity.updated_at.desc())
             ).all()
             return [
-                self._record_from_entity(entity)
+                record
                 for entity in entities
-                if question_status_is_indexable(question_entity_status(entity))
+                for record in (self._record_from_entity(entity),)
+                if question_record_is_indexable(record)
             ]
 
     def count_questions(
         self,
         *,
+        question_id: str = "",
         keyword: str = "",
         question_type: str = "",
         source_name: str = "",
@@ -167,6 +171,7 @@ class SqlAlchemyQuestionRepository:
             stmt = select(func.count()).select_from(QuestionEntity)
             stmt = self._apply_filters(
                 stmt,
+                question_id=question_id,
                 keyword=keyword,
                 question_type=question_type,
                 source_name=source_name,
@@ -180,6 +185,7 @@ class SqlAlchemyQuestionRepository:
     def list_question_records(
         self,
         *,
+        question_id: str = "",
         keyword: str = "",
         question_type: str = "",
         source_name: str = "",
@@ -196,6 +202,7 @@ class SqlAlchemyQuestionRepository:
             stmt = select(QuestionEntity).order_by(QuestionEntity.updated_at.desc())
             stmt = self._apply_filters(
                 stmt,
+                question_id=question_id,
                 keyword=keyword,
                 question_type=question_type,
                 source_name=source_name,
@@ -275,6 +282,7 @@ class SqlAlchemyQuestionRepository:
         self,
         stmt,
         *,
+        question_id: str,
         keyword: str,
         question_type: str,
         source_name: str,
@@ -283,10 +291,13 @@ class SqlAlchemyQuestionRepository:
         updated_start_time: float | None,
         updated_end_time: float | None,
     ):
+        normalized_question_id = question_id.strip()
         normalized_keyword = keyword.strip()
         normalized_type = question_type.strip()
         normalized_source = source_name.strip()
         normalized_status = status.strip()
+        if normalized_question_id:
+            stmt = stmt.where(QuestionEntity.question_id == normalized_question_id)
         if is_active:
             stmt = stmt.where(~QuestionEntity.status.in_(NON_ACTIVE_QUESTION_STATUSES))
         if normalized_type:
@@ -406,12 +417,13 @@ class IndexQuestionRepository:
         return [
             record
             for record in self.index.records
-            if question_status_is_indexable(question_record_status(record))
+            if question_record_is_indexable(record)
         ]
 
     def count_questions(
         self,
         *,
+        question_id: str = "",
         keyword: str = "",
         question_type: str = "",
         source_name: str = "",
@@ -424,6 +436,7 @@ class IndexQuestionRepository:
 
         return len(
             self._filter_records(
+                question_id=question_id,
                 keyword=keyword,
                 question_type=question_type,
                 source_name=source_name,
@@ -437,6 +450,7 @@ class IndexQuestionRepository:
     def list_question_records(
         self,
         *,
+        question_id: str = "",
         keyword: str = "",
         question_type: str = "",
         source_name: str = "",
@@ -450,6 +464,7 @@ class IndexQuestionRepository:
         """分页读取符合筛选条件的题目。"""
 
         records = self._filter_records(
+            question_id=question_id,
             keyword=keyword,
             question_type=question_type,
             source_name=source_name,
@@ -506,6 +521,7 @@ class IndexQuestionRepository:
     def _filter_records(
         self,
         *,
+        question_id: str,
         keyword: str,
         question_type: str,
         source_name: str,
@@ -514,6 +530,7 @@ class IndexQuestionRepository:
         updated_start_time: float | None,
         updated_end_time: float | None,
     ) -> list[CanonicalQuestionRecord]:
+        normalized_question_id = question_id.strip()
         normalized_keyword = normalize_text(keyword)
         normalized_type = question_type.strip()
         normalized_source = source_name.strip()
@@ -521,6 +538,8 @@ class IndexQuestionRepository:
         records: Iterable[CanonicalQuestionRecord] = self.index.records
         filtered: list[CanonicalQuestionRecord] = []
         for record in records:
+            if normalized_question_id and record.question_id != normalized_question_id:
+                continue
             record_status = question_record_status(record)
             if is_active and record_status in NON_ACTIVE_QUESTION_STATUSES:
                 continue
@@ -568,6 +587,14 @@ def question_status_is_indexable(status: str) -> bool:
 
     normalized = str(status or "active").strip().casefold() or "active"
     return normalized not in NON_INDEXABLE_QUESTION_STATUSES
+
+
+def question_record_is_indexable(record: CanonicalQuestionRecord) -> bool:
+    """判断题库记录是否允许进入本地命中和 RAG 召回集合。"""
+
+    return question_status_is_indexable(
+        question_record_status(record)
+    ) and record_should_be_indexable_by_reuse_policy(record)
 
 
 def question_entity_status(entity: QuestionEntity) -> str:

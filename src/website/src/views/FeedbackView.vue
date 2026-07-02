@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /** 问题反馈管理：普通用户展示自己的反馈，管理员审核所有反馈。 */
 import { computed, onMounted, ref, reactive } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { ApiException } from '@/api/http'
@@ -12,11 +13,13 @@ import {
   feedbackCategoryLabel,
   feedbackStatusLabel,
   formatDateTime,
+  questionTypeLabel,
 } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
 import { DEFAULT_PAGE_SIZE } from '@/config/constants'
 
 const auth = useAuthStore()
+const router = useRouter()
 const loading = ref(false)
 const submitting = ref(false)
 const list = ref<Feedback[]>([])
@@ -70,6 +73,57 @@ const userSummary = reactive({ total: 0, open: 0, resolved: 0 })
 
 function statusType(status: string): string {
   return FEEDBACK_STATUS_META[status]?.type || 'info'
+}
+
+function feedbackQuestionTitle(row: Feedback): string {
+  return row.question_title || row.title || '（未关联题目）'
+}
+
+function feedbackAnswer(row: Feedback): string {
+  return row.answer_snapshot || row.corrected_answer || '—'
+}
+
+function relationLabel(row: Feedback): string {
+  if (row.question_id) return '已关联题库'
+  if (row.usage_log_id) return '仅关联记录'
+  return '普通反馈'
+}
+
+function locateQuestion(row: Feedback) {
+  if (row.question_id) {
+    router.push({
+      path: '/questions',
+      query: {
+        question_id: row.question_id,
+        keyword: row.question_title || row.title,
+        open: 'edit',
+      },
+    })
+    return
+  }
+  const keyword = row.question_title || row.title
+  if (!keyword) {
+    ElMessage.warning('该反馈没有可用于定位的题目信息')
+    return
+  }
+  ElMessage.warning('未直接关联题库记录，已按题干关键字检索')
+  router.push({ path: '/questions', query: { keyword } })
+}
+
+function locateUsage(row: Feedback) {
+  const keyword = row.question_title || row.title
+  router.push({ path: '/usage-logs', query: keyword ? { keyword } : {} })
+}
+
+async function copyQuestionTitle(row: Feedback) {
+  const text = row.question_title || row.title
+  if (!text) return
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('题干已复制')
+  } catch {
+    ElMessage.error('复制失败，请手动复制题干')
+  }
 }
 
 /** 普通用户概览统计：用分页接口的 total 字段分别取总数/待处理/已解决（仅取计数，不取明细）。 */
@@ -283,10 +337,17 @@ onMounted(() => {
             <el-tag size="small" effect="plain">{{ feedbackCategoryLabel(row.category) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="标题 / 内容" min-width="260">
+        <el-table-column label="题目 / 反馈" min-width="360">
           <template #default="{ row }">
-            <div class="font-medium text-ink">{{ row.title || '（无标题）' }}</div>
-            <div class="line-clamp-2 text-xs text-ink-soft">{{ row.content }}</div>
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="line-clamp-1 font-medium text-ink">
+                {{ feedbackQuestionTitle(row) }}
+              </span>
+              <el-tag size="small" effect="plain">{{ relationLabel(row) }}</el-tag>
+            </div>
+            <div class="line-clamp-2 text-xs text-ink-soft">
+              {{ row.content || row.title }}
+            </div>
           </template>
         </el-table-column>
         <el-table-column v-if="auth.isAdmin" label="提交人" width="120" prop="username" />
@@ -297,10 +358,10 @@ onMounted(() => {
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="纠正答案" width="130" show-overflow-tooltip>
+        <el-table-column label="当前答案" width="150" show-overflow-tooltip>
           <template #default="{ row }">
-            <span v-if="row.corrected_answer" class="font-medium text-success">
-              {{ row.corrected_answer }}
+            <span v-if="feedbackAnswer(row) !== '—'" class="font-medium text-success">
+              {{ feedbackAnswer(row) }}
             </span>
             <span v-else class="text-ink-muted">—</span>
           </template>
@@ -398,6 +459,36 @@ onMounted(() => {
       width="560px"
     >
       <div v-if="current" class="space-y-4">
+        <div
+          v-if="current.question_title || current.usage_log_id"
+          class="rounded-lg border border-line bg-card-soft p-3"
+        >
+          <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div class="flex flex-wrap items-center gap-2">
+              <el-tag size="small" effect="plain">{{ relationLabel(current) }}</el-tag>
+              <span class="text-sm font-semibold text-ink">答题上下文</span>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <el-button size="small" plain @click="copyQuestionTitle(current)">复制题干</el-button>
+              <el-button size="small" plain @click="locateUsage(current)">查看使用记录</el-button>
+              <el-button size="small" type="primary" @click="locateQuestion(current)">
+                定位题库
+              </el-button>
+            </div>
+          </div>
+          <p class="whitespace-pre-wrap text-sm text-ink">
+            {{ current.question_title || current.title }}
+          </p>
+          <dl class="mt-3 grid grid-cols-1 gap-2 text-xs text-ink-soft sm:grid-cols-2">
+            <div>题库 ID：{{ current.question_id || '—' }}</div>
+            <div>使用记录：{{ current.usage_log_id || '—' }}</div>
+            <div>题型：{{ current.question_type ? questionTypeLabel(current.question_type) : '—' }}</div>
+            <div>命中方式：{{ current.resolution_mode || '—' }}</div>
+            <div>当时答案：{{ current.answer_snapshot || '—' }}</div>
+            <div>置信度：{{ current.confidence ? `${Math.round(current.confidence * 100)}%` : '—' }}</div>
+          </dl>
+        </div>
+
         <div class="rounded-lg bg-card-soft p-3">
           <div class="mb-2 flex items-center gap-2">
             <el-tag size="small" effect="plain">{{ feedbackCategoryLabel(current.category) }}</el-tag>

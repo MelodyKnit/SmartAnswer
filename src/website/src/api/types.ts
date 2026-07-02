@@ -74,6 +74,11 @@ export interface UsageLog {
   created_at: number
   request_id?: string
   options?: string | string[] | null
+  question_id?: string | null
+  source_name?: string
+  source_type?: string
+  source_id?: string
+  source_url?: string
 }
 
 export interface Feedback {
@@ -92,6 +97,18 @@ export interface Feedback {
   handled_by: string
   handled_at: number
   created_at: number
+  question_id?: string | null
+  question_title?: string
+  question_type?: string
+  answer_snapshot?: string | null
+  resolution_mode?: string
+  confidence?: number
+  request_id?: string
+  source_name?: string
+  source_type?: string
+  source_id?: string
+  source_url?: string
+  context?: Record<string, unknown>
 }
 
 export interface WalletOrder {

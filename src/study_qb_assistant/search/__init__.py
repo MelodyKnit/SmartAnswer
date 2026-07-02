@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ..answer_reuse import record_should_be_indexable_by_reuse_policy
 from ..auth import AuthError
 from ..exporting import write_jsonl
 from ..models import CanonicalQuestionRecord, QueryResult, QuestionQuery
@@ -35,7 +36,7 @@ class LocalQuestionIndex:
         """
         self.records = records
         self.source_path = source_path
-        self._matcher = QuestionMatcher(records)
+        self._matcher = QuestionMatcher(self._matchable_records())
 
     @classmethod
     def from_jsonl(cls, path: str | Path) -> "LocalQuestionIndex":
@@ -150,7 +151,14 @@ class LocalQuestionIndex:
 
     def _rebuild_match_index(self) -> None:
         """重建本地高稳匹配索引。"""
-        self._matcher = QuestionMatcher(self.records)
+        self._matcher = QuestionMatcher(self._matchable_records())
+
+    def _matchable_records(self) -> tuple[CanonicalQuestionRecord, ...]:
+        """返回允许参与自动命中的题库记录。"""
+
+        return tuple(
+            record for record in self.records if record_should_be_indexable_by_reuse_policy(record)
+        )
 
     def status(self) -> dict:
         """获取关于已加载索引的非敏感统计和运行时诊断细节。

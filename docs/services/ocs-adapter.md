@@ -113,3 +113,17 @@ OCS/Tampermonkey 部署可能还需要脚本环境允许连接 to 本地主机�
 - 直接请求运行中的 `/ocs/query`
 - 检查返回的 `code/data/ai` 结构
 - 在真实 OCS 页面中验证 handler 是否能消费返回的 `answer`
+
+## 8. 客户端桥接脚本
+
+如果 OCS 官方脚本在某些定制学习平台上无法识别题目，可以使用仓库内的本地客户端脚本：
+
+- [client-scripts/sisu-ocs-client-bridge.user.js](../../client-scripts/sisu-ocs-client-bridge.user.js)
+
+该脚本通过 OCS 桌面端“添加本地脚本”加载，运行后会在目标学习页面右下角显示手动操作面板。它会从当前可见题目区域提取题干、选项和题型，调用本项目 `/ocs/query`，然后把答案回填到当前页面控件。
+
+边界说明：
+
+- 该脚本不修改 OCS 源码，也不依赖 OCS 的平台项目适配。
+- 该脚本只回填当前页面可见题目，不点击平台提交按钮。
+- 服务地址和 API Key 在页面面板中配置，真实密钥不应写入仓库文件。

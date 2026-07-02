@@ -109,6 +109,11 @@ class UsageLogEntity(Base):
     elapsed_ms: Mapped[float] = mapped_column(Float, default=0.0)
     created_at: Mapped[float] = mapped_column(Float, index=True)
     request_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    question_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    source_name: Mapped[str] = mapped_column(String(255), default="")
+    source_type: Mapped[str] = mapped_column(String(64), default="")
+    source_id: Mapped[str] = mapped_column(String(128), default="")
+    source_url: Mapped[str] = mapped_column(Text, default="")
 
 
 class FeedbackEntity(Base):
@@ -132,6 +137,18 @@ class FeedbackEntity(Base):
     handled_by: Mapped[str] = mapped_column(String(64), default="")
     handled_at: Mapped[float] = mapped_column(Float, default=0.0)
     created_at: Mapped[float] = mapped_column(Float, index=True)
+    question_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    question_title: Mapped[str] = mapped_column(Text, default="")
+    question_type: Mapped[str] = mapped_column(String(64), default="")
+    answer_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolution_mode: Mapped[str] = mapped_column(String(64), default="")
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    request_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    source_name: Mapped[str] = mapped_column(String(255), default="")
+    source_type: Mapped[str] = mapped_column(String(64), default="")
+    source_id: Mapped[str] = mapped_column(String(128), default="")
+    source_url: Mapped[str] = mapped_column(Text, default="")
+    context_json: Mapped[str] = mapped_column(Text, default="{}")
 
 
 class RedeemCodeEntity(Base):

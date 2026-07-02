@@ -47,6 +47,22 @@ class ProviderParsingTests(unittest.TestCase):
         self.assertEqual(answer.explanation, "1+2=3")
         self.assertEqual(answer.confidence, 0.8)
 
+    def test_model_reuse_policy_fields_are_parsed(self) -> None:
+        """测试模型返回的题目形态与复用策略字段会进入内部答案对象。"""
+        provider = OpenAICompatibleProvider(base_url="http://127.0.0.1:1/v1", model="demo")
+
+        answer = provider._parse_model_answer(
+            '{"candidate_answer":"15篇","answer_text":"15篇","explanation":"5+10=15",'
+            '"confidence":0.99,"question_form":"deterministic_calculation",'
+            '"reuse_policy":"reusable","reuse_reason":"fixed calculation",'
+            '"reuse_confidence":0.96}'
+        )
+
+        self.assertEqual(answer.question_form, "deterministic_calculation")
+        self.assertEqual(answer.reuse_policy, "reusable")
+        self.assertEqual(answer.reuse_reason, "fixed calculation")
+        self.assertEqual(answer.reuse_confidence, 0.96)
+
     def test_plain_text_model_answer_is_parsed_best_effort(self) -> None:
         """测试在模型未返回标准 JSON、只返回纯文本时，“尽力而为”提取出选项的解析逻辑。
 
@@ -161,6 +177,28 @@ class ProviderParsingTests(unittest.TestCase):
 
         self.assertEqual(answer.candidate_answer, "A#B#D")
         self.assertEqual(answer.answer_text, "甲；乙；丁")
+
+    def test_multiple_answer_normalization_preserves_reuse_fields(self) -> None:
+        """测试多选标签重排后不会丢失模型复用策略字段。"""
+        provider = OpenAICompatibleProvider(base_url="http://example.test/v1", model="mock")
+        query = QuestionQuery(
+            title="多选题(1分)顺序测试",
+            options=("甲", "乙", "丙", "丁"),
+            question_type="multiple",
+        )
+
+        answer = provider._parse_model_answer(
+            '{"candidate_answer":"D#B#A","answer_text":"丁；乙；甲",'
+            '"explanation":"应选D、B、A","confidence":0.91,'
+            '"question_form":"objective_choice","reuse_policy":"reusable",'
+            '"reuse_reason":"fixed choice","reuse_confidence":0.99}',
+            query,
+        )
+
+        self.assertEqual(answer.candidate_answer, "A#B#D")
+        self.assertEqual(answer.reuse_policy, "reusable")
+        self.assertEqual(answer.question_form, "objective_choice")
+        self.assertEqual(answer.reuse_confidence, 0.99)
 
     def test_plain_text_multiple_letters_are_normalized(self) -> None:
         """测试模型直接输出 ACDB 文本时，多选标签仍会被标准化。"""

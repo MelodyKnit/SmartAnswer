@@ -10,6 +10,7 @@ from typing import Protocol
 
 from .llm.cache import CachedLlmAnswer, LlmAnswerCache, cache_key
 from .llm.cache.support import cache_candidate_for_answer
+from .answer_reuse import NON_REUSABLE_STATUS, decide_answer_reuse
 from .answer_quality import direct_known_answer, is_cache_safe_answer, repair_model_answer
 from .models import CanonicalQuestionRecord, ModelAnswer, QueryResult, QuestionQuery
 from .llm.providers import ModelProvider
@@ -239,12 +240,23 @@ class AnswerService:
         confidence = max(0.0, min(model_answer.confidence, 1.0))
         cache_entry = None
         cache_status = "disabled"
-        safe_for_question_bank = is_cache_safe_answer(query, model_answer)
+        reuse_decision = decide_answer_reuse(
+            query,
+            answer_text=model_answer.answer_text,
+            candidate_answer=model_answer.candidate_answer,
+            reuse_policy=model_answer.reuse_policy,
+            question_form=model_answer.question_form,
+            reuse_reason=model_answer.reuse_reason,
+            reuse_confidence=model_answer.reuse_confidence,
+        )
+        safe_for_question_bank = reuse_decision.reusable and is_cache_safe_answer(
+            query, model_answer
+        )
         has_answer_content = bool(
             str(model_answer.candidate_answer or "").strip()
             or str(model_answer.answer_text or "").strip()
         )
-        learned_status = (
+        learned_status = reuse_decision.status if not reuse_decision.reusable else (
             "trusted"
             if safe_for_question_bank and confidence >= self.trusted_confidence_threshold
             else "low_confidence"
@@ -255,6 +267,8 @@ class AnswerService:
                 query,
                 model_answer,
                 status=learned_status,
+                reuse_policy=reuse_decision.policy,
+                reuse_tags=reuse_decision.tags,
             )
             if (
                 safe_for_question_bank
@@ -274,7 +288,11 @@ class AnswerService:
             if cache_entry is not None and cache_entry.status == "trusted":
                 self.index.add_or_replace(cache_entry.to_record())
         elif self.llm_answer_cache is not None:
-            cache_status = "unsafe_not_cached"
+            cache_status = (
+                "non_reusable_not_cached"
+                if learned_status == NON_REUSABLE_STATUS
+                else "unsafe_not_cached"
+            )
         return QueryResult(
             ok=True,
             query=query,
@@ -298,6 +316,7 @@ class AnswerService:
                 "provider": self.model_provider.provider_name,
                 "llm_cache_status": cache_status,
                 "question_bank_status": learned_status if has_answer_content else "no_answer",
+                "reuse_policy": reuse_decision.policy,
                 "retry_attempts": str(attempts),
             },
         )
@@ -401,6 +420,8 @@ class AnswerService:
         answer: ModelAnswer,
         *,
         status: str,
+        reuse_policy: str = "reusable",
+        reuse_tags: tuple[str, ...] = (),
     ):
         """把结构化 AI 答案写入题库仓储，并按状态决定后续是否可命中。"""
 
@@ -428,6 +449,20 @@ class AnswerService:
             updated_at=now,
         )
         record = entry.to_record()
+        if reuse_tags or reuse_policy != "reusable":
+            payload = record.to_dict()
+            metadata = dict(record.metadata)
+            metadata["reuse_policy"] = reuse_policy
+            metadata["status"] = status
+            if answer.question_form:
+                metadata["question_form"] = answer.question_form
+            if answer.reuse_reason:
+                metadata["reuse_reason"] = answer.reuse_reason
+            if answer.reuse_confidence is not None:
+                metadata["reuse_confidence"] = str(answer.reuse_confidence)
+            payload["metadata"] = metadata
+            payload["tags"] = tuple(dict.fromkeys((*record.tags, *reuse_tags)))
+            record = CanonicalQuestionRecord.from_dict(payload)
         try:
             repository.save_question_record(record)
         except Exception:

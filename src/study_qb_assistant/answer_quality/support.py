@@ -45,7 +45,16 @@ def judgement_answer(query: QuestionQuery, answer: ModelAnswer, text: str) -> Mo
     label = label_for_answer_text(query, text) if query.options else None
     if label:
         return answer_with_labels(query, answer, label, confidence=answer.confidence)
-    return ModelAnswer(text, text, answer.explanation, answer.confidence)
+    return ModelAnswer(
+        text,
+        text,
+        answer.explanation,
+        answer.confidence,
+        question_form=answer.question_form,
+        reuse_policy=answer.reuse_policy,
+        reuse_reason=answer.reuse_reason,
+        reuse_confidence=answer.reuse_confidence,
+    )
 
 
 def answer_with_labels(
@@ -63,6 +72,10 @@ def answer_with_labels(
         answer_text=answer_text_from_labels(query, normalized_labels) or answer.answer_text,
         explanation=explanation or answer.explanation,
         confidence=min(max(confidence, 0.0), 1.0),
+        question_form=answer.question_form,
+        reuse_policy=answer.reuse_policy,
+        reuse_reason=answer.reuse_reason,
+        reuse_confidence=answer.reuse_confidence,
     )
 
 

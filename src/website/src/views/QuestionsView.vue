@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /** 题库检索：允许输入题目片段查询题库，展示结果。管理员有编辑/操作题目的权限。 */
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ApiException } from '@/api/http'
 import { questionApi } from '@/api/endpoints'
@@ -11,7 +11,7 @@ import { formatDateTime } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
 import { DEFAULT_PAGE_SIZE } from '@/config/constants'
 
-const router = useRouter()
+const route = useRoute()
 
 // 数据状态
 const loading = ref(false)
@@ -25,6 +25,7 @@ const allSources = ref<string[]>([])
 // 搜索过滤表单
 const filter = reactive({
   page: 1,
+  question_id: '',
   keyword: '',
   source: '',
   subject: '',
@@ -52,6 +53,7 @@ const editForm = reactive({
 
 // 标签输入辅助
 const newTag = ref('')
+const pendingAutoOpenQuestionId = ref('')
 
 // 题目类型中文映射
 const typeMap: Record<string, { label: string; type: string }> = {
@@ -62,8 +64,21 @@ const typeMap: Record<string, { label: string; type: string }> = {
   unknown: { label: '其它题型', type: '' },
 }
 
+const statusMap: Record<string, { label: string; type: string }> = {
+  active: { label: '基础题库', type: 'info' },
+  trusted: { label: '可信 AI', type: 'success' },
+  low_confidence: { label: '低信任度', type: 'warning' },
+  pending: { label: '待确认', type: 'info' },
+  conflict: { label: '冲突', type: 'danger' },
+  non_reusable: { label: '开放题留痕', type: 'info' },
+}
+
 function getQuestionTypeTag(type: string) {
   return typeMap[type] || { label: type || '其它', type: '' }
+}
+
+function getQuestionStatusTag(status?: string) {
+  return statusMap[status || 'active'] || { label: status || 'active', type: 'info' }
 }
 
 // 获取选项的字母标签 A, B, C, D...
@@ -137,6 +152,7 @@ async function loadList() {
     const res = await questionApi.list({
       page: filter.page,
       limit: filter.limit,
+      question_id: filter.question_id.trim() || undefined,
       keyword: filter.keyword.trim() || undefined,
       type: filter.type || undefined,
       source: filter.source || undefined,
@@ -148,6 +164,7 @@ async function loadList() {
     total.value = res.total
     allTypes.value = res.all_types
     allSources.value = res.all_sources
+    openRouteTargetIfNeeded()
   } catch (err) {
     ElMessage.error(err instanceof ApiException ? err.message : '获取题目列表失败')
   } finally {
@@ -157,6 +174,7 @@ async function loadList() {
 
 // 重置过滤条件
 function resetFilter() {
+  filter.question_id = ''
   filter.keyword = ''
   filter.type = ''
   filter.source = ''
@@ -168,6 +186,7 @@ function resetFilter() {
 
 // 搜索
 function handleSearch() {
+  filter.question_id = ''
   filter.page = 1
   loadList()
 }
@@ -261,6 +280,7 @@ async function deleteQuestion(question: QuestionRecord) {
 }
 
 function reset() {
+  filter.question_id = ''
   filter.keyword = ''
   filter.source = ''
   filter.subject = ''
@@ -274,7 +294,52 @@ function reset() {
   loadList()
 }
 
-onMounted(loadList)
+function syncRouteQuery() {
+  const routeQuestionId = String(route.query.question_id || '').trim()
+  const routeKeyword = String(route.query.keyword || '').trim()
+  filter.question_id = routeQuestionId
+  filter.keyword = routeQuestionId ? '' : routeKeyword
+  pendingAutoOpenQuestionId.value =
+    route.query.open === 'edit' && routeQuestionId ? routeQuestionId : ''
+}
+
+function openRouteTargetIfNeeded() {
+  if (!pendingAutoOpenQuestionId.value) return
+  const target = questions.value.find(
+    (question) => question.question_id === pendingAutoOpenQuestionId.value,
+  )
+  if (target) {
+    pendingAutoOpenQuestionId.value = ''
+    openEdit(target)
+    return
+  }
+  const fallbackKeyword = String(route.query.keyword || '').trim()
+  if (fallbackKeyword && filter.question_id) {
+    ElMessage.warning('未找到关联题库记录，已按题干关键字检索')
+    pendingAutoOpenQuestionId.value = ''
+    filter.question_id = ''
+    filter.keyword = fallbackKeyword
+    filter.page = 1
+    loadList()
+    return
+  }
+  ElMessage.warning('未找到关联题库记录，可尝试按题干关键字搜索')
+  pendingAutoOpenQuestionId.value = ''
+}
+
+watch(
+  () => route.query,
+  () => {
+    syncRouteQuery()
+    filter.page = 1
+    loadList()
+  },
+)
+
+onMounted(() => {
+  syncRouteQuery()
+  loadList()
+})
 </script>
 
 <template>
@@ -325,6 +390,7 @@ onMounted(loadList)
               <el-option value="low_confidence" label="低信任度" />
               <el-option value="pending" label="待确认" />
               <el-option value="conflict" label="冲突" />
+              <el-option value="non_reusable" label="开放题留痕" />
             </el-select>
           </el-form-item>
           <el-form-item label="修改时间" class="mb-0">
@@ -397,8 +463,8 @@ onMounted(loadList)
 
           <el-table-column label="状态" width="120">
             <template #default="{ row }">
-              <el-tag size="small" :type="row.status === 'trusted' ? 'success' : row.status === 'low_confidence' ? 'warning' : 'info'">
-                {{ row.status || 'active' }}
+              <el-tag size="small" :type="getQuestionStatusTag(row.status).type">
+                {{ getQuestionStatusTag(row.status).label }}
               </el-tag>
             </template>
           </el-table-column>

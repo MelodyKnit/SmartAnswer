@@ -270,6 +270,7 @@ export const questionApi = {
   list: (params: {
     page?: number
     limit?: number
+    question_id?: string
     keyword?: string
     type?: string
     source?: string

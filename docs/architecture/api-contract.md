@@ -325,6 +325,7 @@
 - 权限：`questions:read`
 - 数据源：数据库题库表，而不是当前进程内存索引。
 - 查询参数：
+  - `question_id`：按题库记录 ID 精确定位，主要用于反馈中心跳转题库编辑。
   - `keyword`：搜索题干、选项、答案、解析、来源、标签和 AI 元数据答案文本。
   - `type`：题型筛选。
   - `source`：来源筛选。
@@ -524,6 +525,7 @@
 - `user` 只能查看自己的日志
 - `admin` / `superadmin` 可查看所有用户日志
 - 每条日志包含 `elapsed_ms`，表示服务端查题链路耗时（毫秒），旧历史记录可能为 `0.0`
+- 本地题库命中时，每条日志会尽量包含 `question_id`、`source_name`、`source_type`、`source_id`、`source_url`，用于反馈中心定位题库记录。旧历史记录或纯联网来源可能为空。
 
 ### 4.8 反馈
 
@@ -540,12 +542,20 @@
 }
 ```
 
+说明：
+
+- `usage_log_id` 可选；从使用记录提交反馈时应传入该字段。
+- 当 `usage_log_id` 属于当前用户时，后端会自动快照题干、题型、当时答案、命中方式、置信度、请求 ID 和题库来源信息。
+- 不带 `usage_log_id` 的旧式普通反馈仍然兼容，只是没有题库定位上下文。
+
 #### `GET /feedback`
 
 说明：
 
 - `user` 只能查看自己的反馈
 - `admin` / `superadmin` 可查看所有反馈
+- 返回会包含可选定位字段：`question_id`、`question_title`、`question_type`、`answer_snapshot`、`resolution_mode`、`confidence`、`request_id`、`source_name`、`source_type`、`source_id`、`source_url`、`context`。
+- 管理端优先使用 `question_id` 跳转题库编辑；字段为空时只能按题干关键字降级检索。
 
 ### 4.9 用户看板
 

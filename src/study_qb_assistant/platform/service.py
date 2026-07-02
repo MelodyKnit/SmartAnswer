@@ -323,6 +323,11 @@ class PlatformService:
         points_cost: int,
         elapsed_ms: float = 0.0,
         request_id: str = "",
+        question_id: str | None = None,
+        source_name: str = "",
+        source_type: str = "",
+        source_id: str = "",
+        source_url: str = "",
     ) -> dict:
         """记录一次查题调用的审计日志。"""
         record = UsageLogRecord(
@@ -340,6 +345,11 @@ class PlatformService:
             elapsed_ms=elapsed_ms,
             created_at=time.time(),
             request_id=request_id.strip(),
+            question_id=question_id,
+            source_name=source_name.strip(),
+            source_type=source_type.strip(),
+            source_id=source_id.strip(),
+            source_url=source_url.strip(),
         )
         with self._lock:
             self.repository.commit_usage_transaction(
@@ -467,17 +477,58 @@ class PlatformService:
         category: str = "answer",
     ) -> dict:
         """创建一条错题反馈记录。"""
+        usage_record = None
+        if usage_log_id:
+            with self._lock:
+                usage_record = self.repository.get_usage_log(usage_log_id)
+            if usage_record and usage_record.user_id != user_id:
+                usage_record = None
+        question_title = usage_record.title if usage_record else ""
+        answer_snapshot = usage_record.answer if usage_record else None
+        context = {
+            "usage_log_id": usage_log_id or "",
+            "submitted_title": title.strip(),
+            "submitted_content": content.strip(),
+        }
+        if usage_record:
+            context.update(
+                {
+                    "username": usage_record.username,
+                    "question_title": usage_record.title,
+                    "question_type": usage_record.question_type,
+                    "answer_snapshot": usage_record.answer or "",
+                    "resolution_mode": usage_record.resolution_mode,
+                    "confidence": usage_record.confidence,
+                    "request_id": usage_record.request_id,
+                    "source_name": usage_record.source_name,
+                    "source_type": usage_record.source_type,
+                    "source_id": usage_record.source_id,
+                    "source_url": usage_record.source_url,
+                }
+            )
         record = FeedbackRecord(
             feedback_id=secrets.token_hex(12),
             user_id=user_id,
             username=username,
             usage_log_id=usage_log_id,
-            title=title,
+            title=title.strip() or ("题目反馈" if usage_record else "反馈"),
             content=content.strip(),
             image_urls=tuple(url.strip() for url in image_urls if url.strip()),
             status="open",
             created_at=time.time(),
             category=category or "answer",
+            question_id=usage_record.question_id if usage_record else None,
+            question_title=question_title,
+            question_type=usage_record.question_type if usage_record else "",
+            answer_snapshot=answer_snapshot,
+            resolution_mode=usage_record.resolution_mode if usage_record else "",
+            confidence=usage_record.confidence if usage_record else 0.0,
+            request_id=usage_record.request_id if usage_record else "",
+            source_name=usage_record.source_name if usage_record else "",
+            source_type=usage_record.source_type if usage_record else "",
+            source_id=usage_record.source_id if usage_record else "",
+            source_url=usage_record.source_url if usage_record else "",
+            context_json=json.dumps(context, ensure_ascii=False, sort_keys=True),
         )
         with self._lock:
             self.repository.save_feedback(record)

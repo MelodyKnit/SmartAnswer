@@ -32,6 +32,16 @@ def optional_string(value: object) -> str | None:
     return text or None
 
 
+def optional_float(value: object) -> float | None:
+    """把对象安全转换为浮点数。"""
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        return float(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
 def answer_field(value: object) -> str | None:
     """解析 `candidate_answer` 字段。"""
     if isinstance(value, (list, tuple)):
@@ -110,6 +120,10 @@ def normalize_answer_for_query(answer: ModelAnswer, query: QuestionQuery | None)
         answer_text=answer_text,
         explanation=answer.explanation,
         confidence=answer.confidence,
+        question_form=answer.question_form,
+        reuse_policy=answer.reuse_policy,
+        reuse_reason=answer.reuse_reason,
+        reuse_confidence=answer.reuse_confidence,
     )
 
 

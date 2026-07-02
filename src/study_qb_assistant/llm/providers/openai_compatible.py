@@ -24,6 +24,7 @@ from .openai_answer_parser import (
     int_from_env,
     is_completion_without_options,
     normalize_answer_for_query,
+    optional_float,
     parse_plain_text_answer,
     strip_json_fence,
     strip_option_label,
@@ -159,10 +160,17 @@ class OpenAICompatibleProvider:
         # 构造约束模型输出行为的 System Prompt
         system_prompt = (
             "You are a study assistant. Return only JSON with keys "
-            "candidate_answer, answer_text, explanation, confidence. "
+            "candidate_answer, answer_text, explanation, confidence, "
+            "question_form, reuse_policy, reuse_reason, reuse_confidence. "
             "When options are provided, candidate_answer must use option letters only. "
             "For multiple-choice questions, join letters with #, for example A#C. "
-            "If unsure, set confidence below 0.5."
+            "Set reuse_policy to reusable for choice, judgement, real blank, calculation, "
+            "and deterministic short-answer questions. Set reuse_policy to "
+            "non_reusable_open_text only for personalized long-form writing tasks such as "
+            "reflections, essays, papers, reports, summaries, reviews, or experiences. "
+            "Do not mark a question as non_reusable_open_text merely because words like "
+            "essay, report, 作文, or 报告 appear as ordinary nouns in a deterministic question. "
+            "If unsure, set confidence below 0.5 and reuse_confidence below 0.5."
         )
         # 如果提供了证据，在 System Prompt 中加入检索依赖提示
         if evidence:
@@ -174,7 +182,7 @@ class OpenAICompatibleProvider:
         if verification_answer is not None:
             system_prompt += (
                 " Verify the previous answer and correct it if necessary. "
-                "Still return only the same JSON object."
+                "Still return only the same JSON object with all required keys."
             )
         prompt = self._render_question(
             query,
@@ -354,6 +362,7 @@ class OpenAICompatibleProvider:
         confidence = float(payload.get("confidence") or 0.0)
         candidate_answer = answer_field(payload.get("candidate_answer"))
         answer_text = text_field(payload.get("answer_text"))
+        reuse_confidence = optional_float(payload.get("reuse_confidence"))
         if is_completion_without_options(query):
             candidate_answer = (
                 answer_text
@@ -372,6 +381,14 @@ class OpenAICompatibleProvider:
                 else None
             ),
             confidence=max(0.0, min(confidence, 1.0)),
+            question_form=text_field(payload.get("question_form")),
+            reuse_policy=text_field(payload.get("reuse_policy")),
+            reuse_reason=text_field(payload.get("reuse_reason")),
+            reuse_confidence=(
+                max(0.0, min(reuse_confidence, 1.0))
+                if reuse_confidence is not None
+                else None
+            ),
         )
         return normalize_answer_for_query(answer, query)
 

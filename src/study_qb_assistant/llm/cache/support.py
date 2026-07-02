@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from ...models import CanonicalQuestionRecord, ModelAnswer, QuestionQuery
 from ...option_labels import canonicalize_label_answer
-from ...question_types import is_open_text_completion
+from ...answer_reuse import decide_answer_reuse
 
 
 def cache_record_key(record: CanonicalQuestionRecord, cache_key_builder) -> str:
@@ -24,6 +24,16 @@ def is_cacheable_model_answer(
     answer_shape_is_valid,
 ) -> bool:
     """判断模型答案是否满足进入 LLM 自动沉淀题库的最低条件。"""
+    if not decide_answer_reuse(
+        query,
+        answer_text=answer.answer_text,
+        candidate_answer=answer.candidate_answer,
+        reuse_policy=answer.reuse_policy,
+        question_form=answer.question_form,
+        reuse_reason=answer.reuse_reason,
+        reuse_confidence=answer.reuse_confidence,
+    ).reusable:
+        return False
     if answer.confidence < min_confidence:
         return False
     if not answer.candidate_answer:
@@ -34,7 +44,15 @@ def is_cacheable_model_answer(
 def cache_candidate_for_answer(query: QuestionQuery, answer: ModelAnswer) -> str:
     """按题型选择适合沉淀和复用的答案正文。"""
 
-    if is_open_text_completion(query) and answer.answer_text:
+    if answer.answer_text and not query.options and not decide_answer_reuse(
+        query,
+        answer_text=answer.answer_text,
+        candidate_answer=answer.candidate_answer,
+        reuse_policy=answer.reuse_policy,
+        question_form=answer.question_form,
+        reuse_reason=answer.reuse_reason,
+        reuse_confidence=answer.reuse_confidence,
+    ).reusable:
         return answer.answer_text.strip()
     return canonicalize_label_answer(query, str(answer.candidate_answer or "").strip()) or str(
         answer.candidate_answer or ""

@@ -480,6 +480,78 @@ class AnswerServiceTests(unittest.TestCase):
         self.assertEqual(len(stored), 1)
         self.assertEqual(stored[0].metadata["status"], "trusted")
 
+    def test_open_text_ai_answer_is_persisted_but_not_reused(self) -> None:
+        """开放性长文本题应入库留痕，但不能进入题库命中或 AI 缓存复用链路。"""
+        first_answer = "操作系统学习心得：" + "通过本课程学习，我理解了进程、内存与文件系统。" * 12
+        second_answer = "操作系统学习心得：" + "本次学习让我进一步认识到系统调用与资源管理的重要性。" * 12
+        with tempfile.TemporaryDirectory() as temp_dir:
+            provider = SequenceModelProvider(
+                (
+                    ModelAnswer(first_answer, first_answer, "开放题首次生成。", 0.99),
+                    ModelAnswer(second_answer, second_answer, "开放题再次生成。", 0.99),
+                )
+            )
+            repository = SqlAlchemyQuestionRepository(Path(temp_dir) / "questions.sqlite3")
+            cache = LlmAnswerCache(
+                Path(temp_dir) / "ai-learned.jsonl",
+                min_confidence=0.95,
+                min_confirmations=1,
+            )
+            service = AnswerService(
+                LocalQuestionIndex(()),
+                model_provider=provider,
+                allow_model_fallback=True,
+                llm_answer_cache=cache,
+                trusted_confidence_threshold=0.95,
+            )
+            service.question_repository = repository
+            query = QuestionQuery(
+                title="操作系统学习总结及心得体会，不少于2000字",
+                question_type="completion",
+            )
+
+            first = service.query(query)
+            stored = repository.list_question_records(status="non_reusable", keyword="操作系统")
+            indexable = repository.list_indexable_records()
+            second = service.query(query)
+
+        self.assertEqual(first.resolution_mode, "llm_fallback")
+        self.assertEqual(first.debug["question_bank_status"], "non_reusable")
+        self.assertEqual(first.debug["llm_cache_status"], "non_reusable_not_cached")
+        self.assertEqual(stored[0].metadata["status"], "non_reusable")
+        self.assertEqual(stored[0].metadata["reuse_policy"], "non_reusable_open_text")
+        self.assertIn("open_text", stored[0].tags)
+        self.assertEqual(indexable, [])
+        self.assertEqual(second.resolution_mode, "llm_fallback")
+        self.assertEqual(second.candidate_answer, second_answer)
+        self.assertEqual(provider.calls, 2)
+
+    def test_real_blank_completion_ai_answer_remains_reusable(self) -> None:
+        """带明确空位的真实填空题不应被开放长文本策略误伤。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            provider = SequenceModelProvider((ModelAnswer("南方谈话", "南方谈话", "可信解析。", 0.99),))
+            repository = SqlAlchemyQuestionRepository(Path(temp_dir) / "questions.sqlite3")
+            service = AnswerService(
+                LocalQuestionIndex(()),
+                model_provider=provider,
+                allow_model_fallback=True,
+                trusted_confidence_threshold=0.95,
+            )
+            service.question_repository = repository
+            query = QuestionQuery(
+                title="填空题(1分)1992年，邓小平发表【1】____，产生重大影响。",
+                question_type="completion",
+            )
+
+            first = service.query(query)
+            second = service.query(query)
+
+        self.assertEqual(first.debug["question_bank_status"], "trusted")
+        self.assertEqual(first.debug["reuse_policy"], "reusable")
+        self.assertNotEqual(second.resolution_mode, "llm_fallback")
+        self.assertEqual(second.candidate_answer, "南方谈话")
+        self.assertEqual(provider.calls, 1)
+
 
 def _service_with_cmmlu(
     *,

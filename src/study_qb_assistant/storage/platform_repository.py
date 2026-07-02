@@ -101,6 +101,11 @@ class SqlAlchemyPlatformRepository:
                 elapsed_ms=record.elapsed_ms,
                 created_at=record.created_at,
                 request_id=record.request_id,
+                question_id=record.question_id,
+                source_name=record.source_name,
+                source_type=record.source_type,
+                source_id=record.source_id,
+                source_url=record.source_url,
             )
             session.add(entity)
             session.commit()
@@ -129,6 +134,11 @@ class SqlAlchemyPlatformRepository:
                 elapsed_ms=record.elapsed_ms,
                 created_at=record.created_at,
                 request_id=record.request_id,
+                question_id=record.question_id,
+                source_name=record.source_name,
+                source_type=record.source_type,
+                source_id=record.source_id,
+                source_url=record.source_url,
             )
             session.add(entity)
             if token_id:
@@ -197,6 +207,11 @@ class SqlAlchemyPlatformRepository:
                 elapsed_ms=record.elapsed_ms,
                 created_at=record.created_at,
                 request_id=record.request_id,
+                question_id=record.question_id,
+                source_name=record.source_name,
+                source_type=record.source_type,
+                source_id=record.source_id,
+                source_url=record.source_url,
             )
             session.add(entity)
             if token_entity is not None:
@@ -230,6 +245,15 @@ class SqlAlchemyPlatformRepository:
                 stmt.offset(max(0, int(offset))).limit(max(1, min(limit, 5000)))
             ).all()
             return [self._usage_log_record(entity) for entity in entities]
+
+    def get_usage_log(self, log_id: str) -> UsageLogRecord | None:
+        """按日志 ID 读取单条使用记录。"""
+
+        with self.session_factory() as session:
+            entity = session.scalar(
+                select(UsageLogEntity).where(UsageLogEntity.log_id == log_id)
+            )
+            return self._usage_log_record(entity) if entity else None
 
     def count_usage_logs(
         self,
@@ -375,6 +399,18 @@ class SqlAlchemyPlatformRepository:
                 handled_by=record.handled_by,
                 handled_at=record.handled_at,
                 created_at=record.created_at,
+                question_id=record.question_id,
+                question_title=record.question_title,
+                question_type=record.question_type,
+                answer_snapshot=record.answer_snapshot,
+                resolution_mode=record.resolution_mode,
+                confidence=record.confidence,
+                request_id=record.request_id,
+                source_name=record.source_name,
+                source_type=record.source_type,
+                source_id=record.source_id,
+                source_url=record.source_url,
+                context_json=record.context_json,
             )
             session.add(entity)
             session.commit()
@@ -752,6 +788,15 @@ class SqlAlchemyPlatformRepository:
             elapsed_ms=float(getattr(entity, "elapsed_ms", 0.0) or 0.0),
             created_at=entity.created_at,
             request_id=str(getattr(entity, "request_id", "") or ""),
+            question_id=(
+                str(getattr(entity, "question_id", "") or "")
+                if getattr(entity, "question_id", None)
+                else None
+            ),
+            source_name=str(getattr(entity, "source_name", "") or ""),
+            source_type=str(getattr(entity, "source_type", "") or ""),
+            source_id=str(getattr(entity, "source_id", "") or ""),
+            source_url=str(getattr(entity, "source_url", "") or ""),
         )
 
     def _feedback_record(self, entity: FeedbackEntity) -> FeedbackRecord:
@@ -772,6 +817,26 @@ class SqlAlchemyPlatformRepository:
             reward_points=entity.reward_points,
             handled_by=entity.handled_by,
             handled_at=entity.handled_at,
+            question_id=(
+                str(getattr(entity, "question_id", "") or "")
+                if getattr(entity, "question_id", None)
+                else None
+            ),
+            question_title=str(getattr(entity, "question_title", "") or ""),
+            question_type=str(getattr(entity, "question_type", "") or ""),
+            answer_snapshot=(
+                str(getattr(entity, "answer_snapshot", ""))
+                if getattr(entity, "answer_snapshot", None) is not None
+                else None
+            ),
+            resolution_mode=str(getattr(entity, "resolution_mode", "") or ""),
+            confidence=float(getattr(entity, "confidence", 0.0) or 0.0),
+            request_id=str(getattr(entity, "request_id", "") or ""),
+            source_name=str(getattr(entity, "source_name", "") or ""),
+            source_type=str(getattr(entity, "source_type", "") or ""),
+            source_id=str(getattr(entity, "source_id", "") or ""),
+            source_url=str(getattr(entity, "source_url", "") or ""),
+            context_json=str(getattr(entity, "context_json", "{}") or "{}"),
         )
 
     def _apply_redeem_code(self, entity: RedeemCodeEntity, record: RedeemCodeRecord) -> None:

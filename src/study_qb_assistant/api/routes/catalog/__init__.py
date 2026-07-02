@@ -9,7 +9,7 @@ from ....answering import AnswerService
 from ....auth import AuthError
 from ....models import CanonicalQuestionRecord
 from ....platform.service import local_day_window_from_dates
-from ....storage.question_repository import question_record_status, question_status_is_indexable
+from ....storage.question_repository import question_record_is_indexable, question_record_status
 from ...context import (
     auth_error_response,
     get_lookup_service,
@@ -76,6 +76,7 @@ def build_catalog_router() -> APIRouter:
         page: int = 1,
         limit: int = 20,
         keyword: str | None = None,
+        question_id: str | None = None,
         type: str | None = None,
         source: str | None = None,
         status: str | None = None,
@@ -93,6 +94,7 @@ def build_catalog_router() -> APIRouter:
             updated_start_date or "", updated_end_date or ""
         )
         total = repository.count_questions(
+            question_id=question_id or "",
             keyword=keyword or "",
             question_type=type or "",
             source_name=source or "",
@@ -102,6 +104,7 @@ def build_catalog_router() -> APIRouter:
             updated_end_time=updated_end_time,
         )
         paginated = repository.list_question_records(
+            question_id=question_id or "",
             keyword=keyword or "",
             question_type=type or "",
             source_name=source or "",
@@ -181,7 +184,7 @@ def build_catalog_router() -> APIRouter:
             )
         lookup = get_lookup_service(request)
         index = lookup.index if isinstance(lookup, AnswerService) else lookup
-        if question_status_is_indexable(question_record_status(updated_record)):
+        if question_record_is_indexable(updated_record):
             index.add_or_replace(updated_record)
         else:
             index.remove(question_id)

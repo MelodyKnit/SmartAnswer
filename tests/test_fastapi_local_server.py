@@ -462,6 +462,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             feedback = client.post(
                 "/feedback",
                 json={
+                    "usage_log_id": usage_after.json()["logs"][0]["log_id"],
                     "category": "wrong_answer",
                     "title": "答错了",
                     "content": "这题答案不对",
@@ -470,6 +471,11 @@ class FastAPILocalServerTests(unittest.TestCase):
                 headers=headers,
             )
             feedback_list = client.get("/feedback", headers=headers)
+            question_lookup = client.get(
+                "/questions",
+                params={"question_id": usage_after.json()["logs"][0]["question_id"]},
+                headers=headers,
+            )
             feedback_id = feedback.json()["feedback"]["feedback_id"]
             points_before_feedback_resolve = client.get("/users/me", headers=headers)
             feedback_resolve = client.patch(
@@ -606,6 +612,9 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertGreater(usage_after.json()["logs"][0]["elapsed_ms"], 0)
         self.assertTrue(usage_after.json()["logs"][0]["request_id"])
         self.assertTrue(usage_after.json()["logs"][0]["provider"])
+        self.assertEqual(usage_after.json()["logs"][0]["question_id"], "unit:sample:1")
+        self.assertEqual(usage_after.json()["logs"][0]["source_id"], "unit:sample:1")
+        self.assertEqual(usage_after.json()["logs"][0]["source_type"], "qa_record")
         self.assertNotEqual(
             workbench_after_query.json()["workbench"]["overview"]["avg_response_seconds"], 0.82
         )
@@ -614,8 +623,19 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(usage_by_unused_token.json()["total"], 0)
         self.assertTrue(feedback.json()["ok"])
         self.assertEqual(feedback.json()["feedback"]["category"], "wrong_answer")
+        self.assertEqual(feedback.json()["feedback"]["question_id"], "unit:sample:1")
+        self.assertEqual(feedback.json()["feedback"]["question_title"], "示例题")
+        self.assertEqual(feedback.json()["feedback"]["answer_snapshot"], "A")
+        self.assertEqual(feedback.json()["feedback"]["source_name"], "UnitTest")
+        self.assertEqual(
+            feedback.json()["feedback"]["context"]["request_id"],
+            usage_after.json()["logs"][0]["request_id"],
+        )
         self.assertEqual(len(feedback_list.json()["feedbacks"]), 1)
         self.assertEqual(feedback_list.json()["feedbacks"][0]["category"], "wrong_answer")
+        self.assertEqual(feedback_list.json()["feedbacks"][0]["question_id"], "unit:sample:1")
+        self.assertEqual(question_lookup.json()["total"], 1)
+        self.assertEqual(question_lookup.json()["questions"][0]["question_id"], "unit:sample:1")
         self.assertTrue(feedback_resolve.json()["ok"])
         self.assertEqual(feedback_resolve.json()["granted_points"], 20)
         resolved_feedback = feedback_list_after_resolve.json()["feedbacks"][0]
@@ -665,6 +685,40 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(llm_traces.json()["traces"][0]["evidence"][0]["title"], "证据标题")
         self.assertEqual(plain_register.json()["user"]["points"], 150)
         self.assertEqual(invited_register.json()["user"]["points"], 180)
+
+    def test_feedback_without_usage_log_keeps_legacy_payload_compatible(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                )
+            )
+
+            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            session = client.post(
+                "/auth/login", json={"username": "owner", "password": "password123"}
+            )
+            headers = {"Authorization": f"Bearer {session.json()['token']}"}
+
+            feedback = client.post(
+                "/feedback",
+                json={
+                    "category": "answer",
+                    "title": "普通反馈",
+                    "content": "这个页面说明不清楚",
+                },
+                headers=headers,
+            )
+            feedback_list = client.get("/feedback", headers=headers)
+
+        self.assertTrue(feedback.json()["ok"])
+        self.assertIsNone(feedback.json()["feedback"]["question_id"])
+        self.assertEqual(feedback.json()["feedback"]["question_title"], "")
+        self.assertEqual(feedback.json()["feedback"]["context"]["submitted_title"], "普通反馈")
+        self.assertEqual(feedback_list.json()["total"], 1)
 
     def test_admin_can_manage_users_but_regular_user_cannot_patch_billing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

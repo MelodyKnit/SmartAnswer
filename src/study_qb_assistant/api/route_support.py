@@ -247,6 +247,12 @@ def record_usage(
     if user is None:
         return token
     points_cost = platform.calculate_points_cost(str(result.resolution_mode))
+    primary_source = result.sources[0] if getattr(result, "sources", ()) else {}
+    source_id = str(primary_source.get("source_id") or "")
+    source_type = str(primary_source.get("source_type") or "")
+    question_id = (
+        source_id if source_type in {"qa_record", "ai_generated_question_bank"} and source_id else None
+    )
     platform.record_usage(
         user_id=str(user["user_id"]),
         username=str(user["username"]),
@@ -260,6 +266,11 @@ def record_usage(
         points_cost=points_cost,
         elapsed_ms=round(max(0.0, elapsed_seconds) * 1000, 2),
         request_id=str(query.request_id or ""),
+        question_id=question_id,
+        source_name=str(primary_source.get("source_name") or ""),
+        source_type=source_type,
+        source_id=source_id,
+        source_url=str(primary_source.get("source_url") or ""),
     )
     return token
 

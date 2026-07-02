@@ -117,6 +117,50 @@ class LlmAnswerCachePersistenceTests(unittest.TestCase):
         self.assertEqual(trusted.candidate_answer, "A#B#C")
         self.assertEqual(records[0]["answer_raw"], "A#B#C")
 
+    def test_legacy_open_text_cache_is_not_loaded_as_trusted_answer(self) -> None:
+        """历史开放性长文本缓存不应再作为可信 AI 答案复用。"""
+        query = QuestionQuery(
+            title="操作系统学习总结及心得体会，不少于2000字",
+            question_type="completion",
+        )
+        long_answer = "学习心得：" + "课程学习让我理解了进程、内存、文件系统和设备管理。" * 12
+        now = time.time()
+
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            legacy_path = base / "runtime" / "ai-answer-cache.json"
+            learned_path = base / "normalized" / "ai-learned.jsonl"
+            legacy_path.parent.mkdir(parents=True)
+            legacy_payload = {
+                "version": 1,
+                "entries": [
+                    {
+                        "key": cache_key(query),
+                        "title": query.title,
+                        "question_type": query.question_type,
+                        "options": [],
+                        "candidate_answer": long_answer,
+                        "answer_text": long_answer,
+                        "explanation": "历史缓存中的开放题答案。",
+                        "confidence": 0.99,
+                        "confirmations": 2,
+                        "conflicts": 0,
+                        "status": "trusted",
+                        "provider_name": "legacy-provider",
+                        "created_at": now,
+                        "updated_at": now,
+                    }
+                ],
+            }
+            legacy_path.write_text(json.dumps(legacy_payload, ensure_ascii=False), encoding="utf-8")
+
+            cache = LlmAnswerCache(learned_path, legacy_paths=(legacy_path,))
+            trusted = cache.get_trusted(query)
+            records = _read_jsonl(learned_path) if learned_path.exists() else []
+
+        self.assertIsNone(trusted)
+        self.assertEqual(records, [])
+
 
 def _read_jsonl(path: Path) -> list[dict]:
     with path.open("r", encoding="utf-8") as handle:

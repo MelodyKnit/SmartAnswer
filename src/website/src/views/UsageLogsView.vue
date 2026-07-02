@@ -1,6 +1,7 @@
 <script setup lang="ts">
 /** API 使用记录。 */
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { feedbackApi, tokenApi, usageApi } from '@/api/endpoints'
 import type { ApiToken, UsageLog } from '@/api/types'
@@ -16,6 +17,7 @@ import { DEFAULT_PAGE_SIZE } from '@/config/constants'
 import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
+const route = useRoute()
 const loading = ref(false)
 const logs = ref<UsageLog[]>([])
 const tokens = ref<ApiToken[]>([])
@@ -99,6 +101,7 @@ const detailOptions = computed<string[]>(() => {
 /* 反馈 */
 const fbVisible = ref(false)
 const fbSubmitting = ref(false)
+const fbContext = ref<UsageLog | null>(null)
 const fbForm = reactive({
   usage_log_id: '' as string | null,
   category: 'wrong_answer',
@@ -107,9 +110,10 @@ const fbForm = reactive({
 })
 
 function openFeedback(log: UsageLog) {
+  fbContext.value = log
   fbForm.usage_log_id = log.log_id
   fbForm.category = 'wrong_answer'
-  fbForm.title = `题目反馈：${log.title.slice(0, 20)}`
+  fbForm.title = '题目反馈'
   fbForm.content = ''
   fbVisible.value = true
 }
@@ -153,7 +157,13 @@ function tokenLabel(tokenId?: string | null) {
   return token?.description || token?.key_mask || tokenId
 }
 
-onMounted(load)
+onMounted(() => {
+  const keyword = String(route.query.keyword || '').trim()
+  if (keyword) {
+    filters.keyword = keyword
+  }
+  load()
+})
 </script>
 
 <template>
@@ -330,6 +340,21 @@ onMounted(load)
 
     <el-dialog v-model="fbVisible" title="提交反馈" width="480px">
       <el-form label-position="top">
+        <div v-if="fbContext" class="mb-4 rounded-lg border border-line bg-card-soft p-3">
+          <div class="mb-2 flex items-center justify-between gap-3">
+            <span class="text-sm font-semibold text-ink">关联题目</span>
+            <el-tag size="small" effect="plain">
+              {{ fbContext.question_id ? '已关联题库' : '未关联题库' }}
+            </el-tag>
+          </div>
+          <p class="line-clamp-3 text-sm text-ink">{{ fbContext.title }}</p>
+          <div class="mt-3 grid grid-cols-1 gap-2 text-xs text-ink-soft sm:grid-cols-2">
+            <span>题型：{{ questionTypeLabel(fbContext.question_type) }}</span>
+            <span>命中：{{ resolutionLabel(fbContext.resolution_mode) }}</span>
+            <span>答案：{{ fbContext.answer || '—' }}</span>
+            <span>题库 ID：{{ fbContext.question_id || '—' }}</span>
+          </div>
+        </div>
         <el-form-item label="反馈类型">
           <el-select v-model="fbForm.category" class="w-full">
             <el-option
@@ -339,9 +364,6 @@ onMounted(load)
               :label="c.label"
             />
           </el-select>
-        </el-form-item>
-        <el-form-item label="标题">
-          <el-input v-model="fbForm.title" maxlength="60" />
         </el-form-item>
         <el-form-item label="反馈内容">
           <el-input

@@ -221,12 +221,20 @@ class ModelAnswer:
         answer_text: 选项文本内容。
         explanation: 模型生成的解题思路或说明。
         confidence: 模型给出该答案的置信度评分（0.0 ~ 1.0）。
+        question_form: 模型识别出的题目形态，用于辅助后续复用策略判断。
+        reuse_policy: 模型建议的答案复用策略，不直接绕过服务端护栏。
+        reuse_reason: 模型给出复用策略的简短原因。
+        reuse_confidence: 模型对复用策略判断的置信度评分（0.0 ~ 1.0）。
     """
 
     candidate_answer: str | None
     answer_text: str | None
     explanation: str | None
     confidence: float
+    question_form: str | None = None
+    reuse_policy: str | None = None
+    reuse_reason: str | None = None
+    reuse_confidence: float | None = None
 
 
 def _float_metadata(value: object) -> float:

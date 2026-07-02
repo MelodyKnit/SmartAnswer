@@ -126,6 +126,43 @@ class LocalQuestionIndexTests(unittest.TestCase):
         self.assertEqual(result.sources[0]["source_name"], "AIGenerated")
         self.assertEqual(result.sources[0]["source_type"], "ai_generated_question_bank")
 
+    def test_open_text_ai_learned_record_is_not_matchable(self) -> None:
+        """历史开放性长文本 AI 记录即使存在于索引记录中，也不参与自动命中。"""
+        long_answer = "学习心得：" + "这门课程帮助我理解了操作系统资源管理的整体思路。" * 12
+        learned_record = CanonicalQuestionRecord(
+            question_id="ai:open-text",
+            title_raw="操作系统学习总结及心得体会，不少于2000字",
+            question_type="completion",
+            options_raw=(),
+            answer_raw=long_answer,
+            explanation="历史 AI 生成开放题。",
+            subject="ai-generated",
+            chapter=None,
+            tags=("ai_generated", "auto_learned", "status:trusted", "provider:test-provider"),
+            source_name="AIGenerated",
+            source_url="",
+            source_license="user-local-ai-generated",
+            source_split="trusted",
+            source_record_path="ai-learned.jsonl",
+            metadata={
+                "ai_status": "trusted",
+                "ai_confidence": "0.99",
+                "ai_answer_text": long_answer,
+            },
+        )
+
+        index = LocalQuestionIndex((learned_record,))
+        result = index.query(
+            QuestionQuery(
+                title="操作系统学习总结及心得体会，不少于2000字",
+                question_type="completion",
+            )
+        )
+
+        self.assertEqual(index.status()["record_count"], 1)
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error_code, "NOT_FOUND")
+
     def test_index_can_start_empty_when_all_jsonl_paths_are_missing(self) -> None:
         """部署场景中缺少题库文件时，索引应以空库启动而不是抛异常。"""
         with tempfile.TemporaryDirectory() as directory:

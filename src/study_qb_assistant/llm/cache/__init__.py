@@ -22,6 +22,7 @@ from .support import (
     is_cacheable_model_answer,
     optional_string,
 )
+from ...answer_reuse import record_should_be_indexable_by_reuse_policy, decide_answer_reuse
 from ...models import CanonicalQuestionRecord, ModelAnswer, QuestionQuery
 from ...normalization import normalize_options, normalize_text
 from ...option_labels import canonicalize_label_answer
@@ -60,6 +61,12 @@ class LlmAnswerCache:
         with self._lock:
             entry = self._entries.get(key)
             if entry is None or entry.status != "trusted":
+                return None
+            if not decide_answer_reuse(
+                query,
+                answer_text=entry.answer_text,
+                candidate_answer=entry.candidate_answer,
+            ).reusable:
                 return None
             if not answer_shape_is_valid(query, entry.candidate_answer):
                 return None
@@ -183,6 +190,8 @@ class LlmAnswerCache:
                 record = CanonicalQuestionRecord.from_dict(json.loads(line))
                 if "ai_generated" not in record.tags and record.source_name != "AIGenerated":
                     continue
+                if not record_should_be_indexable_by_reuse_policy(record):
+                    continue
                 entry = CachedLlmAnswer.from_record(
                     record,
                     record_cache_key=lambda source_record: cache_record_key(
@@ -208,6 +217,17 @@ class LlmAnswerCache:
                 float_value=float_value,
                 int_value=int_value,
             )
+            query = QuestionQuery(
+                title=entry.title,
+                question_type=entry.question_type,
+                options=entry.options,
+            )
+            if not decide_answer_reuse(
+                query,
+                answer_text=entry.answer_text,
+                candidate_answer=entry.candidate_answer,
+            ).reusable:
+                continue
             self._entries.setdefault(entry.key, entry)
             loaded = True
         return loaded
