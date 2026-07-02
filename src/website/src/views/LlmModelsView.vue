@@ -579,6 +579,33 @@ const phaseLabel: Record<string, string> = {
   failover: '主备降级',
 }
 
+function traceOutputLabel(row: LlmCallTrace) {
+  if (row.phase === 'web_search') {
+    const count = row.evidence?.length || 0
+    return count > 0 ? `命中 ${count} 条证据` : '未命中证据'
+  }
+  return row.candidate_answer || row.response_text || '—'
+}
+
+function traceResultLabel(row: LlmCallTrace) {
+  if (!row.ok) return '失败'
+  if (row.phase === 'web_search') {
+    return (row.evidence?.length || 0) > 0 ? '有证据' : '无证据'
+  }
+  return '成功'
+}
+
+function traceResultType(row: LlmCallTrace) {
+  if (!row.ok) return 'danger'
+  if (row.phase === 'web_search' && !(row.evidence?.length || 0)) return 'warning'
+  return 'success'
+}
+
+function traceCandidateLabel(row: LlmCallTrace) {
+  if (row.phase === 'web_search') return '不适用'
+  return row.candidate_answer || '—'
+}
+
 async function loadTraces() {
   tracesLoading.value = true
   try {
@@ -979,15 +1006,17 @@ onMounted(async () => {
             <el-table-column label="题目" min-width="200" show-overflow-tooltip>
               <template #default="{ row }">{{ row.question_title || '—' }}</template>
             </el-table-column>
-            <el-table-column label="答案" width="100" show-overflow-tooltip>
+            <el-table-column label="阶段输出" width="140" show-overflow-tooltip>
               <template #default="{ row }">
-                <span class="text-success">{{ row.candidate_answer || '—' }}</span>
+                <span :class="row.phase === 'web_search' ? 'text-ink-muted' : 'text-success'">
+                  {{ traceOutputLabel(row) }}
+                </span>
               </template>
             </el-table-column>
             <el-table-column label="结果" width="80" align="center">
               <template #default="{ row }">
-                <el-tag size="small" :type="row.ok ? 'success' : 'danger'" effect="plain">
-                  {{ row.ok ? '成功' : '失败' }}
+                <el-tag size="small" :type="traceResultType(row)" effect="plain">
+                  {{ traceResultLabel(row) }}
                 </el-tag>
               </template>
             </el-table-column>
@@ -1178,16 +1207,20 @@ onMounted(async () => {
             <dd class="font-mono text-xs text-ink">{{ traceDetail.request_id || '—' }}</dd>
           </div>
           <div class="flex justify-between border-b border-line pb-2">
-            <dt class="text-ink-muted">候选答案 / 置信度</dt>
+            <dt class="text-ink-muted">阶段输出 / 置信度</dt>
             <dd class="text-success">
-              {{ traceDetail.candidate_answer || '—' }}（{{ (traceDetail.confidence * 100).toFixed(0) }}%）
+              {{ traceOutputLabel(traceDetail) }}（{{ (traceDetail.confidence * 100).toFixed(0) }}%）
             </dd>
+          </div>
+          <div v-if="traceDetail.phase !== 'web_search'" class="flex justify-between border-b border-line pb-2">
+            <dt class="text-ink-muted">候选答案</dt>
+            <dd class="text-success">{{ traceCandidateLabel(traceDetail) }}</dd>
           </div>
           <div class="flex justify-between border-b border-line pb-2">
             <dt class="text-ink-muted">结果 / 耗时</dt>
             <dd>
-              <el-tag size="small" :type="traceDetail.ok ? 'success' : 'danger'" effect="plain">
-                {{ traceDetail.ok ? '成功' : '失败' }}
+              <el-tag size="small" :type="traceResultType(traceDetail)" effect="plain">
+                {{ traceResultLabel(traceDetail) }}
               </el-tag>
               <span class="ml-2 text-ink">{{ (traceDetail.elapsed_ms / 1000).toFixed(2) }}s</span>
             </dd>
@@ -1220,7 +1253,9 @@ onMounted(async () => {
         </div>
 
         <div>
-          <div class="mb-1 text-ink-muted">模型输出</div>
+          <div class="mb-1 text-ink-muted">
+            {{ traceDetail.phase === 'web_search' ? '检索输出' : '模型输出' }}
+          </div>
           <pre class="max-h-56 overflow-auto rounded-lg bg-[#0f172a] p-3 text-xs leading-relaxed text-slate-200">{{ traceDetail.response_text || '—' }}</pre>
         </div>
       </div>
