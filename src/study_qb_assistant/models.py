@@ -129,16 +129,22 @@ class QuestionQuery:
         options: 待查询题目的选项列表（元组），默认为空。
         question_type: 题目类型（例如 "single", "multiple" 等），默认为 "unknown"。
         request_id: 请求流水号或标识符，便于追踪，默认为 None。
+        page_url: 当前题目所在页面地址，可用于浏览器上下文补抓图片。
         image_urls: 题干图片链接列表，仅作为答题上下文，不作为可复用题干本体。
+        image_data_urls: 题干图片的内联 data URL 列表，仅用于本次识图，不写入题库。
         option_image_urls: 选项标签到图片链接的映射，仅作为答题上下文。
+        option_image_data_urls: 选项标签到图片 data URL 的映射，仅用于本次识图。
     """
 
     title: str
     options: tuple[str, ...] = ()
     question_type: str = "unknown"
     request_id: str | None = None
+    page_url: str | None = None
     image_urls: tuple[str, ...] = ()
+    image_data_urls: tuple[str, ...] = ()
     option_image_urls: dict[str, str] = field(default_factory=dict)
+    option_image_data_urls: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

@@ -15,6 +15,7 @@ from .models import ModelAnswer, QueryResult, QuestionQuery
 CHOICE_TYPES = {"single", "multiple", "单选", "单选题", "多选", "多选题"}
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
 INPUT_ANOMALY_MODE = "input_anomaly"
+DATA_URL_PATTERN = re.compile(r"^data:image/[-+.\w]+;base64,[A-Za-z0-9+/=\s]+$", re.I)
 
 
 @dataclass(slots=True)
@@ -52,6 +53,31 @@ def normalize_image_urls(*groups: object) -> tuple[str, ...]:
         for candidate in candidates:
             text = str(candidate or "").strip()
             if is_image_url(text) and text not in urls:
+                urls.append(text)
+    return tuple(urls)
+
+
+def is_image_data_url(value: str) -> bool:
+    """判断字符串是否是图片 data URL。"""
+
+    text = str(value or "").strip()
+    if not text:
+        return False
+    return bool(DATA_URL_PATTERN.match(text))
+
+
+def normalize_image_data_urls(*groups: object) -> tuple[str, ...]:
+    """从多个输入来源提取去重后的图片 data URL。"""
+
+    urls: list[str] = []
+    for group in groups:
+        if isinstance(group, str):
+            candidates = (group,)
+        else:
+            candidates = list(group or ())
+        for candidate in candidates:
+            text = str(candidate or "").strip()
+            if is_image_data_url(text) and text not in urls:
                 urls.append(text)
     return tuple(urls)
 

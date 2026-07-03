@@ -281,8 +281,11 @@ def usage_context_json(query: QuestionQuery, result) -> str:
 
     payload = {
         "options": list(query.options),
+        "page_url": str(query.page_url or ""),
         "image_urls": list(query.image_urls),
+        "image_data_url_count": len(query.image_data_urls),
         "option_image_urls": dict(query.option_image_urls),
+        "option_image_data_url_count": len(query.option_image_data_urls),
         "input_flags": [
             flag
             for flag in str(getattr(result, "debug", {}).get("input_flags", "")).split(",")

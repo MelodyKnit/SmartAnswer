@@ -16,6 +16,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 # 将项目源文件目录 src 添加到 Python 路径中，以便能够正确导入项目模块
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -132,6 +133,21 @@ class ImageAccessErrorProvider:
         raise RuntimeError(
             "model provider request failed: HTTP 500: failed to download file, status code: 403"
         )
+
+
+class InspectingImagePayloadProvider:
+    """记录最后一次收到的查询，用于验证图片 payload 是否传到模型层。"""
+
+    provider_name = "inspecting-image-payload-provider"
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.last_query: QuestionQuery | None = None
+
+    def answer(self, query: QuestionQuery) -> ModelAnswer:
+        self.calls += 1
+        self.last_query = query
+        return ModelAnswer("A", "图片答案", "已收到图片 payload。", 0.99)
 
 
 class AnswerServiceTests(unittest.TestCase):
@@ -711,6 +727,33 @@ class AnswerServiceTests(unittest.TestCase):
         self.assertEqual(result.resolution_mode, "input_anomaly")
         self.assertEqual(result.error_code, "IMAGE_UNREADABLE")
         self.assertIn("unreadable_image", result.debug["input_flags"])
+
+    def test_model_query_can_be_hydrated_with_inline_image_payloads(self) -> None:
+        """模型调用前若已补齐 data URL，应把内联图片发到视觉模型而不是只传外链。"""
+        provider = InspectingImagePayloadProvider()
+        service = AnswerService(
+            LocalQuestionIndex(()),
+            model_provider=provider,
+            allow_model_fallback=True,
+        )
+        original_query = QuestionQuery(
+            title="https://example.com/question.jpg",
+            image_urls=("https://example.com/question.jpg",),
+            question_type="single",
+        )
+        hydrated_query = QuestionQuery(
+            title=original_query.title,
+            image_urls=original_query.image_urls,
+            image_data_urls=("data:image/png;base64,AA==",),
+            question_type=original_query.question_type,
+        )
+
+        with patch("study_qb_assistant.answering.build_model_query", return_value=hydrated_query):
+            result = service.query(original_query)
+
+        self.assertTrue(result.ok)
+        self.assertEqual(provider.calls, 1)
+        self.assertEqual(provider.last_query.image_data_urls, ("data:image/png;base64,AA==",))
 
 
 def _service_with_cmmlu(

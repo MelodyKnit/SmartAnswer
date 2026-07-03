@@ -953,6 +953,10 @@ def resolve_browser_path() -> str | None:
         [
             Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"),
             Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+            Path("/usr/bin/chromium"),
+            Path("/usr/bin/chromium-browser"),
+            Path("/usr/bin/google-chrome"),
+            Path("/usr/bin/google-chrome-stable"),
         ]
     )
     for candidate in candidates:

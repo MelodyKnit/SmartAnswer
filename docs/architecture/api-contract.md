@@ -62,11 +62,18 @@
     "D. 4"
   ],
   "type": "single",
+  "page_url": "https://example.com/exam/123",
   "image_urls": [
     "https://example.com/question.png"
   ],
+  "image_data_urls": [
+    "data:image/png;base64,..."
+  ],
   "option_image_urls": {
     "A": "https://example.com/a.png"
+  },
+  "option_image_data_urls": {
+    "A": "data:image/png;base64,..."
   },
   "subject": "math",
   "source_context": "practice_set_a",
@@ -143,8 +150,11 @@
 
 - `title`：必填字符串
 - `options`：可选字符串数组；如果需要，在导入期间将字符串输入规范化为数组
+- `page_url`：可选当前题目所在页面地址；服务端可在需要时用作浏览器上下文抓图的 `Referer`
 - `image_urls`：可选图片 URL 数组；仅作为图片题上下文，不保存原图二进制
+- `image_data_urls`：可选图片 `data:image/...;base64,...` 数组；优先用于视觉模型与 OCR，不写入题库或 usage log
 - `option_image_urls`：可选选项图片映射，键为 `A-Z`
+- `option_image_data_urls`：可选选项图片 `data URL` 映射，键为 `A-Z`
 - `type`：必填枚举；初始值应为 `single`（单选）、`multiple`（多选）、`judgement`（判断）、`completion`（填空）、`unknown`（未知）
 - `subject`：可选字符串
 - `source_context`：可选字符串
@@ -162,6 +172,7 @@
 - `review_required`：布尔值
 - 选择题无真实选项且本地题库未精确命中时，返回 `INPUT_MISSING_OPTIONS`，不进入 AI 兜底、题库沉淀或 AI 缓存
 - 图片题可通过 `image_urls` 进入多模态模型；多模态失败时尝试 OCR，仍不可读时返回 `IMAGE_UNREADABLE`
+- 若增强脚本已上传 `image_data_urls` / `option_image_data_urls`，服务端优先直接把内联图片发送给视觉模型，不再依赖外链图床可访问性
 
 ### 3.6 OCS 兼容说明
 
@@ -170,7 +181,7 @@
 - 判断题：`data.answer` 返回 `对/错`
 - 单空填空：`data.answer` 返回文本答案
 - 输入异常：返回 `code=1`、`data.answer=null`，`data.ai.error_code` 包含 `INPUT_MISSING_OPTIONS` 或 `IMAGE_UNREADABLE`
-- 官方 OCS 配置只保证传递 `${title}`、`${type}`、`${options}`；图片题完整支持依赖本项目生成或维护的增强导入脚本采集 DOM 图片 URL
+- 官方 OCS 配置只保证传递 `${title}`、`${type}`、`${options}`；图片题完整支持依赖本项目生成或维护的增强导入脚本采集 DOM 图片并上传内联 `base64`
 - 多空填空：`data.answer` 返回 JSON 数组字符串，例如 `["第一空","第二空"]`
 
 ## 4. 平台管理接口

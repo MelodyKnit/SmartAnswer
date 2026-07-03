@@ -18,8 +18,11 @@ class QueryPayload(BaseModel):
     type: str | None = None
     question_type: str | None = None
     request_id: str | None = None
+    page_url: str | None = None
     image_urls: list[str] | tuple[str, ...] = Field(default_factory=tuple)
+    image_data_urls: list[str] | tuple[str, ...] = Field(default_factory=tuple)
     option_image_urls: dict[str, str] = Field(default_factory=dict)
+    option_image_data_urls: dict[str, str] = Field(default_factory=dict)
 
 
 class RegisterPayload(BaseModel):

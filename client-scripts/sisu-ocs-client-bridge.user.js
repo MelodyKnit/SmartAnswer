@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         Study Question Bank Client Bridge
 // @namespace    https://github.com/MelodyKnit/SmartAnswer
-// @version      0.2.0
+// @version      0.3.0
 // @description  Bridge custom learning pages to StudyQuestionBankAssistant /ocs/query without modifying OCS itself.
 // @author       StudyQuestionBankAssistant
 // @match        *://*/*
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
+// @connect      *
 // @connect      127.0.0.1
 // @connect      localhost
 // @connect      ocs.classbot.top
@@ -29,6 +30,8 @@
   ];
   const OPTION_LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
   const AUTO_ANSWER_DELAY_MS = 1400;
+  const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+  const MAX_IMAGE_COUNT = 6;
   const answeredQuestionKeys = new Set();
   let answerRunning = false;
   let autoAnswerTimer = 0;
@@ -276,14 +279,18 @@
   }
 
   function requestAnswer(question) {
+    return buildImagePayloads(question).then((imagePayloads) => {
     const config = loadConfig();
     const url = `${config.baseUrl.replace(/\/+$/, "")}/ocs/query`;
     const body = JSON.stringify({
       title: question.title,
       type: question.type,
       options: question.options,
+      page_url: window.location.href,
       image_urls: question.image_urls,
+      image_data_urls: imagePayloads.image_data_urls,
       option_image_urls: question.option_image_urls || {},
+      option_image_data_urls: imagePayloads.option_image_data_urls,
     });
     const headers = {
       "Content-Type": "application/json",
@@ -304,7 +311,7 @@
           return payload.data || {};
         });
     }
-    return new Promise((resolve, reject) => {
+      return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
         method: "POST",
         url,
@@ -327,6 +334,151 @@
         ontimeout: () => reject(new Error("request timeout")),
       });
     });
+    });
+  }
+
+  async function buildImagePayloads(question) {
+    const image_data_urls = [];
+    const option_image_data_urls = {};
+    const images = Array.from(question.root.querySelectorAll("img")).filter(visible).slice(0, MAX_IMAGE_COUNT);
+    for (const image of images) {
+      const dataUrl = await imageElementToDataUrl(image);
+      if (!dataUrl) {
+        continue;
+      }
+      const label = optionLabelForImage(image);
+      if (label && !option_image_data_urls[label]) {
+        option_image_data_urls[label] = dataUrl;
+      } else if (!image_data_urls.includes(dataUrl)) {
+        image_data_urls.push(dataUrl);
+      }
+    }
+    return { image_data_urls, option_image_data_urls };
+  }
+
+  async function imageElementToDataUrl(image) {
+    const inlineData = inlineImageDataUrl(image);
+    if (inlineData) {
+      return inlineData;
+    }
+    const canvasData = canvasImageDataUrl(image);
+    if (canvasData) {
+      return canvasData;
+    }
+    const url = absoluteImageUrl(image);
+    if (!url) {
+      return "";
+    }
+    const fetchedData = await fetchImageDataUrl(url);
+    if (fetchedData) {
+      return fetchedData;
+    }
+    return gmRequestImageDataUrl(url);
+  }
+
+  function inlineImageDataUrl(image) {
+    const raw = image.currentSrc || image.src || "";
+    return isImageDataUrl(raw) ? raw : "";
+  }
+
+  function canvasImageDataUrl(image) {
+    if (!(image instanceof HTMLImageElement) || !image.complete || !image.naturalWidth || !image.naturalHeight) {
+      return "";
+    }
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const context = canvas.getContext("2d");
+      if (!context) {
+        return "";
+      }
+      context.drawImage(image, 0, 0);
+      return canvas.toDataURL("image/png");
+    } catch (_error) {
+      return "";
+    }
+  }
+
+  async function fetchImageDataUrl(url) {
+    try {
+      const response = await fetch(url, {
+        credentials: "include",
+        cache: "force-cache",
+      });
+      if (!response.ok) {
+        return "";
+      }
+      const blob = await response.blob();
+      if (!blob.type.startsWith("image/") || blob.size > MAX_IMAGE_BYTES) {
+        return "";
+      }
+      return blobToDataUrl(blob);
+    } catch (_error) {
+      return "";
+    }
+  }
+
+  function gmRequestImageDataUrl(url) {
+    if (typeof GM_xmlhttpRequest !== "function") {
+      return Promise.resolve("");
+    }
+    return new Promise((resolve) => {
+      GM_xmlhttpRequest({
+        method: "GET",
+        url,
+        responseType: "arraybuffer",
+        headers: {
+          Referer: window.location.href,
+        },
+        timeout: 20000,
+        onload: (response) => {
+          try {
+            const mime = headerValue(response.responseHeaders || "", "content-type").split(";")[0].trim().toLowerCase();
+            const buffer = response.response;
+            if (!mime.startsWith("image/") || !buffer || buffer.byteLength > MAX_IMAGE_BYTES) {
+              resolve("");
+              return;
+            }
+            resolve(`data:${mime};base64,${arrayBufferToBase64(buffer)}`);
+          } catch (_error) {
+            resolve("");
+          }
+        },
+        onerror: () => resolve(""),
+        ontimeout: () => resolve(""),
+      });
+    });
+  }
+
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(new Error("read blob failed"));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function arrayBufferToBase64(buffer) {
+    let binary = "";
+    const bytes = new Uint8Array(buffer);
+    const chunkSize = 0x8000;
+    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+      const chunk = bytes.subarray(offset, offset + chunkSize);
+      binary += String.fromCharCode(...chunk);
+    }
+    return btoa(binary);
+  }
+
+  function headerValue(headers, name) {
+    const pattern = new RegExp(`^${name}:\\s*(.+)$`, "im");
+    const match = String(headers || "").match(pattern);
+    return match ? match[1] : "";
+  }
+
+  function isImageDataUrl(value) {
+    return /^data:image\/[-+.\w]+;base64,/i.test(String(value || "").trim());
   }
 
   function answerLabels(answer) {

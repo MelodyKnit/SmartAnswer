@@ -6,8 +6,10 @@ from typing import Any
 
 from ..input_anomalies import (
     CHOICE_TYPES,
+    is_image_data_url,
     has_placeholder_options,
     is_image_url,
+    normalize_image_data_urls,
     normalize_image_urls,
 )
 from ..models import QuestionQuery
@@ -28,7 +30,11 @@ def build_query_from_mapping(params: dict[str, list[str]]) -> QuestionQuery:
         options=options,
         question_type=question_type,
         request_id=request_id,
+        page_url=first_value(params, "page_url") or None,
         image_urls=image_urls,
+        image_data_urls=normalize_image_data_urls(
+            split_raw_values(first_value(params, "image_data_urls"))
+        ),
     )
 
 
@@ -45,8 +51,11 @@ def build_query_from_payload(payload: QueryPayload | dict[str, Any]) -> Question
             ),
             question_type=str(question_type),
             request_id=payload.request_id,
+            page_url=payload.page_url,
             image_urls=normalize_image_urls(payload.image_urls, (title,)),
+            image_data_urls=normalize_image_data_urls(payload.image_data_urls),
             option_image_urls=normalize_option_image_urls(payload.option_image_urls),
+            option_image_data_urls=normalize_option_image_data_urls(payload.option_image_data_urls),
         )
     raw_options = payload.get("options") or ()
     title = str(payload.get("title") or "")
@@ -56,8 +65,13 @@ def build_query_from_payload(payload: QueryPayload | dict[str, Any]) -> Question
         options=sanitize_query_options(title, question_type, options_from_raw(raw_options)),
         question_type=question_type,
         request_id=payload.get("request_id"),
+        page_url=payload.get("page_url"),
         image_urls=normalize_image_urls(payload.get("image_urls") or (), (title,)),
+        image_data_urls=normalize_image_data_urls(payload.get("image_data_urls") or ()),
         option_image_urls=normalize_option_image_urls(payload.get("option_image_urls") or {}),
+        option_image_data_urls=normalize_option_image_data_urls(
+            payload.get("option_image_data_urls") or {}
+        ),
     )
 
 
@@ -140,6 +154,20 @@ def normalize_option_image_urls(raw_value: object) -> dict[str, str]:
         urls = normalize_image_urls((value,))
         if len(label) == 1 and "A" <= label <= "Z" and urls:
             result[label] = urls[0]
+    return result
+
+
+def normalize_option_image_data_urls(raw_value: object) -> dict[str, str]:
+    """标准化选项图片 data URL 映射，只保留 A-Z 标签。"""
+
+    if not isinstance(raw_value, dict):
+        return {}
+    result: dict[str, str] = {}
+    for key, value in raw_value.items():
+        label = str(key or "").strip().upper()
+        text = str(value or "").strip()
+        if len(label) == 1 and "A" <= label <= "Z" and is_image_data_url(text):
+            result[label] = text
     return result
 
 

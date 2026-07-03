@@ -13,7 +13,11 @@ from dataclasses import dataclass
 
 from ...http_client import HttpClientError, normalize_container_loopback_url, request_text
 from ...image_ocr import build_ocr_query
-from ...input_anomalies import model_answer_indicates_unreadable_image, normalize_image_urls
+from ...input_anomalies import (
+    model_answer_indicates_unreadable_image,
+    normalize_image_data_urls,
+    normalize_image_urls,
+)
 from ...models import ModelAnswer, QuestionQuery
 from ...logger import log_event
 from ...question_types import is_open_text_completion
@@ -220,7 +224,13 @@ class OpenAICompatibleProvider:
                 "title": query.title,
                 "options_count": len(query.options),
                 "evidence_count": len(evidence),
-                "image_count": len(normalize_image_urls(query.image_urls, query.option_image_urls.values())),
+                "image_count": len(
+                    normalize_image_data_urls(
+                        query.image_data_urls,
+                        query.option_image_data_urls.values(),
+                    )
+                    or normalize_image_urls(query.image_urls, query.option_image_urls.values())
+                ),
             },
         )
         started = time.time()
@@ -501,12 +511,15 @@ class OpenAICompatibleProvider:
     def _message_content(self, query: QuestionQuery, prompt: str) -> str | list[dict]:
         """按 OpenAI 兼容多模态格式构造用户消息内容。"""
 
-        image_urls = normalize_image_urls(query.image_urls, query.option_image_urls.values())
-        if not image_urls:
+        image_refs = normalize_image_data_urls(
+            query.image_data_urls,
+            query.option_image_data_urls.values(),
+        ) or normalize_image_urls(query.image_urls, query.option_image_urls.values())
+        if not image_refs:
             return prompt
         content: list[dict] = [{"type": "text", "text": prompt}]
-        for url in image_urls[:6]:
-            content.append({"type": "image_url", "image_url": {"url": url}})
+        for item in image_refs[:6]:
+            content.append({"type": "image_url", "image_url": {"url": item}})
         return content
 
 

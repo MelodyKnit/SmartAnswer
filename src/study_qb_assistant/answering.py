@@ -10,6 +10,7 @@ from typing import Protocol
 
 from .llm.cache import CachedLlmAnswer, LlmAnswerCache, cache_key
 from .llm.cache.support import cache_candidate_for_answer
+from .image_ocr import build_model_query
 from .answer_reuse import NON_REUSABLE_STATUS, decide_answer_reuse
 from .answer_quality import direct_known_answer, is_cache_safe_answer, repair_model_answer
 from .input_anomalies import (
@@ -375,11 +376,12 @@ class AnswerService:
         max_attempts = max(1, self.answer_retry_times + 1)
         last_error: Exception | None = None
         attempts = 0
+        model_query = build_model_query(query)
         for attempt in range(1, max_attempts + 1):
             attempts = attempt
             try:
-                answer = self.model_provider.answer(query)
-                return repair_model_answer(answer.source_query or query, answer), attempt
+                answer = self.model_provider.answer(model_query)
+                return repair_model_answer(answer.source_query or model_query, answer), attempt
             except Exception as exc:
                 last_error = exc
                 if attempt >= max_attempts:
@@ -387,8 +389,8 @@ class AnswerService:
                 log_event(
                     "answer_retry",
                     {
-                        "request_id": query.request_id,
-                        "title": query.title,
+                        "request_id": model_query.request_id,
+                        "title": model_query.title,
                         "provider": self.model_provider.provider_name,
                         "attempt": attempt,
                         "max_retries": self.answer_retry_times,
