@@ -119,6 +119,21 @@ class UnreadableImageProvider:
         )
 
 
+class ImageAccessErrorProvider:
+    """模拟模型在读取图片前就抛出文件访问异常。"""
+
+    provider_name = "image-access-error-provider"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def answer(self, query: QuestionQuery) -> ModelAnswer:
+        self.calls += 1
+        raise RuntimeError(
+            "model provider request failed: HTTP 500: failed to download file, status code: 403"
+        )
+
+
 class AnswerServiceTests(unittest.TestCase):
     """测试 AnswerService 答题编排服务的测试类。"""
 
@@ -672,6 +687,30 @@ class AnswerServiceTests(unittest.TestCase):
         self.assertEqual(stored[0].metadata["source_image_urls"], "https://example.com/question.jpg")
         self.assertNotIn("https://example.com/question.jpg", {record.title_raw for record in all_records})
         self.assertEqual(cache.get_trusted(parsed_query).candidate_answer, "A")
+
+    def test_image_provider_error_is_mapped_to_unreadable_image(self) -> None:
+        """图片题若在模型请求阶段就报下载失败，应收敛成输入异常而不是 MODEL_ERROR。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            provider = ImageAccessErrorProvider()
+            repository = SqlAlchemyQuestionRepository(Path(temp_dir) / "questions.sqlite3")
+            service = AnswerService(
+                LocalQuestionIndex(()),
+                model_provider=provider,
+                allow_model_fallback=True,
+            )
+            service.question_repository = repository
+            result = service.query(
+                QuestionQuery(
+                    title="https://example.com/blocked.jpg",
+                    image_urls=("https://example.com/blocked.jpg",),
+                    question_type="single",
+                )
+            )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.resolution_mode, "input_anomaly")
+        self.assertEqual(result.error_code, "IMAGE_UNREADABLE")
+        self.assertIn("unreadable_image", result.debug["input_flags"])
 
 
 def _service_with_cmmlu(

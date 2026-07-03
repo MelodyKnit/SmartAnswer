@@ -161,6 +161,27 @@ def model_answer_indicates_unreadable_image(query: QuestionQuery, answer: ModelA
     return answer.confidence < 0.3 or any(marker in combined for marker in unreadable_markers)
 
 
+def provider_error_indicates_unreadable_image(query: QuestionQuery, error: Exception) -> bool:
+    """识别图片题在模型请求阶段就因图片不可读而失败的异常。"""
+
+    if not normalize_image_urls(query.image_urls, (query.title,)):
+        return False
+    combined = str(error or "").casefold()
+    unreadable_markers = (
+        "can't access the image",
+        "cannot access the image",
+        "failed to download file",
+        "error getting file type",
+        "image unreadable",
+        "无法访问图片",
+        "无法查看图片",
+        "看不到图片",
+        "count_token_failed",
+        "status code: 403",
+    )
+    return any(marker in combined for marker in unreadable_markers)
+
+
 def result_from_input_anomaly(query: QuestionQuery, anomaly: InputAnomaly) -> QueryResult:
     """把输入异常转换为统一 QueryResult，供 API 与 usage log 共用。"""
 

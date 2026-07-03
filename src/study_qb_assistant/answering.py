@@ -16,6 +16,7 @@ from .input_anomalies import (
     analyze_query_input,
     model_answer_indicates_unreadable_image,
     normalize_image_urls,
+    provider_error_indicates_unreadable_image,
     result_from_input_anomaly,
     InputAnomaly,
 )
@@ -230,6 +231,19 @@ class AnswerService:
             # 调用大模型并对模型返回的结果进行后处理修复
             model_answer, attempts = self._retry_model_answer(query)
         except Exception as exc:
+            if provider_error_indicates_unreadable_image(query, exc):
+                return result_from_input_anomaly(
+                    query,
+                    InputAnomaly(
+                        code="IMAGE_UNREADABLE",
+                        message="图片题无法可靠识别，未返回可填答案",
+                        flags=("unreadable_image",),
+                        context={
+                            "provider": self.model_provider.provider_name,
+                            "reason": str(exc),
+                        },
+                    ),
+                )
             # 大模型接口异常时，返回明确的报错结果并标记需要审核
             return QueryResult(
                 ok=False,
