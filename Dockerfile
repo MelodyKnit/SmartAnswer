@@ -29,6 +29,7 @@ RUN pip install --no-cache-dir --upgrade pip -i https://pypi.tuna.tsinghua.edu.c
         playwright \
         psycopg[binary] \
         python-dotenv \
+        rapidocr-onnxruntime \
         rapidfuzz \
         redis \
         sqlalchemy \
