@@ -14,7 +14,12 @@ from ...context import (
     require_permissions,
     require_roles,
 )
-from ...query_parser import build_query_from_payload, sanitize_query_options, split_options
+from ...query_parser import (
+    build_query_from_payload,
+    sanitize_query_options,
+    split_options,
+    split_raw_values,
+)
 from ...route_support import (
     base_url_from_request,
     debug_events_payload,
@@ -108,6 +113,7 @@ def build_query_router() -> APIRouter:
         options: str = "",
         question_type: str = Query("unknown", alias="type"),
         request_id: str | None = None,
+        image_urls: str = "",
     ) -> JSONResponse:
         denied = guard_protected_request(request)
         if denied:
@@ -120,6 +126,7 @@ def build_query_router() -> APIRouter:
                 ),
                 type=question_type,
                 request_id=request_id,
+                image_urls=split_raw_values(image_urls),
             )
         )
         return run_lookup(
@@ -156,6 +163,7 @@ def build_query_router() -> APIRouter:
         options: str = "",
         question_type: str = Query("unknown", alias="type"),
         request_id: str | None = None,
+        image_urls: str = "",
     ) -> JSONResponse:
         denied = guard_protected_request(request)
         if denied:
@@ -168,6 +176,7 @@ def build_query_router() -> APIRouter:
                 ),
                 type=question_type,
                 request_id=request_id,
+                image_urls=split_raw_values(image_urls),
             )
         )
         return run_lookup(

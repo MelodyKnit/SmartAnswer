@@ -12,6 +12,13 @@ from .llm.cache import CachedLlmAnswer, LlmAnswerCache, cache_key
 from .llm.cache.support import cache_candidate_for_answer
 from .answer_reuse import NON_REUSABLE_STATUS, decide_answer_reuse
 from .answer_quality import direct_known_answer, is_cache_safe_answer, repair_model_answer
+from .input_anomalies import (
+    analyze_query_input,
+    model_answer_indicates_unreadable_image,
+    normalize_image_urls,
+    result_from_input_anomaly,
+    InputAnomaly,
+)
 from .models import CanonicalQuestionRecord, ModelAnswer, QueryResult, QuestionQuery
 from .llm.providers import ModelProvider
 from .search import LocalQuestionIndex
@@ -102,6 +109,10 @@ class AnswerService:
         direct_answer = direct_known_answer(query) if self.allow_known_rules else None
         if direct_answer is not None:
             return self._result_from_direct_answer(query, direct_answer)
+
+        input_anomaly = analyze_query_input(query)
+        if input_anomaly is not None:
+            return result_from_input_anomaly(query, input_anomaly)
 
         # 步骤 3：尝试匹配已经过多次验证的受信任 LLM 自动沉淀记录
         cached_answer = (
@@ -237,11 +248,23 @@ class AnswerService:
                 },
             )
 
+        if model_answer_indicates_unreadable_image(query, model_answer):
+            return result_from_input_anomaly(
+                query,
+                InputAnomaly(
+                    code="IMAGE_UNREADABLE",
+                    message="图片题无法可靠识别，未返回可填答案",
+                    flags=("unreadable_image",),
+                    context={"provider": self.model_provider.provider_name},
+                ),
+            )
+
+        answer_query = model_answer.source_query or query
         confidence = max(0.0, min(model_answer.confidence, 1.0))
         cache_entry = None
         cache_status = "disabled"
         reuse_decision = decide_answer_reuse(
-            query,
+            answer_query,
             answer_text=model_answer.answer_text,
             candidate_answer=model_answer.candidate_answer,
             reuse_policy=model_answer.reuse_policy,
@@ -249,13 +272,18 @@ class AnswerService:
             reuse_reason=model_answer.reuse_reason,
             reuse_confidence=model_answer.reuse_confidence,
         )
+        image_context_without_text = _is_image_context_without_text_snapshot(answer_query)
         safe_for_question_bank = reuse_decision.reusable and is_cache_safe_answer(
-            query, model_answer
+            answer_query, model_answer
         )
+        if image_context_without_text:
+            safe_for_question_bank = False
         has_answer_content = bool(
             str(model_answer.candidate_answer or "").strip()
             or str(model_answer.answer_text or "").strip()
         )
+        if image_context_without_text:
+            has_answer_content = False
         learned_status = reuse_decision.status if not reuse_decision.reusable else (
             "trusted"
             if safe_for_question_bank and confidence >= self.trusted_confidence_threshold
@@ -264,11 +292,12 @@ class AnswerService:
         learned_record = None
         if has_answer_content:
             learned_record = self._persist_model_answer_record(
-                query,
+                answer_query,
                 model_answer,
                 status=learned_status,
                 reuse_policy=reuse_decision.policy,
                 reuse_tags=reuse_decision.tags,
+                original_query=query,
             )
             if (
                 safe_for_question_bank
@@ -279,7 +308,7 @@ class AnswerService:
         # 校验模型答案是否满足内部一致性条件，若安全则尝试进行持久化缓存
         if self.llm_answer_cache is not None and safe_for_question_bank:
             cache_entry = self.llm_answer_cache.record_model_answer(
-                query,
+                answer_query,
                 model_answer,
                 provider_name=self.model_provider.provider_name,
                 force_trusted=learned_status == "trusted" and self.question_repository is not None,
@@ -291,6 +320,8 @@ class AnswerService:
             cache_status = (
                 "non_reusable_not_cached"
                 if learned_status == NON_REUSABLE_STATUS
+                else "image_context_not_cached"
+                if image_context_without_text
                 else "unsafe_not_cached"
             )
         return QueryResult(
@@ -317,6 +348,8 @@ class AnswerService:
                 "llm_cache_status": cache_status,
                 "question_bank_status": learned_status if has_answer_content else "no_answer",
                 "reuse_policy": reuse_decision.policy,
+                "image_context_not_cached": str(image_context_without_text).lower(),
+                "answer_source_title": answer_query.title,
                 "retry_attempts": str(attempts),
             },
         )
@@ -332,7 +365,7 @@ class AnswerService:
             attempts = attempt
             try:
                 answer = self.model_provider.answer(query)
-                return repair_model_answer(query, answer), attempt
+                return repair_model_answer(answer.source_query or query, answer), attempt
             except Exception as exc:
                 last_error = exc
                 if attempt >= max_attempts:
@@ -422,6 +455,7 @@ class AnswerService:
         status: str,
         reuse_policy: str = "reusable",
         reuse_tags: tuple[str, ...] = (),
+        original_query: QuestionQuery | None = None,
     ):
         """把结构化 AI 答案写入题库仓储，并按状态决定后续是否可命中。"""
 
@@ -449,11 +483,19 @@ class AnswerService:
             updated_at=now,
         )
         record = entry.to_record()
-        if reuse_tags or reuse_policy != "reusable":
+        if reuse_tags or reuse_policy != "reusable" or original_query is not None:
             payload = record.to_dict()
             metadata = dict(record.metadata)
             metadata["reuse_policy"] = reuse_policy
             metadata["status"] = status
+            if original_query is not None:
+                image_urls = normalize_image_urls(
+                    original_query.image_urls,
+                    (original_query.title,),
+                    original_query.option_image_urls.values(),
+                )
+                if image_urls:
+                    metadata["source_image_urls"] = "#".join(image_urls)
             if answer.question_form:
                 metadata["question_form"] = answer.question_form
             if answer.reuse_reason:
@@ -468,3 +510,11 @@ class AnswerService:
         except Exception:
             return None
         return record
+
+
+def _is_image_context_without_text_snapshot(query: QuestionQuery) -> bool:
+    """图片题没有 OCR 文本快照时，不把 URL 题干沉淀为可复用题。"""
+
+    if not normalize_image_urls(query.image_urls, (query.title,)):
+        return False
+    return not str(query.title or "").strip() or bool(normalize_image_urls((query.title,)))

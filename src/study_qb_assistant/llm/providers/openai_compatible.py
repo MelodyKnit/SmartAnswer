@@ -12,6 +12,8 @@ import time
 from dataclasses import dataclass
 
 from ...http_client import HttpClientError, normalize_container_loopback_url, request_text
+from ...image_ocr import build_ocr_query
+from ...input_anomalies import model_answer_indicates_unreadable_image, normalize_image_urls
 from ...models import ModelAnswer, QuestionQuery
 from ...logger import log_event
 from ...question_types import is_open_text_completion
@@ -189,6 +191,7 @@ class OpenAICompatibleProvider:
             evidence=evidence,
             verification_answer=verification_answer,
         )
+        user_content = self._message_content(query, prompt)
         # 构建请求载荷
         payload = {
             "model": self.model,
@@ -202,7 +205,7 @@ class OpenAICompatibleProvider:
                 },
                 {
                     "role": "user",
-                    "content": prompt,
+                    "content": user_content,
                 },
             ],
         }
@@ -217,6 +220,7 @@ class OpenAICompatibleProvider:
                 "title": query.title,
                 "options_count": len(query.options),
                 "evidence_count": len(evidence),
+                "image_count": len(normalize_image_urls(query.image_urls, query.option_image_urls.values())),
             },
         )
         started = time.time()
@@ -233,6 +237,30 @@ class OpenAICompatibleProvider:
                 setattr(exc, "stqb_response_preview", content[:1000])
                 raise
             elapsed_ms = round((time.time() - started) * 1000, 2)
+            if model_answer_indicates_unreadable_image(query, answer) and not phase.endswith(
+                "_ocr_fallback"
+            ):
+                self._record_model_trace(
+                    phase=phase,
+                    query=query,
+                    prompt=prompt,
+                    response_text=content,
+                    answer=answer,
+                    ok=False,
+                    error="model returned unreadable image answer",
+                    elapsed_ms=elapsed_ms,
+                )
+                ocr_query = build_ocr_query(query)
+                if ocr_query is not None:
+                    ocr_answer = self._answer(
+                        ocr_query,
+                        evidence=evidence,
+                        verification_answer=verification_answer,
+                        phase=f"{phase}_ocr_fallback",
+                    )
+                    if ocr_answer.source_query is None:
+                        ocr_answer.source_query = ocr_query
+                    return ocr_answer
             self._record_model_trace(
                 phase=phase,
                 query=query,
@@ -269,6 +297,20 @@ class OpenAICompatibleProvider:
                 error=str(exc),
                 elapsed_ms=elapsed_ms,
             )
+            if normalize_image_urls(query.image_urls, (query.title,)) and not phase.endswith(
+                "_ocr_fallback"
+            ):
+                ocr_query = build_ocr_query(query)
+                if ocr_query is not None:
+                    ocr_answer = self._answer(
+                        ocr_query,
+                        evidence=evidence,
+                        verification_answer=verification_answer,
+                        phase=f"{phase}_ocr_fallback",
+                    )
+                    if ocr_answer.source_query is None:
+                        ocr_answer.source_query = ocr_query
+                    return ocr_answer
             raise
 
     def _chat_url(self) -> str:
@@ -455,6 +497,17 @@ class OpenAICompatibleProvider:
             lines.append(f"explanation: {verification_answer.explanation or ''}")
             lines.append(f"confidence: {verification_answer.confidence}")
         return "\n".join(lines)
+
+    def _message_content(self, query: QuestionQuery, prompt: str) -> str | list[dict]:
+        """按 OpenAI 兼容多模态格式构造用户消息内容。"""
+
+        image_urls = normalize_image_urls(query.image_urls, query.option_image_urls.values())
+        if not image_urls:
+            return prompt
+        content: list[dict] = [{"type": "text", "text": prompt}]
+        for url in image_urls[:6]:
+            content.append({"type": "image_url", "image_url": {"url": url}})
+        return content
 
 
 # 为兼容现有测试与局部旧调用，保留最薄私有别名层。

@@ -114,6 +114,7 @@ class UsageLogEntity(Base):
     source_type: Mapped[str] = mapped_column(String(64), default="")
     source_id: Mapped[str] = mapped_column(String(128), default="")
     source_url: Mapped[str] = mapped_column(Text, default="")
+    context_json: Mapped[str] = mapped_column(Text, default="{}")
 
 
 class FeedbackEntity(Base):

@@ -87,6 +87,8 @@ function openDetail(row: UsageLog) {
 
 /** 解析使用记录里保存的「当时选项」（后端以 JSON 字符串数组持久化）。 */
 const detailOptions = computed<string[]>(() => {
+  const contextOptions = detail.value?.context?.options
+  if (Array.isArray(contextOptions)) return contextOptions.map((item) => String(item))
   const raw = detail.value?.options
   if (!raw) return []
   if (Array.isArray(raw)) return raw.map((item) => String(item))
@@ -96,6 +98,16 @@ const detailOptions = computed<string[]>(() => {
   } catch {
     return []
   }
+})
+
+const detailImageUrls = computed<string[]>(() => {
+  const urls = detail.value?.context?.image_urls
+  return Array.isArray(urls) ? urls.map((item) => String(item)).filter(Boolean) : []
+})
+
+const detailInputFlags = computed<string[]>(() => {
+  const flags = detail.value?.context?.input_flags
+  return Array.isArray(flags) ? flags.map((item) => String(item)).filter(Boolean) : []
 })
 
 /* 反馈 */
@@ -284,6 +296,23 @@ onMounted(() => {
           <div class="mb-1 text-ink-muted">题目</div>
           <p class="whitespace-pre-wrap rounded-lg bg-card-soft p-3 text-ink">{{ detail.title || '—' }}</p>
         </div>
+        <div v-if="detailInputFlags.length" class="rounded-lg border border-warning/30 bg-warning/10 p-3">
+          <div class="mb-2 text-sm font-semibold text-warning">输入异常</div>
+          <div class="flex flex-wrap gap-2">
+            <el-tag
+              v-for="flag in detailInputFlags"
+              :key="flag"
+              size="small"
+              type="warning"
+              effect="light"
+            >
+              {{ flag }}
+            </el-tag>
+          </div>
+          <p v-if="detail.context?.error_message" class="mt-2 text-ink-muted">
+            {{ detail.context.error_message }}
+          </p>
+        </div>
         <div v-if="detailOptions.length">
           <div class="mb-1 text-ink-muted">选项（搜题当时）</div>
           <ul class="space-y-1 rounded-lg bg-card-soft p-3">
@@ -293,6 +322,18 @@ onMounted(() => {
               class="text-ink"
             >
               {{ opt }}
+            </li>
+          </ul>
+        </div>
+        <div v-if="detailImageUrls.length">
+          <div class="mb-1 text-ink-muted">图片上下文</div>
+          <ul class="space-y-1 rounded-lg bg-card-soft p-3">
+            <li
+              v-for="url in detailImageUrls"
+              :key="url"
+              class="break-all text-ink"
+            >
+              {{ url }}
             </li>
           </ul>
         </div>

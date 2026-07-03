@@ -40,6 +40,11 @@ def to_ocs_response(result: QueryResult) -> dict:
                     "confidence": result.confidence,
                     "resolution_mode": result.resolution_mode,
                     "error_code": result.error_code,
+                    "input_flags": [
+                        flag
+                        for flag in str(result.debug.get("input_flags", "")).split(",")
+                        if flag
+                    ],
                 },
             },
         }

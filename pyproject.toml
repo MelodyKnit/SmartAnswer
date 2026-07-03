@@ -1,12 +1,13 @@
 [project]
 name = "study-question-bank-assistant"
-version = "0.1.12"
+version = "0.1.13"
 description = "Study-oriented question-bank ingestion and retrieval foundation."
 requires-python = ">=3.13"
 dependencies = [
   "fastapi",
   "httpx",
   "python-dotenv",
+  "rapidocr-onnxruntime",
   "rapidfuzz",
   "redis",
   "sqlalchemy",

@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class QueryPayload(BaseModel):
@@ -18,6 +18,8 @@ class QueryPayload(BaseModel):
     type: str | None = None
     question_type: str | None = None
     request_id: str | None = None
+    image_urls: list[str] | tuple[str, ...] = Field(default_factory=tuple)
+    option_image_urls: dict[str, str] = Field(default_factory=dict)
 
 
 class RegisterPayload(BaseModel):

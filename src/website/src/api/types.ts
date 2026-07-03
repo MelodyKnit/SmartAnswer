@@ -74,6 +74,15 @@ export interface UsageLog {
   created_at: number
   request_id?: string
   options?: string | string[] | null
+  context?: {
+    options?: string[]
+    image_urls?: string[]
+    option_image_urls?: Record<string, string>
+    input_flags?: string[]
+    error_code?: string | null
+    error_message?: string | null
+  }
+  context_json?: string
   question_id?: string | null
   source_name?: string
   source_type?: string
@@ -377,7 +386,13 @@ export interface LlmCallTrace {
 export interface QueryResultPayload {
   ok: true
   request_id: string | null
-  query: { title: string; type: string; options: string[] }
+  query: {
+    title: string
+    type: string
+    options: string[]
+    image_urls?: string[]
+    option_image_urls?: Record<string, string>
+  }
   result: {
     candidate_answer: string | null
     answer_text: string | null

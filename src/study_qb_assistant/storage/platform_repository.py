@@ -108,6 +108,7 @@ class SqlAlchemyPlatformRepository:
                 source_type=record.source_type,
                 source_id=record.source_id,
                 source_url=record.source_url,
+                context_json=record.context_json,
             )
             session.add(entity)
             session.commit()
@@ -141,6 +142,7 @@ class SqlAlchemyPlatformRepository:
                 source_type=record.source_type,
                 source_id=record.source_id,
                 source_url=record.source_url,
+                context_json=record.context_json,
             )
             session.add(entity)
             if token_id:
@@ -214,6 +216,7 @@ class SqlAlchemyPlatformRepository:
                 source_type=record.source_type,
                 source_id=record.source_id,
                 source_url=record.source_url,
+                context_json=record.context_json,
             )
             session.add(entity)
             if token_entity is not None:
@@ -899,6 +902,7 @@ class SqlAlchemyPlatformRepository:
             source_type=str(getattr(entity, "source_type", "") or ""),
             source_id=str(getattr(entity, "source_id", "") or ""),
             source_url=str(getattr(entity, "source_url", "") or ""),
+            context_json=str(getattr(entity, "context_json", "{}") or "{}"),
         )
 
     def _feedback_record(self, entity: FeedbackEntity) -> FeedbackRecord:

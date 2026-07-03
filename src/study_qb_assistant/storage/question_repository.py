@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from sqlalchemy import func, or_, select
 
 from ..answer_reuse import NON_REUSABLE_STATUS, record_should_be_indexable_by_reuse_policy
+from ..input_anomalies import normalize_image_urls
 from ..models import CanonicalQuestionRecord
 from ..normalization import normalize_text
 from ..search import LocalQuestionIndex
@@ -592,6 +593,8 @@ def question_status_is_indexable(status: str) -> bool:
 def question_record_is_indexable(record: CanonicalQuestionRecord) -> bool:
     """判断题库记录是否允许进入本地命中和 RAG 召回集合。"""
 
+    if normalize_image_urls((record.title_raw,)):
+        return False
     return question_status_is_indexable(
         question_record_status(record)
     ) and record_should_be_indexable_by_reuse_policy(record)

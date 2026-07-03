@@ -30,6 +30,7 @@ const ANSWER_SOURCE_LABELS: Record<string, string> = {
   llm_fallback: 'LLM 兜底',
   fallback: '兜底',
   model_error: '模型错误',
+  input_anomaly: '输入异常',
   not_found: '未命中',
 }
 

@@ -129,12 +129,16 @@ class QuestionQuery:
         options: 待查询题目的选项列表（元组），默认为空。
         question_type: 题目类型（例如 "single", "multiple" 等），默认为 "unknown"。
         request_id: 请求流水号或标识符，便于追踪，默认为 None。
+        image_urls: 题干图片链接列表，仅作为答题上下文，不作为可复用题干本体。
+        option_image_urls: 选项标签到图片链接的映射，仅作为答题上下文。
     """
 
     title: str
     options: tuple[str, ...] = ()
     question_type: str = "unknown"
     request_id: str | None = None
+    image_urls: tuple[str, ...] = ()
+    option_image_urls: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -180,10 +184,18 @@ class QueryResult:
             return {
                 "ok": False,
                 "request_id": self.query.request_id,
+                "query": {
+                    "title": self.query.title,
+                    "type": self.query.question_type,
+                    "options": list(self.query.options),
+                    "image_urls": list(self.query.image_urls),
+                    "option_image_urls": dict(self.query.option_image_urls),
+                },
                 "error": {
                     "code": self.error_code or "QUERY_FAILED",
                     "message": self.error_message or "query failed",
                 },
+                "debug": dict(self.debug),
             }
 
         # 决议成功时返回包含查询本身、答案结果、数据源列表及调试信息的完整结构
@@ -194,6 +206,8 @@ class QueryResult:
                 "title": self.query.title,
                 "type": self.query.question_type,
                 "options": list(self.query.options),
+                "image_urls": list(self.query.image_urls),
+                "option_image_urls": dict(self.query.option_image_urls),
             },
             "result": {
                 "candidate_answer": self.candidate_answer,
@@ -225,6 +239,7 @@ class ModelAnswer:
         reuse_policy: 模型建议的答案复用策略，不直接绕过服务端护栏。
         reuse_reason: 模型给出复用策略的简短原因。
         reuse_confidence: 模型对复用策略判断的置信度评分（0.0 ~ 1.0）。
+        source_query: 模型实际依据的题目文本，通常用于 OCR 成功后的题库沉淀。
     """
 
     candidate_answer: str | None
@@ -235,6 +250,7 @@ class ModelAnswer:
     reuse_policy: str | None = None
     reuse_reason: str | None = None
     reuse_confidence: float | None = None
+    source_query: QuestionQuery | None = None
 
 
 def _float_metadata(value: object) -> float:

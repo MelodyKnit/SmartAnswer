@@ -11,6 +11,7 @@ from pathlib import Path
 from ..answer_reuse import record_should_be_indexable_by_reuse_policy
 from ..auth import AuthError
 from ..exporting import write_jsonl
+from ..input_anomalies import normalize_image_urls
 from ..models import CanonicalQuestionRecord, QueryResult, QuestionQuery
 from .matching import MatchCandidate, QuestionMatcher
 from .support import float_from_metadata, is_ai_record, read_jsonl_records
@@ -157,7 +158,10 @@ class LocalQuestionIndex:
         """返回允许参与自动命中的题库记录。"""
 
         return tuple(
-            record for record in self.records if record_should_be_indexable_by_reuse_policy(record)
+            record
+            for record in self.records
+            if not normalize_image_urls((record.title_raw,))
+            and record_should_be_indexable_by_reuse_policy(record)
         )
 
     def status(self) -> dict:

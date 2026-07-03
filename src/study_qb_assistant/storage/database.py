@@ -119,6 +119,7 @@ def ensure_sqlite_compat_columns(engine: Engine) -> None:
             "source_type": "TEXT DEFAULT ''",
             "source_id": "TEXT DEFAULT ''",
             "source_url": "TEXT DEFAULT ''",
+            "context_json": "TEXT DEFAULT '{}'",
         },
         "questions": {
             "title_normalized": "TEXT DEFAULT ''",
@@ -197,6 +198,7 @@ def ensure_sql_compat_columns(engine: Engine) -> None:
             "source_type": "VARCHAR(64) DEFAULT ''",
             "source_id": "VARCHAR(128) DEFAULT ''",
             "source_url": "TEXT DEFAULT ''",
+            "context_json": "TEXT DEFAULT '{}'",
         },
         "feedbacks": {
             "category": "VARCHAR(64) DEFAULT 'answer'",

@@ -257,6 +257,8 @@ class PlatformService:
 
     def calculate_points_cost(self, resolution_mode: str) -> int:
         """根据查题命中方式计算本次调用的积分消耗。"""
+        if resolution_mode == "input_anomaly":
+            return 0
         billing = self.get_billing()
         if resolution_mode == "llm_fallback":
             return billing["llm_fallback"]
@@ -336,6 +338,7 @@ class PlatformService:
         source_type: str = "",
         source_id: str = "",
         source_url: str = "",
+        context_json: str = "{}",
     ) -> dict:
         """记录一次查题调用的审计日志。"""
         record = UsageLogRecord(
@@ -358,6 +361,7 @@ class PlatformService:
             source_type=source_type.strip(),
             source_id=source_id.strip(),
             source_url=source_url.strip(),
+            context_json=context_json,
         )
         with self._lock:
             self.repository.commit_usage_transaction(

@@ -1,6 +1,6 @@
 # API 契约
 
-更新时间：`2026-06-08`
+更新时间：`2026-07-03`
 
 ## 1. 目的
 
@@ -62,6 +62,12 @@
     "D. 4"
   ],
   "type": "single",
+  "image_urls": [
+    "https://example.com/question.png"
+  ],
+  "option_image_urls": {
+    "A": "https://example.com/a.png"
+  },
   "subject": "math",
   "source_context": "practice_set_a",
   "tags": ["arithmetic", "basic"],
@@ -79,7 +85,9 @@
   "query": {
     "title": "1+2 = ?",
     "type": "single",
-    "options": ["A. 1", "B. 2", "C. 3", "D. 4"]
+    "options": ["A. 1", "B. 2", "C. 3", "D. 4"],
+    "image_urls": [],
+    "option_image_urls": {}
   },
   "result": {
     "candidate_answer": "C",
@@ -112,9 +120,19 @@
 {
   "ok": false,
   "request_id": "demo-001",
+  "query": {
+    "title": "以下哪个零件为标准件____。",
+    "type": "single",
+    "options": [],
+    "image_urls": [],
+    "option_image_urls": {}
+  },
   "error": {
-    "code": "INVALID_REQUEST",
-    "message": "title is required"
+    "code": "INPUT_MISSING_OPTIONS",
+    "message": "题目缺少可匹配选项，无法安全作答"
+  },
+  "debug": {
+    "input_flags": "missing_options_for_choice"
   }
 }
 ```
@@ -125,6 +143,8 @@
 
 - `title`：必填字符串
 - `options`：可选字符串数组；如果需要，在导入期间将字符串输入规范化为数组
+- `image_urls`：可选图片 URL 数组；仅作为图片题上下文，不保存原图二进制
+- `option_image_urls`：可选选项图片映射，键为 `A-Z`
 - `type`：必填枚举；初始值应为 `single`（单选）、`multiple`（多选）、`judgement`（判断）、`completion`（填空）、`unknown`（未知）
 - `subject`：可选字符串
 - `source_context`：可选字符串
@@ -138,8 +158,10 @@
 - `answer_text`：供人工审核的渲染答案
 - `explanation`：简明的原理解释或检索到的解释
 - `confidence`：`0.0` 至 `1.0`
-- `resolution_mode`：`exact_match`（精确匹配）、`fuzzy_match`（模糊匹配）、`rag_match`（RAG 匹配）、`external_source`（外部源）、`llm_normalized`（LLM 规范化）、`fallback`（兜底）
+- `resolution_mode`：`exact_match`（精确匹配）、`fuzzy_match`（模糊匹配）、`rag_match`（RAG 匹配）、`external_source`（外部源）、`llm_normalized`（LLM 规范化）、`llm_fallback`（LLM 兜底）、`input_anomaly`（输入异常）
 - `review_required`：布尔值
+- 选择题无真实选项且本地题库未精确命中时，返回 `INPUT_MISSING_OPTIONS`，不进入 AI 兜底、题库沉淀或 AI 缓存
+- 图片题可通过 `image_urls` 进入多模态模型；多模态失败时尝试 OCR，仍不可读时返回 `IMAGE_UNREADABLE`
 
 ### 3.6 OCS 兼容说明
 
@@ -147,6 +169,8 @@
 - 多选题：`data.answer` 返回 `A#B#C...`
 - 判断题：`data.answer` 返回 `对/错`
 - 单空填空：`data.answer` 返回文本答案
+- 输入异常：返回 `code=1`、`data.answer=null`，`data.ai.error_code` 包含 `INPUT_MISSING_OPTIONS` 或 `IMAGE_UNREADABLE`
+- 官方 OCS 配置只保证传递 `${title}`、`${type}`、`${options}`；图片题完整支持依赖本项目生成或维护的增强导入脚本采集 DOM 图片 URL
 - 多空填空：`data.answer` 返回 JSON 数组字符串，例如 `["第一空","第二空"]`
 
 ## 4. 平台管理接口

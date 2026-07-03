@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..input_anomalies import (
+    CHOICE_TYPES,
+    has_placeholder_options,
+    is_image_url,
+    normalize_image_urls,
+)
 from ..models import QuestionQuery
 from .schemas import QueryPayload
 
@@ -16,8 +22,13 @@ def build_query_from_mapping(params: dict[str, list[str]]) -> QuestionQuery:
         title, question_type, split_options(first_value(params, "options"))
     )
     request_id = first_value(params, "request_id") or None
+    image_urls = normalize_image_urls(split_raw_values(first_value(params, "image_urls")), (title,))
     return QuestionQuery(
-        title=title, options=options, question_type=question_type, request_id=request_id
+        title=title,
+        options=options,
+        question_type=question_type,
+        request_id=request_id,
+        image_urls=image_urls,
     )
 
 
@@ -34,6 +45,8 @@ def build_query_from_payload(payload: QueryPayload | dict[str, Any]) -> Question
             ),
             question_type=str(question_type),
             request_id=payload.request_id,
+            image_urls=normalize_image_urls(payload.image_urls, (title,)),
+            option_image_urls=normalize_option_image_urls(payload.option_image_urls),
         )
     raw_options = payload.get("options") or ()
     title = str(payload.get("title") or "")
@@ -43,6 +56,8 @@ def build_query_from_payload(payload: QueryPayload | dict[str, Any]) -> Question
         options=sanitize_query_options(title, question_type, options_from_raw(raw_options)),
         question_type=question_type,
         request_id=payload.get("request_id"),
+        image_urls=normalize_image_urls(payload.get("image_urls") or (), (title,)),
+        option_image_urls=normalize_option_image_urls(payload.get("option_image_urls") or {}),
     )
 
 
@@ -67,6 +82,15 @@ def split_options(value: str) -> tuple[str, ...]:
     return tuple(part.strip() for part in parts if is_real_option(part))
 
 
+def split_raw_values(value: str) -> tuple[str, ...]:
+    """按 OCS 常见分隔方式拆分普通字段，不套用选项过滤规则。"""
+
+    if not value:
+        return ()
+    parts = value.splitlines() if "\n" in value else value.split("#")
+    return tuple(part.strip() for part in parts if part.strip())
+
+
 def is_real_option(value: str) -> bool:
     """判断字符串是否是真实选项，而不是编辑器脚本残片。"""
     stripped = value.strip()
@@ -89,6 +113,8 @@ def is_real_option(value: str) -> bool:
     lowered = stripped.lower()
     if stripped in {"}", "{", "});", ");", ");}", "};"}:
         return False
+    if is_image_url(stripped):
+        return False
     return not any(marker in lowered for marker in noisy_markers)
 
 
@@ -98,13 +124,31 @@ def sanitize_query_options(
     """按题型清洗选项，避免填空题被错误选项污染。"""
     if is_completion_request(title, question_type):
         return ()
+    if has_placeholder_options(options):
+        return ()
     return options
+
+
+def normalize_option_image_urls(raw_value: object) -> dict[str, str]:
+    """标准化选项图片映射，只保留 A-Z 标签和可识别图片 URL。"""
+
+    if not isinstance(raw_value, dict):
+        return {}
+    result: dict[str, str] = {}
+    for key, value in raw_value.items():
+        label = str(key or "").strip().upper()
+        urls = normalize_image_urls((value,))
+        if len(label) == 1 and "A" <= label <= "Z" and urls:
+            result[label] = urls[0]
+    return result
 
 
 def is_completion_request(title: str, question_type: str) -> bool:
     """判断当前请求是否应按填空题处理。"""
     normalized_type = (question_type or "").strip().lower()
     stripped_title = (title or "").strip()
+    if normalized_type in CHOICE_TYPES or stripped_title.startswith(("单选题", "多选题")):
+        return False
     return (
         normalized_type in {"completion", "blank", "fill", "填空", "填空题"}
         or stripped_title.startswith("填空题")

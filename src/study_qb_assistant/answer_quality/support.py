@@ -54,6 +54,7 @@ def judgement_answer(query: QuestionQuery, answer: ModelAnswer, text: str) -> Mo
         reuse_policy=answer.reuse_policy,
         reuse_reason=answer.reuse_reason,
         reuse_confidence=answer.reuse_confidence,
+        source_query=answer.source_query,
     )
 
 
@@ -76,6 +77,7 @@ def answer_with_labels(
         reuse_policy=answer.reuse_policy,
         reuse_reason=answer.reuse_reason,
         reuse_confidence=answer.reuse_confidence,
+        source_query=answer.source_query,
     )
 
 

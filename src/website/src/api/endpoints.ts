@@ -78,7 +78,7 @@ export const userApi = {
 
 /* ---------------- 在线搜题 ---------------- */
 export const queryApi = {
-  search: (body: { title: string; options?: string[]; type?: string }) =>
+  search: (body: { title: string; options?: string[]; type?: string; image_urls?: string[] }) =>
     api.post<QueryResultPayload>('/query', body),
 }
 

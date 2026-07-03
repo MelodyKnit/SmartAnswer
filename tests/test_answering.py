@@ -101,6 +101,24 @@ class SequenceModelProvider:
         return ModelAnswer("A", "复用答案", "重复确认。", 0.99)
 
 
+class UnreadableImageProvider:
+    """模拟无法读取图片的大模型返回。"""
+
+    provider_name = "unreadable-image-provider"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def answer(self, query: QuestionQuery) -> ModelAnswer:
+        self.calls += 1
+        return ModelAnswer(
+            "I can’t access the image",
+            "I can’t access the image from the provided URL in this environment.",
+            "无法读取图片，不能确定正确选项。",
+            0.08,
+        )
+
+
 class AnswerServiceTests(unittest.TestCase):
     """测试 AnswerService 答题编排服务的测试类。"""
 
@@ -156,6 +174,36 @@ class AnswerServiceTests(unittest.TestCase):
         self.assertEqual(result.resolution_mode, "llm_fallback")
         self.assertTrue(result.review_required)  # 回退到大模型的回答默认需要人工审核
         self.assertEqual(result.sources[0]["source_type"], "model_provider")
+
+    def test_missing_choice_options_stop_before_model_fallback(self) -> None:
+        """本地没有可信命中时，缺少选项的选择题不应交给模型猜测。"""
+        service, provider = _service_with_cmmlu(allow_model_fallback=True)
+
+        result = service.query(
+            QuestionQuery(title="以下哪个零件为标准件____。", question_type="single")
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.resolution_mode, "input_anomaly")
+        self.assertEqual(result.error_code, "INPUT_MISSING_OPTIONS")
+        self.assertEqual(provider.calls, 0)
+
+    def test_placeholder_choice_options_are_treated_as_missing(self) -> None:
+        """A/A、B/B 这类占位选项不能被当作真实选项送入 AI。"""
+        service, provider = _service_with_cmmlu(allow_model_fallback=True)
+
+        result = service.query(
+            QuestionQuery(
+                title="以下哪个零件为标准件____。",
+                options=("A. A", "B. B", "C. C", "D. D"),
+                question_type="single",
+            )
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error_code, "INPUT_MISSING_OPTIONS")
+        self.assertIn("missing_options_for_choice", result.debug["input_flags"])
+        self.assertEqual(provider.calls, 0)
 
     def test_no_local_bank_mode_skips_local_index_and_uses_model_fallback(self) -> None:
         """测试无本地题库模式会跳过本地命中，直接走模型兜底链路。"""
@@ -551,6 +599,79 @@ class AnswerServiceTests(unittest.TestCase):
         self.assertNotEqual(second.resolution_mode, "llm_fallback")
         self.assertEqual(second.candidate_answer, "南方谈话")
         self.assertEqual(provider.calls, 1)
+
+    def test_unreadable_image_answer_is_not_persisted_or_reused(self) -> None:
+        """图片不可读时返回输入异常，不写入题库或 AI 缓存。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            provider = UnreadableImageProvider()
+            repository = SqlAlchemyQuestionRepository(Path(temp_dir) / "questions.sqlite3")
+            service = AnswerService(
+                LocalQuestionIndex(()),
+                model_provider=provider,
+                allow_model_fallback=True,
+            )
+            service.question_repository = repository
+            query = QuestionQuery(
+                title="https://example.com/question.jpg",
+                image_urls=("https://example.com/question.jpg",),
+                question_type="single",
+            )
+
+            result = service.query(query)
+            stored = repository.list_question_records(keyword="example.com")
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.resolution_mode, "input_anomaly")
+        self.assertEqual(result.error_code, "IMAGE_UNREADABLE")
+        self.assertEqual(stored, [])
+        self.assertEqual(provider.calls, 1)
+
+    def test_image_answer_with_text_snapshot_is_persisted_by_parsed_question(self) -> None:
+        """图片题识别成功后，应按解析出的文本题沉淀，而不是按图片 URL 复用。"""
+        parsed_query = QuestionQuery(
+            title="图片识别题干：下列哪个选项正确？",
+            options=("A. 正确选项", "B. 错误选项"),
+            question_type="single",
+        )
+        model_answer = ModelAnswer(
+            "A",
+            "正确选项",
+            "OCR 解析后判断 A 正确。",
+            0.99,
+            source_query=parsed_query,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            provider = SequenceModelProvider((model_answer,))
+            repository = SqlAlchemyQuestionRepository(Path(temp_dir) / "questions.sqlite3")
+            cache = LlmAnswerCache(
+                Path(temp_dir) / "ai-learned.jsonl",
+                min_confidence=0.95,
+                min_confirmations=1,
+            )
+            service = AnswerService(
+                LocalQuestionIndex(()),
+                model_provider=provider,
+                allow_model_fallback=True,
+                llm_answer_cache=cache,
+                trusted_confidence_threshold=0.95,
+            )
+            service.question_repository = repository
+            result = service.query(
+                QuestionQuery(
+                    title="https://example.com/question.jpg",
+                    image_urls=("https://example.com/question.jpg",),
+                    question_type="single",
+                )
+            )
+            stored = repository.list_question_records(keyword="图片识别题干")
+            all_records = repository.list_question_records(keyword="")
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.debug["answer_source_title"], parsed_query.title)
+        self.assertEqual(stored[0].title_raw, parsed_query.title)
+        self.assertEqual(stored[0].metadata["source_image_urls"], "https://example.com/question.jpg")
+        self.assertNotIn("https://example.com/question.jpg", {record.title_raw for record in all_records})
+        self.assertEqual(cache.get_trusted(parsed_query).candidate_answer, "A")
 
 
 def _service_with_cmmlu(

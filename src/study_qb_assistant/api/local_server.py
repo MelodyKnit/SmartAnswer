@@ -72,7 +72,7 @@ def create_app(
         log_event("question_index_load_complete", {"record_count": len(lookup_index.records)})
     if isinstance(lookup, AnswerService):
         lookup.question_repository = question_repository
-    app = FastAPI(title="Study Question Bank Assistant", version="0.1.0")
+    app = FastAPI(title="Study Question Bank Assistant", version="0.1.13")
     app.state.lookup = lookup
     app.state.auth = auth
     app.state.platform = platform

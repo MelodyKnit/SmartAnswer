@@ -108,11 +108,16 @@
       }
       const label = match[1].toUpperCase();
       const text = normalizeText(match[2]);
-      if (OPTION_LABELS.includes(label) && text) {
+      if (OPTION_LABELS.includes(label) && text && !placeholderOption(label, text)) {
         options.push(`${label}. ${text}`);
       }
     }
     return dedupe(options);
+  }
+
+  function placeholderOption(label, text) {
+    const normalized = normalizeText(text).replace(/[.．、:：\s-]+/g, "").toUpperCase();
+    return normalized === label.toUpperCase();
   }
 
   function extractTitle(lines, options) {
@@ -211,15 +216,59 @@
         continue;
       }
       seenTitles.add(key);
+      const imageContext = extractImageContext(root);
       records.push({
         root,
         title,
         options,
+        image_urls: imageContext.image_urls,
+        option_image_urls: imageContext.option_image_urls,
         type: detectQuestionType(normalizeText(root.innerText), root),
         key: makeQuestionKey(title, options),
       });
     }
     return records;
+  }
+
+  function extractImageContext(root) {
+    const image_urls = [];
+    const option_image_urls = {};
+    for (const image of root.querySelectorAll("img")) {
+      if (!visible(image)) {
+        continue;
+      }
+      const url = absoluteImageUrl(image);
+      if (!url) {
+        continue;
+      }
+      const label = optionLabelForImage(image);
+      if (label && !option_image_urls[label]) {
+        option_image_urls[label] = url;
+      } else if (!image_urls.includes(url)) {
+        image_urls.push(url);
+      }
+    }
+    return { image_urls, option_image_urls };
+  }
+
+  function absoluteImageUrl(image) {
+    const raw = image.currentSrc || image.src || image.getAttribute("data-src") || "";
+    if (!raw || raw.startsWith("data:")) {
+      return "";
+    }
+    try {
+      const url = new URL(raw, window.location.href);
+      return /^https?:$/.test(url.protocol) ? url.toString() : "";
+    } catch (_error) {
+      return "";
+    }
+  }
+
+  function optionLabelForImage(image) {
+    const container = image.closest("label,li,[role='radio'],[role='checkbox'],.el-radio,.el-checkbox,div");
+    const text = normalizeText(container && (container.innerText || container.textContent));
+    const match = text.match(/^([A-Z])[\s.．、:：]/i);
+    return match ? match[1].toUpperCase() : "";
   }
 
   function makeQuestionKey(title, options) {
@@ -228,16 +277,23 @@
 
   function requestAnswer(question) {
     const config = loadConfig();
-    const url = new URL(`${config.baseUrl.replace(/\/+$/, "")}/ocs/query`);
-    url.searchParams.set("title", question.title);
-    url.searchParams.set("type", question.type);
-    if (question.options.length) {
-      url.searchParams.set("options", question.options.join("#"));
-    }
+    const url = `${config.baseUrl.replace(/\/+$/, "")}/ocs/query`;
+    const body = JSON.stringify({
+      title: question.title,
+      type: question.type,
+      options: question.options,
+      image_urls: question.image_urls,
+      option_image_urls: question.option_image_urls || {},
+    });
+    const headers = {
+      "Content-Type": "application/json",
+      ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
+    };
     if (typeof GM_xmlhttpRequest !== "function") {
-      return fetch(url.toString(), {
-        method: "GET",
-        headers: config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {},
+      return fetch(url, {
+        method: "POST",
+        headers,
+        body,
         credentials: "omit",
       })
         .then((response) => response.json())
@@ -250,9 +306,10 @@
     }
     return new Promise((resolve, reject) => {
       GM_xmlhttpRequest({
-        method: "GET",
-        url: url.toString(),
-        headers: config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {},
+        method: "POST",
+        url,
+        headers,
+        data: body,
         timeout: 45000,
         onload: (response) => {
           try {

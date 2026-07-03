@@ -23,6 +23,7 @@ from .support import (
     optional_string,
 )
 from ...answer_reuse import record_should_be_indexable_by_reuse_policy, decide_answer_reuse
+from ...input_anomalies import normalize_image_urls
 from ...models import CanonicalQuestionRecord, ModelAnswer, QuestionQuery
 from ...normalization import normalize_options, normalize_text
 from ...option_labels import canonicalize_label_answer
@@ -57,6 +58,8 @@ class LlmAnswerCache:
 
     def get_trusted(self, query: QuestionQuery) -> CachedLlmAnswer | None:
         """获取匹配该查询且状态为受信任的缓存答案。"""
+        if cache_query_has_image_context(query):
+            return None
         key = cache_key(query)
         with self._lock:
             entry = self._entries.get(key)
@@ -81,6 +84,8 @@ class LlmAnswerCache:
         force_trusted: bool = False,
     ) -> CachedLlmAnswer | None:
         """记录新的模型答案，并在满足条件时提升其状态。"""
+        if cache_query_has_image_context(query):
+            return None
         if not is_cacheable_model_answer(query, answer, self.min_confidence, answer_shape_is_valid):
             return None
 
@@ -201,6 +206,14 @@ class LlmAnswerCache:
                     float_value=float_value,
                     int_value=int_value,
                 )
+                if cache_query_has_image_context(
+                    QuestionQuery(
+                        title=entry.title,
+                        question_type=entry.question_type,
+                        options=entry.options,
+                    )
+                ):
+                    continue
                 self._entries[entry.key] = entry
 
     def load_legacy_json(self, path: Path) -> bool:
@@ -222,6 +235,8 @@ class LlmAnswerCache:
                 question_type=entry.question_type,
                 options=entry.options,
             )
+            if cache_query_has_image_context(query):
+                continue
             if not decide_answer_reuse(
                 query,
                 answer_text=entry.answer_text,
@@ -239,6 +254,12 @@ def cache_key(query: QuestionQuery) -> str:
     type_key = normalize_text(query.question_type or "unknown")
     options_key = "|".join(normalize_options(query.options))
     return f"{type_key}\n{title_key}\n{options_key}"
+
+
+def cache_query_has_image_context(query: QuestionQuery) -> bool:
+    """图片 URL 题不进入 AI 缓存，避免历史图片答案被重复复用。"""
+
+    return bool(normalize_image_urls(query.image_urls, (query.title,)))
 
 
 # 兼容局部旧调用时保留的私有别名。

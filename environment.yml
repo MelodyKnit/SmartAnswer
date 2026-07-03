@@ -20,3 +20,4 @@ dependencies:
       - dulwich
       - playwright
       - psycopg[binary]
+      - rapidocr-onnxruntime

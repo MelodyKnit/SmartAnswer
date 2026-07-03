@@ -271,8 +271,27 @@ def record_usage(
         source_type=source_type,
         source_id=source_id,
         source_url=str(primary_source.get("source_url") or ""),
+        context_json=usage_context_json(query, result),
     )
     return token
+
+
+def usage_context_json(query: QuestionQuery, result) -> str:
+    """构造 usage log 的请求上下文快照。"""
+
+    payload = {
+        "options": list(query.options),
+        "image_urls": list(query.image_urls),
+        "option_image_urls": dict(query.option_image_urls),
+        "input_flags": [
+            flag
+            for flag in str(getattr(result, "debug", {}).get("input_flags", "")).split(",")
+            if flag
+        ],
+        "error_code": getattr(result, "error_code", None),
+        "error_message": getattr(result, "error_message", None),
+    }
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
 
 def low_confidence_threshold(

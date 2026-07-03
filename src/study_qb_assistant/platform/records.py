@@ -84,6 +84,7 @@ class UsageLogRecord:
     source_type: str = ""
     source_id: str = ""
     source_url: str = ""
+    context_json: str = "{}"
 
     def to_dict(self) -> dict:
         return {
@@ -106,6 +107,8 @@ class UsageLogRecord:
             "source_type": self.source_type,
             "source_id": self.source_id,
             "source_url": self.source_url,
+            "context_json": self.context_json,
+            "context": _json_object(self.context_json),
         }
 
     @classmethod
@@ -130,6 +133,7 @@ class UsageLogRecord:
             source_type=str(payload.get("source_type") or ""),
             source_id=str(payload.get("source_id") or ""),
             source_url=str(payload.get("source_url") or ""),
+            context_json=str(payload.get("context_json") or "{}"),
         )
 
 
@@ -585,3 +589,13 @@ class RolePermissionRecord:
             "permissions": list(self.permissions),
             "updated_at": self.updated_at,
         }
+
+
+def _json_object(value: str) -> dict:
+    """安全解析 JSON 对象，坏数据按空对象处理。"""
+
+    try:
+        payload = json.loads(value or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return payload if isinstance(payload, dict) else {}
