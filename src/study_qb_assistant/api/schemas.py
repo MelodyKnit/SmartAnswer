@@ -19,6 +19,8 @@ class QueryPayload(BaseModel):
     question_type: str | None = None
     request_id: str | None = None
     page_url: str | None = None
+    image_capture_status: str | None = None
+    image_capture_failures: int | None = None
     image_urls: list[str] | tuple[str, ...] = Field(default_factory=tuple)
     image_data_urls: list[str] | tuple[str, ...] = Field(default_factory=tuple)
     option_image_urls: dict[str, str] = Field(default_factory=dict)

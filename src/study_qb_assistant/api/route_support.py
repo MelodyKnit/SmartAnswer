@@ -20,6 +20,7 @@ from ..platform.service import local_day_range_from_text
 from ..logger import log_event, log_path, recent_events
 from ..search import LocalQuestionIndex
 from ..llm.tracing import reset_request_id, set_request_id
+from ..input_anomalies import legacy_image_url_only
 from .context import auth_error_response, authorization_bearer, current_user
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -46,6 +47,12 @@ def run_lookup(
     try:
         set_request_id(str(query.request_id or ""))
         result = lookup.query(query)
+        if legacy_image_url_only(query):
+            result.debug.setdefault("legacy_url_only", "true")
+        if query.image_capture_status:
+            result.debug.setdefault("image_capture_status", str(query.image_capture_status))
+        if query.image_capture_failures:
+            result.debug.setdefault("image_capture_failures", str(query.image_capture_failures))
         elapsed_seconds = time.time() - started
         try:
             token = record_usage(platform, auth, request, query, result, elapsed_seconds)
@@ -282,8 +289,11 @@ def usage_context_json(query: QuestionQuery, result) -> str:
     payload = {
         "options": list(query.options),
         "page_url": str(query.page_url or ""),
+        "image_capture_status": str(query.image_capture_status or ""),
+        "image_capture_failures": int(query.image_capture_failures or 0),
         "image_urls": list(query.image_urls),
         "image_data_url_count": len(query.image_data_urls),
+        "legacy_url_only": legacy_image_url_only(query),
         "option_image_urls": dict(query.option_image_urls),
         "option_image_data_url_count": len(query.option_image_data_urls),
         "input_flags": [

@@ -9,6 +9,7 @@ from ..input_anomalies import (
     is_image_data_url,
     has_placeholder_options,
     is_image_url,
+    strip_embedded_image_urls,
     normalize_image_data_urls,
     normalize_image_urls,
 )
@@ -20,21 +21,30 @@ def build_query_from_mapping(params: dict[str, list[str]]) -> QuestionQuery:
     """从类查询字符串字典构建标准题目查询对象。"""
     title = first_value(params, "title")
     question_type = first_value(params, "type") or "unknown"
+    page_url = first_value(params, "page_url") or None
+    image_urls = normalize_image_urls(split_raw_values(first_value(params, "image_urls")), (title,))
+    image_data_urls = normalize_image_data_urls(
+        split_raw_values(first_value(params, "image_data_urls"))
+    )
+    normalized_title = strip_embedded_image_urls(
+        title,
+        image_urls,
+        image_data_urls,
+    )
     options = sanitize_query_options(
-        title, question_type, split_options(first_value(params, "options"))
+        normalized_title, question_type, split_options(first_value(params, "options"))
     )
     request_id = first_value(params, "request_id") or None
-    image_urls = normalize_image_urls(split_raw_values(first_value(params, "image_urls")), (title,))
     return QuestionQuery(
-        title=title,
+        title=normalized_title,
         options=options,
         question_type=question_type,
         request_id=request_id,
-        page_url=first_value(params, "page_url") or None,
+        page_url=page_url,
+        image_capture_status=first_value(params, "image_capture_status"),
+        image_capture_failures=safe_int(first_value(params, "image_capture_failures")),
         image_urls=image_urls,
-        image_data_urls=normalize_image_data_urls(
-            split_raw_values(first_value(params, "image_data_urls"))
-        ),
+        image_data_urls=image_data_urls,
     )
 
 
@@ -44,30 +54,52 @@ def build_query_from_payload(payload: QueryPayload | dict[str, Any]) -> Question
         raw_options = payload.options
         question_type = payload.type or payload.question_type or "unknown"
         title = str(payload.title or "")
+        image_urls = normalize_image_urls(payload.image_urls, (title,))
+        image_data_urls = normalize_image_data_urls(payload.image_data_urls)
+        normalized_title = strip_embedded_image_urls(
+            title,
+            image_urls,
+            image_data_urls,
+        )
         return QuestionQuery(
-            title=title,
+            title=normalized_title,
             options=sanitize_query_options(
-                title, str(question_type), options_from_raw(raw_options)
+                normalized_title, str(question_type), options_from_raw(raw_options)
             ),
             question_type=str(question_type),
             request_id=payload.request_id,
             page_url=payload.page_url,
-            image_urls=normalize_image_urls(payload.image_urls, (title,)),
-            image_data_urls=normalize_image_data_urls(payload.image_data_urls),
+            image_capture_status=str(payload.image_capture_status or ""),
+            image_capture_failures=safe_int(payload.image_capture_failures),
+            image_urls=image_urls,
+            image_data_urls=image_data_urls,
             option_image_urls=normalize_option_image_urls(payload.option_image_urls),
             option_image_data_urls=normalize_option_image_data_urls(payload.option_image_data_urls),
         )
     raw_options = payload.get("options") or ()
     title = str(payload.get("title") or "")
     question_type = str(payload.get("type") or payload.get("question_type") or "unknown")
+    image_urls = normalize_image_urls(payload.get("image_urls") or (), (title,))
+    image_data_urls = normalize_image_data_urls(payload.get("image_data_urls") or ())
+    normalized_title = strip_embedded_image_urls(
+        title,
+        image_urls,
+        image_data_urls,
+    )
     return QuestionQuery(
-        title=title,
-        options=sanitize_query_options(title, question_type, options_from_raw(raw_options)),
+        title=normalized_title,
+        options=sanitize_query_options(
+            normalized_title,
+            question_type,
+            options_from_raw(raw_options),
+        ),
         question_type=question_type,
         request_id=payload.get("request_id"),
         page_url=payload.get("page_url"),
-        image_urls=normalize_image_urls(payload.get("image_urls") or (), (title,)),
-        image_data_urls=normalize_image_data_urls(payload.get("image_data_urls") or ()),
+        image_capture_status=str(payload.get("image_capture_status") or ""),
+        image_capture_failures=safe_int(payload.get("image_capture_failures")),
+        image_urls=image_urls,
+        image_data_urls=image_data_urls,
         option_image_urls=normalize_option_image_urls(payload.get("option_image_urls") or {}),
         option_image_data_urls=normalize_option_image_data_urls(
             payload.get("option_image_data_urls") or {}
@@ -86,6 +118,15 @@ def first_value(params: dict[str, list[str]], key: str) -> str:
     """读取多值字典的第一个值。"""
     values = params.get(key) or [""]
     return values[0]
+
+
+def safe_int(value: object) -> int:
+    """安全解析整数，异常输入按 0 处理。"""
+
+    try:
+        return int(str(value or "0"))
+    except (TypeError, ValueError):
+        return 0
 
 
 def split_options(value: str) -> tuple[str, ...]:

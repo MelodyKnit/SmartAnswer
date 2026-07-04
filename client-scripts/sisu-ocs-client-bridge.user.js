@@ -32,6 +32,7 @@
   const AUTO_ANSWER_DELAY_MS = 1400;
   const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
   const MAX_IMAGE_COUNT = 6;
+  const IMAGE_URL_PATTERN = /https?:\/\/[^\s"'<>]+?\.(?:png|jpg|jpeg|webp|gif|bmp)(?:\?[^\s"'<>]*)?/gi;
   const answeredQuestionKeys = new Set();
   let answerRunning = false;
   let autoAnswerTimer = 0;
@@ -135,7 +136,7 @@
       }
       return !optionSet.has(line);
     });
-    return normalizeText(useful.slice(0, 3).join(" "));
+    return stripImageUrls(normalizeText(useful.slice(0, 3).join(" ")));
   }
 
   function dedupe(items) {
@@ -188,13 +189,14 @@
       return;
     }
     const text = normalizeText(element.innerText);
-    if (text.length < 8 || text.length > 2500) {
+    const hasVisibleImage = Array.from(element.querySelectorAll("img")).some(visible);
+    if ((text.length < 8 && !hasVisibleImage) || text.length > 2500) {
       return;
     }
     const hasType = QUESTION_TYPE_MARKERS.some(([, pattern]) => pattern.test(text));
     const hasOptions = /(?:^|\s)[A-D][\s.．、:：]+/.test(text);
     const hasInput = Array.from(element.querySelectorAll("input,textarea")).some((input) => visible(input) || visible(input.closest("label,li,div")));
-    if (!hasType && !hasOptions && !hasInput) {
+    if (!hasType && !hasOptions && !hasInput && !hasVisibleImage) {
       return;
     }
     seen.add(element);
@@ -205,13 +207,14 @@
     const records = [];
     const seenTitles = new Set();
     for (const root of candidateRoots()) {
+      const imageContext = extractImageContext(root);
       const lines = normalizeText(root.innerText)
         .split(/(?=(?:[A-Z][\s.．、:：]))|\n/)
         .map(normalizeText)
         .filter(Boolean);
       const options = parseOptions(lines);
-      const title = extractTitle(lines, options);
-      if (!title || title.length < 6) {
+      const title = extractTitle(lines, options) || imageContext.image_urls[0] || "";
+      if (!title || (title.length < 6 && imageContext.image_urls.length === 0)) {
         continue;
       }
       const key = normalizeText(title);
@@ -219,7 +222,6 @@
         continue;
       }
       seenTitles.add(key);
-      const imageContext = extractImageContext(root);
       records.push({
         root,
         title,
@@ -278,8 +280,12 @@
     return `${normalizeText(title)}::${options.map(normalizeText).join("|")}`;
   }
 
-  function requestAnswer(question) {
-    return buildImagePayloads(question).then((imagePayloads) => {
+  function stripImageUrls(value) {
+    return normalizeText(String(value || "").replace(IMAGE_URL_PATTERN, " "));
+  }
+
+  function requestAnswer(question, preparedPayloads) {
+    return Promise.resolve(preparedPayloads || buildImagePayloads(question)).then((imagePayloads) => {
     const config = loadConfig();
     const url = `${config.baseUrl.replace(/\/+$/, "")}/ocs/query`;
     const body = JSON.stringify({
@@ -291,6 +297,8 @@
       image_data_urls: imagePayloads.image_data_urls,
       option_image_urls: question.option_image_urls || {},
       option_image_data_urls: imagePayloads.option_image_data_urls,
+      image_capture_status: imagePayloads.capture_status,
+      image_capture_failures: imagePayloads.failed_count,
     });
     const headers = {
       "Content-Type": "application/json",
@@ -340,10 +348,12 @@
   async function buildImagePayloads(question) {
     const image_data_urls = [];
     const option_image_data_urls = {};
+    let failed_count = 0;
     const images = Array.from(question.root.querySelectorAll("img")).filter(visible).slice(0, MAX_IMAGE_COUNT);
     for (const image of images) {
       const dataUrl = await imageElementToDataUrl(image);
       if (!dataUrl) {
+        failed_count += 1;
         continue;
       }
       const label = optionLabelForImage(image);
@@ -353,7 +363,16 @@
         image_data_urls.push(dataUrl);
       }
     }
-    return { image_data_urls, option_image_data_urls };
+    const uploadedCount = image_data_urls.length + Object.keys(option_image_data_urls).length;
+    let capture_status = "none";
+    if (images.length > 0 && uploadedCount === 0) {
+      capture_status = "url_only_fallback";
+    } else if (images.length > 0 && uploadedCount < images.length) {
+      capture_status = "inline_partial";
+    } else if (images.length > 0) {
+      capture_status = "inline_complete";
+    }
+    return { image_data_urls, option_image_data_urls, capture_status, failed_count };
   }
 
   async function imageElementToDataUrl(image) {
@@ -680,8 +699,13 @@
       for (let index = 0; index < questions.length; index += 1) {
         const question = questions[index];
         try {
-          markQuestion(question.root, "查询中", "info");
-          const data = await requestAnswer(question);
+          const imagePayloads = await buildImagePayloads(question);
+          if (imagePayloads.capture_status === "url_only_fallback") {
+            markQuestion(question.root, "图片未上传，已回退链接识别", "warn");
+          } else {
+            markQuestion(question.root, "查询中", "info");
+          }
+          const data = await requestAnswer(question, imagePayloads);
           answeredQuestionKeys.add(question.key);
           if (fillQuestion(question, data)) {
             ok += 1;

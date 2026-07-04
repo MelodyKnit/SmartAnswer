@@ -63,6 +63,17 @@ class FlakyProvider:
         return ModelAnswer("A", self.answer_text, f"重试成功：{query.title}", 0.99)
 
 
+class ImageFetch403Provider:
+    """模拟图片题在上游模型拉图阶段被 403 拒绝。"""
+
+    provider_name = "image-fetch-403-provider"
+
+    def answer(self, query: QuestionQuery) -> ModelAnswer:
+        raise RuntimeError(
+            "model provider request failed: HTTP 500: failed to download file, status code: 403"
+        )
+
+
 class FastAPILocalServerTests(unittest.TestCase):
     """Covers route behavior that used to live in the hand-written HTTP handler."""
 
@@ -2096,6 +2107,7 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertIn("{{TOKEN}}", one_token.json()["script"])
         self.assertIn("// ==UserScript==", one_token.json()["script"])
         self.assertIn('baseUrl: "http://testserver"', one_token.json()["script"])
+        self.assertIn("image_data_urls", one_token.json()["script"])
         self.assertIn("/ocs/query", one_token.json()["script"])
         self.assertIsInstance(one_token.json()["ocs_config"], list)
         self.assertEqual(one_token.json()["ocs_config"][0]["type"], "GM_xmlhttpRequest")
@@ -2108,6 +2120,48 @@ class FastAPILocalServerTests(unittest.TestCase):
             direct.json()["token_id"],
             token_b.json()["token_info"]["token_id"],
         )
+
+    def test_image_url_only_requests_are_flagged_as_legacy_transport(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            lookup = AnswerService(
+                LocalQuestionIndex(()),
+                model_provider=ImageFetch403Provider(),
+                allow_model_fallback=True,
+            )
+            client = TestClient(
+                create_app(lookup, auth_service=auth, platform_service=platform, require_auth=True)
+            )
+
+            client.post("/auth/register", json={"username": "boss", "password": "password123"})
+            headers = {
+                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
+            }
+
+            response = client.post(
+                "/query",
+                json={
+                    "title": "https://example.com/demo-question.png",
+                    "type": "single",
+                    "image_urls": ["https://example.com/demo-question.png"],
+                    "image_capture_status": "url_only_fallback",
+                    "image_capture_failures": 2,
+                },
+                headers=headers,
+            )
+            usage_logs = client.get("/usage-logs?page=1&page_size=5", headers=headers)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.json()["ok"])
+        self.assertEqual(response.json()["error"]["code"], "IMAGE_UNREADABLE")
+        self.assertEqual(response.json()["debug"]["legacy_url_only"], "true")
+        self.assertEqual(response.json()["debug"]["image_capture_status"], "url_only_fallback")
+        log = usage_logs.json()["logs"][0]
+        self.assertTrue(log["context"]["legacy_url_only"])
+        self.assertEqual(log["context"]["image_capture_status"], "url_only_fallback")
+        self.assertEqual(log["context"]["image_capture_failures"], 2)
 
     def test_runtime_index_loads_reviewed_records_from_database(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

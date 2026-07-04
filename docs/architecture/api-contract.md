@@ -151,6 +151,8 @@
 - `title`：必填字符串
 - `options`：可选字符串数组；如果需要，在导入期间将字符串输入规范化为数组
 - `page_url`：可选当前题目所在页面地址；服务端可在需要时用作浏览器上下文抓图的 `Referer`
+- `image_capture_status`：可选浏览器侧图片抓取状态，常见值为 `inline_complete`、`inline_partial`、`url_only_fallback`
+- `image_capture_failures`：可选浏览器侧未成功转成 `data URL` 的图片数量
 - `image_urls`：可选图片 URL 数组；仅作为图片题上下文，不保存原图二进制
 - `image_data_urls`：可选图片 `data:image/...;base64,...` 数组；优先用于视觉模型与 OCR，不写入题库或 usage log
 - `option_image_urls`：可选选项图片映射，键为 `A-Z`
@@ -173,6 +175,7 @@
 - 选择题无真实选项且本地题库未精确命中时，返回 `INPUT_MISSING_OPTIONS`，不进入 AI 兜底、题库沉淀或 AI 缓存
 - 图片题可通过 `image_urls` 进入多模态模型；多模态失败时尝试 OCR，仍不可读时返回 `IMAGE_UNREADABLE`
 - 若增强脚本已上传 `image_data_urls` / `option_image_data_urls`，服务端优先直接把内联图片发送给视觉模型，不再依赖外链图床可访问性
+- 若 `image_urls` 存在但 `image_data_url_count = 0`，系统会把该请求视为旧链路 URL-only 降级流量，并在 usage context / debug 中标记 `legacy_url_only`
 
 ### 3.6 OCS 兼容说明
 
@@ -181,7 +184,7 @@
 - 判断题：`data.answer` 返回 `对/错`
 - 单空填空：`data.answer` 返回文本答案
 - 输入异常：返回 `code=1`、`data.answer=null`，`data.ai.error_code` 包含 `INPUT_MISSING_OPTIONS` 或 `IMAGE_UNREADABLE`
-- 官方 OCS 配置只保证传递 `${title}`、`${type}`、`${options}`；图片题完整支持依赖本项目生成或维护的增强导入脚本采集 DOM 图片并上传内联 `base64`
+- 官方 OCS 配置只保证传递 `${title}`、`${type}`、`${options}`；图片题完整支持依赖本项目生成或维护的增强导入脚本采集 DOM 图片并上传内联 `base64`，单纯粘贴 OCS 配置只能视为旧兼容链路
 - 多空填空：`data.answer` 返回 JSON 数组字符串，例如 `["第一空","第二空"]`
 
 ## 4. 平台管理接口
