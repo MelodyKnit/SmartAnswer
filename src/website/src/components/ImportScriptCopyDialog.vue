@@ -120,7 +120,7 @@ defineExpose({ open })
       type="info"
       :closable="false"
       class="mb-4"
-      title="该脚本已按你当前选择的密钥生成，可直接复制使用。"
+      title="该脚本已按你当前选择的密钥生成，可直接复制使用。图片题请优先安装并启用下方导入脚本，不要只复制 OCS 配置。"
     />
     <div class="mb-2 flex items-center justify-between">
       <span class="text-sm font-medium text-ink-soft">导入脚本</span>

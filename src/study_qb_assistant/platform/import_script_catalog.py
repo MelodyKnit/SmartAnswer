@@ -10,13 +10,16 @@
 
 from __future__ import annotations
 import json
+import re
 from dataclasses import dataclass
 from importlib.resources import files
+from pathlib import Path
 from typing import Any
 
 PLACEHOLDER_BASE_URL = "{{BASE_URL}}"
 PLACEHOLDER_TOKEN = "{{TOKEN}}"
 PLACEHOLDER_CONFIG_JSON = "{{CONFIG_JSON}}"
+CLIENT_SCRIPT_TEMPLATE_PATTERN = re.compile(r"^\{\{CLIENT_SCRIPT:([^}]+)\}\}$")
 
 
 @dataclass(slots=True, frozen=True)
@@ -93,15 +96,47 @@ def render_import_script(template: ImportScriptTemplate, base_url: str) -> dict[
     config_items = [
         replace_template_placeholders(item, normalized_base_url) for item in template.config_items
     ]
+    script_template = resolve_script_template_content(template.script_template)
     script_content = replace_string_placeholders(
-        template.script_template,
+        script_template,
         base_url=normalized_base_url,
         config_json=json.dumps(config_items, ensure_ascii=False, indent=2),
     )
+    if script_content.lstrip().startswith("// ==UserScript=="):
+        script_content = inject_client_script_defaults(
+            script_content,
+            base_url=normalized_base_url,
+        )
     result = {}
     result.update(template.to_summary())
     result.update({"content": script_content, "ocs_config": config_items})
     return result
+
+
+def resolve_script_template_content(script_template: str) -> str:
+    """解析脚本模板正文，支持从仓库内桥接脚本文件复用内容。"""
+
+    raw = str(script_template or "")
+    match = CLIENT_SCRIPT_TEMPLATE_PATTERN.match(raw.strip())
+    if not match:
+        return raw
+    filename = match.group(1).strip()
+    script_path = Path(__file__).resolve().parents[3] / "client-scripts" / filename
+    return script_path.read_text(encoding="utf-8")
+
+
+def inject_client_script_defaults(script_content: str, *, base_url: str) -> str:
+    """把桥接脚本中的默认服务地址和占位密钥替换为平台当前值。"""
+
+    rendered = script_content.replace(
+        '    baseUrl: "http://127.0.0.1:8765",',
+        f'    baseUrl: "{base_url}",',
+    )
+    rendered = rendered.replace(
+        '    apiKey: "",',
+        '    apiKey: "{{TOKEN}}",',
+    )
+    return rendered
 
 
 def replace_template_placeholders(value: Any, base_url: str) -> Any:
