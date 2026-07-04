@@ -1,6 +1,6 @@
 # API 契约
 
-更新时间：`2026-07-03`
+更新时间：`2026-07-04`
 
 ## 1. 目的
 
@@ -173,7 +173,7 @@
 - `resolution_mode`：`exact_match`（精确匹配）、`fuzzy_match`（模糊匹配）、`rag_match`（RAG 匹配）、`external_source`（外部源）、`llm_normalized`（LLM 规范化）、`llm_fallback`（LLM 兜底）、`input_anomaly`（输入异常）
 - `review_required`：布尔值
 - 选择题无真实选项且本地题库未精确命中时，返回 `INPUT_MISSING_OPTIONS`，不进入 AI 兜底、题库沉淀或 AI 缓存
-- 图片题可通过 `image_urls` 进入多模态模型；多模态失败时尝试 OCR，仍不可读时返回 `IMAGE_UNREADABLE`
+- 图片题可通过 `image_urls` 进入服务端图片读取链路，服务端会先尝试把图片转换为 `data URL` 再交给多模态模型；若无法读取图片，不会把外链继续透传给模型供应商，而是返回 `IMAGE_UNREADABLE`
 - 若增强脚本已上传 `image_data_urls` / `option_image_data_urls`，服务端优先直接把内联图片发送给视觉模型，不再依赖外链图床可访问性
 - 若 `image_urls` 存在但 `image_data_url_count = 0`，系统会把该请求视为旧链路 URL-only 降级流量，并在 usage context / debug 中标记 `legacy_url_only`
 

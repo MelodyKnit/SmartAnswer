@@ -18,6 +18,11 @@ ENV STQB_DATA_DIR=/app/data
 
 WORKDIR /app
 
+RUN sed -i 's|http://deb.debian.org/debian|https://mirrors.tuna.tsinghua.edu.cn/debian|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends chromium ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN mkdir -p /app/data/runtime /app/data/logs /app/data/normalized /app/configs
 
 RUN pip install --no-cache-dir --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple \

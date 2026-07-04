@@ -282,8 +282,6 @@ def fetch_image_via_playwright(url: str, *, referer: str | None = None) -> tuple
     except Exception:
         resolve_browser_path = None
     browser_path = resolve_browser_path() if callable(resolve_browser_path) else None
-    if not browser_path:
-        return None, None
 
     manager = None
     browser = None
@@ -291,7 +289,10 @@ def fetch_image_via_playwright(url: str, *, referer: str | None = None) -> tuple
     page = None
     try:
         manager = sync_playwright().start()
-        browser = manager.chromium.launch(executable_path=browser_path, headless=True)
+        launch_options = {"headless": True}
+        if browser_path:
+            launch_options["executable_path"] = browser_path
+        browser = manager.chromium.launch(**launch_options)
         headers = {"Referer": str(referer).strip()} if str(referer or "").strip() else None
         context = browser.new_context(extra_http_headers=headers or {})
         page = context.new_page()

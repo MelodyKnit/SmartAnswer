@@ -632,7 +632,7 @@ class AnswerServiceTests(unittest.TestCase):
         self.assertEqual(provider.calls, 1)
 
     def test_unreadable_image_answer_is_not_persisted_or_reused(self) -> None:
-        """图片不可读时返回输入异常，不写入题库或 AI 缓存。"""
+        """图片没有可传给视觉模型的 data URL 时返回输入异常，不写入题库或 AI 缓存。"""
         with tempfile.TemporaryDirectory() as temp_dir:
             provider = UnreadableImageProvider()
             repository = SqlAlchemyQuestionRepository(Path(temp_dir) / "questions.sqlite3")
@@ -655,7 +655,7 @@ class AnswerServiceTests(unittest.TestCase):
         self.assertEqual(result.resolution_mode, "input_anomaly")
         self.assertEqual(result.error_code, "IMAGE_UNREADABLE")
         self.assertEqual(stored, [])
-        self.assertEqual(provider.calls, 1)
+        self.assertEqual(provider.calls, 0)
 
     def test_image_answer_with_text_snapshot_is_persisted_by_parsed_question(self) -> None:
         """图片题识别成功后，应按解析出的文本题沉淀，而不是按图片 URL 复用。"""
@@ -691,6 +691,7 @@ class AnswerServiceTests(unittest.TestCase):
                 QuestionQuery(
                     title="https://example.com/question.jpg",
                     image_urls=("https://example.com/question.jpg",),
+                    image_data_urls=("data:image/png;base64,AA==",),
                     question_type="single",
                 )
             )
@@ -754,6 +755,28 @@ class AnswerServiceTests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(provider.calls, 1)
         self.assertEqual(provider.last_query.image_data_urls, ("data:image/png;base64,AA==",))
+
+    def test_url_only_image_does_not_reach_model_provider(self) -> None:
+        """图片 URL 不能直接透传给模型供应商，避免上游下载图床失败。"""
+        provider = InspectingImagePayloadProvider()
+        service = AnswerService(
+            LocalQuestionIndex(()),
+            model_provider=provider,
+            allow_model_fallback=True,
+        )
+        query = QuestionQuery(
+            title="https://example.com/question.jpg",
+            image_urls=("https://example.com/question.jpg",),
+            question_type="single",
+        )
+
+        with patch("study_qb_assistant.answering.build_model_query", return_value=query):
+            result = service.query(query)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.resolution_mode, "input_anomaly")
+        self.assertEqual(result.error_code, "IMAGE_UNREADABLE")
+        self.assertEqual(provider.calls, 0)
 
 
 def _service_with_cmmlu(

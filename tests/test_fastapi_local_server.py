@@ -21,6 +21,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from study_qb_assistant.answering import AnswerService  # noqa: E402
+from study_qb_assistant import __version__  # noqa: E402
 from study_qb_assistant.api.local_server import create_app  # noqa: E402
 from study_qb_assistant.auth import AuthService  # noqa: E402
 from study_qb_assistant.logger import log_path  # noqa: E402
@@ -248,10 +249,12 @@ class FastAPILocalServerTests(unittest.TestCase):
                 "/ocs/query", params={"title": "示例题", "type": "single"}, headers=key_headers
             )
             config = client.get("/configs/ocs-local-study-bank.json")
+            openapi = client.get("/openapi.json")
         finally:
             os.environ.pop("STQB_OCS_API_KEYS", None)
 
         self.assertEqual(health.json(), {"ok": True})
+        self.assertEqual(openapi.json()["info"]["version"], __version__)
         self.assertEqual(query_get.json()["result"]["candidate_answer"], "A")
         self.assertEqual(query_post.json()["request_id"], "route-test")
         self.assertEqual(ocs_get.json()["code"], 0)

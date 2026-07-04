@@ -16,6 +16,7 @@ from .answer_quality import direct_known_answer, is_cache_safe_answer, repair_mo
 from .input_anomalies import (
     analyze_query_input,
     model_answer_indicates_unreadable_image,
+    normalize_image_data_urls,
     normalize_image_urls,
     provider_error_indicates_unreadable_image,
     result_from_input_anomaly,
@@ -377,6 +378,10 @@ class AnswerService:
         last_error: Exception | None = None
         attempts = 0
         model_query = build_model_query(query)
+        if _has_unhydrated_image_context(model_query):
+            error = RuntimeError("image unreadable: no local image payload available")
+            setattr(error, "stqb_retry_attempts", 1)
+            raise error
         for attempt in range(1, max_attempts + 1):
             attempts = attempt
             try:
@@ -534,3 +539,16 @@ def _is_image_context_without_text_snapshot(query: QuestionQuery) -> bool:
     if not normalize_image_urls(query.image_urls, (query.title,)):
         return False
     return not str(query.title or "").strip() or bool(normalize_image_urls((query.title,)))
+
+
+def _has_unhydrated_image_context(query: QuestionQuery) -> bool:
+    """图片题必须先在服务端或浏览器侧转成 data URL，避免把外链交给模型下载。"""
+
+    return bool(
+        normalize_image_urls(query.image_urls, (query.title,), query.option_image_urls.values())
+    ) and not bool(
+        normalize_image_data_urls(
+            query.image_data_urls,
+            query.option_image_data_urls.values(),
+        )
+    )
