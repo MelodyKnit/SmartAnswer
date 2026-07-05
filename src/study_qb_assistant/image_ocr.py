@@ -305,7 +305,7 @@ def image_request_referer(url: str, *, referer: str | None = None) -> str:
         if parsed.scheme in {"http", "https"} and parsed.netloc:
             return text
     image_host = urlparse(str(url or "")).netloc.lower()
-    if image_host.endswith("p.cldisk.com"):
+    if image_host.endswith(("p.cldisk.com", "p.ananas.chaoxing.com")):
         return CHAOXING_IMAGE_REFERER
     return ""
 

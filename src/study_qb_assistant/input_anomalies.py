@@ -51,13 +51,17 @@ def normalize_image_urls(*groups: object) -> tuple[str, ...]:
     urls: list[str] = []
     for group in groups:
         if isinstance(group, str):
-            candidates = re.split(r"[\s,，]+", group)
+            candidates = (
+                *re.split(r"[\s,，]+", group),
+                *EMBEDDED_IMAGE_URL_PATTERN.findall(group),
+            )
         else:
             candidates = list(group or ())
         for candidate in candidates:
             text = str(candidate or "").strip()
-            if is_image_url(text) and text not in urls:
-                urls.append(text)
+            for value in (text, *EMBEDDED_IMAGE_URL_PATTERN.findall(text)):
+                if is_image_url(value) and value not in urls:
+                    urls.append(value)
     return tuple(urls)
 
 
@@ -110,6 +114,8 @@ def strip_embedded_image_urls(title: str, *groups: object) -> str:
     cleaned = EMBEDDED_IMAGE_URL_PATTERN.sub(" ", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     cleaned = re.sub(r"([\u4e00-\u9fff])\s+([\u4e00-\u9fff])", r"\1\2", cleaned)
+    cleaned = re.sub(r"([\u4e00-\u9fff])\s+(_{2,})", r"\1\2", cleaned)
+    cleaned = re.sub(r"(_{2,})\s+([、，。,.])", r"\1\2", cleaned)
     return cleaned or raw
 
 

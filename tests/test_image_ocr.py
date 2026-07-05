@@ -52,6 +52,14 @@ class ImageOcrHydrationTests(unittest.TestCase):
         self.assertIn("image/", headers["Accept"])
         self.assertIn("Mozilla", headers["User-Agent"])
 
+    def test_p_ananas_image_uses_chaoxing_referer_by_default(self) -> None:
+        headers = browser_image_request_headers(
+            "https://p.ananas.chaoxing.com/star3/origin/demo-question.png"
+        )
+
+        self.assertEqual(headers["Referer"], CHAOXING_IMAGE_REFERER)
+        self.assertIn("image/", headers["Accept"])
+
     def test_page_url_referer_has_priority_over_domain_default(self) -> None:
         headers = browser_image_request_headers(
             "https://p.cldisk.com/star3/origin/demo-question.jpg",

@@ -45,6 +45,26 @@ class QueryParserTests(unittest.TestCase):
         self.assertEqual(query.image_capture_status, "url_only_fallback")
         self.assertEqual(query.image_capture_failures, 2)
 
+    def test_embedded_image_url_without_spaces_is_inferred_from_title(self) -> None:
+        payload = QueryPayload(
+            title=(
+                "设https://p.ananas.chaoxing.com/star3/origin/demo-a.png"
+                "则https://p.ananas.chaoxing.com/star3/origin/demo-b.png____、____。"
+            ),
+            type="completion",
+        )
+
+        query = build_query_from_payload(payload)
+
+        self.assertEqual(query.title, "设则____、____。")
+        self.assertEqual(
+            query.image_urls,
+            (
+                "https://p.ananas.chaoxing.com/star3/origin/demo-a.png",
+                "https://p.ananas.chaoxing.com/star3/origin/demo-b.png",
+            ),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
