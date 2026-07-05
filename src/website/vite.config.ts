@@ -7,7 +7,7 @@ import tailwindcss from '@tailwindcss/vite'
 // 开发期通过代理把平台接口前缀直接转发到后端，保持同源、免跨域；
 // 生产构建为纯静态资源，运行时由 VITE_API_BASE 指定后端地址（携带 Bearer 令牌跨域）。
 const API_PREFIX_RE =
-  '^/(auth|users|dashboard|notifications|tokens|usage-logs|import-scripts|roles|system-config|project-update|billing|points-policy|wallet|feedback|status|query|ocs|configs|healthz|debug|questions|llm-models|llm-runtime-config|llm-stats|llm-traces)'
+  '^/(auth|users|dashboard|notifications|notification-center|tokens|usage-logs|import-scripts|roles|system-config|project-update|billing|points-policy|wallet|feedback|status|query|ocs|configs|healthz|debug|questions|llm-models|llm-runtime-config|llm-stats|llm-traces)'
 
 export default defineConfig({
   plugins: [vue(), tailwindcss()],

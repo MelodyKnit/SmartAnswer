@@ -59,6 +59,9 @@
 - 排行统计
   - `GET /dashboard/rankings`
 - 消息列表
+  - `GET /notification-center`
+  - `POST /notification-center/{source}/{item_id}/read`
+  - `POST /notification-center/read-all`
   - `GET /notifications`
   - `POST /notifications/{notification_id}/read`
   - `POST /notifications/read-all`

@@ -223,6 +223,142 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(archived.json()["status"], "archived")
         self.assertEqual(active_after_archive.json()["announcements"], [])
 
+    def test_notification_center_combines_announcements_and_notifications(self) -> None:
+        """通知中心应聚合公告和消息，并按用户维度记录已读状态。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(),
+                    auth_service=auth,
+                    platform_service=platform,
+                    require_auth=True,
+                )
+            )
+            owner_headers, _token = self._register_owner_and_create_token(client)
+            client.post(
+                "/auth/register",
+                json={"username": "student", "password": "password123"},
+            )
+            student_login = client.post(
+                "/auth/login",
+                json={"username": "student", "password": "password123"},
+            )
+            student_user = student_login.json()["user"]
+            student_headers = {"Authorization": f"Bearer {student_login.json()['token']}"}
+            now = time.time()
+
+            user_announcement = client.post(
+                "/announcements",
+                json={
+                    "title": "用户公告",
+                    "content": "普通用户可见。",
+                    "level": "warning",
+                    "audience": "user",
+                    "status": "published",
+                    "pinned": True,
+                    "ends_at": now + 3600,
+                },
+                headers=owner_headers,
+            ).json()["announcement"]
+            client.post(
+                "/announcements",
+                json={
+                    "title": "管理员公告",
+                    "content": "普通用户不可见。",
+                    "level": "info",
+                    "audience": "admin",
+                    "status": "published",
+                    "ends_at": now + 3600,
+                },
+                headers=owner_headers,
+            )
+            client.post(
+                "/announcements",
+                json={
+                    "title": "过期公告",
+                    "content": "过期不展示。",
+                    "audience": "all",
+                    "status": "published",
+                    "ends_at": now - 10,
+                },
+                headers=owner_headers,
+            )
+            global_notice = platform.create_notification(
+                user_id=None,
+                level="info",
+                category="system",
+                title="全局消息",
+                content="所有用户可见。",
+            )
+            platform.create_notification(
+                user_id=str(student_user["user_id"]),
+                level="success",
+                category="wallet",
+                title="个人消息",
+                content="仅当前用户可见。",
+            )
+
+            first_center = client.get("/notification-center", headers=student_headers)
+            announcement_read = client.post(
+                f"/notification-center/announcement/{user_announcement['announcement_id']}/read",
+                headers=student_headers,
+            )
+            after_announcement_read = client.get(
+                "/notification-center", params={"status": "unread"}, headers=student_headers
+            )
+            client.patch(
+                f"/announcements/{user_announcement['announcement_id']}",
+                json={"content": "公告内容更新后应重新未读。"},
+                headers=owner_headers,
+            )
+            after_announcement_update = client.get(
+                "/notification-center", params={"status": "unread"}, headers=student_headers
+            )
+            global_read_by_student = client.post(
+                f"/notification-center/notification/{global_notice['notification_id']}/read",
+                headers=student_headers,
+            )
+            owner_notification_center = client.get(
+                "/notification-center",
+                params={"source": "notification"},
+                headers=owner_headers,
+            )
+            read_all = client.post("/notification-center/read-all", headers=student_headers)
+            after_read_all = client.get(
+                "/notification-center", params={"status": "unread"}, headers=student_headers
+            )
+
+        self.assertEqual(first_center.status_code, 200)
+        first_items = first_center.json()["items"]
+        self.assertIn("用户公告", {item["title"] for item in first_items})
+        self.assertIn("全局消息", {item["title"] for item in first_items})
+        self.assertIn("个人消息", {item["title"] for item in first_items})
+        self.assertNotIn("管理员公告", {item["title"] for item in first_items})
+        self.assertNotIn("过期公告", {item["title"] for item in first_items})
+        self.assertGreaterEqual(first_center.json()["unread_count"], 3)
+        self.assertTrue(announcement_read.json()["item"]["read"])
+        self.assertNotIn(
+            "用户公告",
+            {item["title"] for item in after_announcement_read.json()["items"]},
+        )
+        self.assertIn(
+            "用户公告",
+            {item["title"] for item in after_announcement_update.json()["items"]},
+        )
+        self.assertTrue(global_read_by_student.json()["item"]["read"])
+        owner_global = [
+            item
+            for item in owner_notification_center.json()["items"]
+            if item["item_id"] == global_notice["notification_id"]
+        ][0]
+        self.assertFalse(owner_global["read"])
+        self.assertGreaterEqual(read_all.json()["count"], 1)
+        self.assertEqual(after_read_all.json()["items"], [])
+
     def test_query_and_ocs_routes_keep_existing_wire_shape(self) -> None:
         import os
 

@@ -195,6 +195,22 @@ export interface NotificationItem {
   created_at: number
 }
 
+export type NotificationCenterSource = 'notification' | 'announcement'
+
+export interface NotificationCenterItem {
+  item_id: string
+  source: NotificationCenterSource
+  level: string
+  category: string
+  title: string
+  content: string
+  read: boolean
+  pinned: boolean
+  created_at: number
+  updated_at: number
+  expires_at: number
+}
+
 export type AnnouncementLevel = 'info' | 'success' | 'warning' | 'danger'
 export type AnnouncementAudience = 'all' | 'user' | 'admin' | 'superadmin'
 export type AnnouncementStatus = 'draft' | 'published' | 'archived'

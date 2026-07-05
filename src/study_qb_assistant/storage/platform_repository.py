@@ -14,6 +14,7 @@ from ..platform.records import (
     ImportScriptRecord,
     LlmCallTraceRecord,
     LlmModelRecord,
+    NotificationReadReceiptRecord,
     NotificationRecord,
     RedeemCodeRecord,
     RolePermissionRecord,
@@ -27,6 +28,7 @@ from .orm import (
     ApiTokenEntity,
     FeedbackEntity,
     ImportScriptEntity,
+    NotificationReadReceiptEntity,
     NotificationEntity,
     RedeemCodeEntity,
     SettingEntity,
@@ -613,6 +615,54 @@ class SqlAlchemyPlatformRepository:
             )
             return self._notification_record(entity) if entity else None
 
+    def save_notification_read_receipt(
+        self, record: NotificationReadReceiptRecord
+    ) -> NotificationReadReceiptRecord:
+        """保存通知中心用户已读回执。"""
+
+        with self.session_factory() as session:
+            entity = session.scalar(
+                select(NotificationReadReceiptEntity).where(
+                    NotificationReadReceiptEntity.user_id == record.user_id,
+                    NotificationReadReceiptEntity.source == record.source,
+                    NotificationReadReceiptEntity.item_id == record.item_id,
+                )
+            )
+            if entity is None:
+                entity = NotificationReadReceiptEntity(
+                    user_id=record.user_id,
+                    source=record.source,
+                    item_id=record.item_id,
+                )
+                session.add(entity)
+            entity.item_updated_at = record.item_updated_at
+            entity.read_at = record.read_at
+            session.commit()
+            return self._notification_read_receipt_record(entity)
+
+    def list_notification_read_receipts(
+        self, *, user_id: str, keys: tuple[tuple[str, str], ...]
+    ) -> dict[tuple[str, str], NotificationReadReceiptRecord]:
+        """按用户读取通知中心回执，返回 (source, item_id) 到回执的映射。"""
+
+        if not keys:
+            return {}
+        with self.session_factory() as session:
+            stmt = select(NotificationReadReceiptEntity).where(
+                NotificationReadReceiptEntity.user_id == user_id
+            )
+            source_values = sorted({source for source, _item_id in keys})
+            item_values = sorted({item_id for _source, item_id in keys})
+            stmt = stmt.where(NotificationReadReceiptEntity.source.in_(source_values))
+            stmt = stmt.where(NotificationReadReceiptEntity.item_id.in_(item_values))
+            entities = session.scalars(stmt).all()
+            wanted = set(keys)
+            return {
+                (entity.source, entity.item_id): self._notification_read_receipt_record(entity)
+                for entity in entities
+                if (entity.source, entity.item_id) in wanted
+            }
+
     def save_announcement(self, record: AnnouncementRecord) -> AnnouncementRecord:
         """新增或更新系统公告。"""
 
@@ -995,6 +1045,17 @@ class SqlAlchemyPlatformRepository:
             content=entity.content,
             read=bool(entity.read),
             created_at=entity.created_at,
+        )
+
+    def _notification_read_receipt_record(
+        self, entity: NotificationReadReceiptEntity
+    ) -> NotificationReadReceiptRecord:
+        return NotificationReadReceiptRecord(
+            user_id=entity.user_id,
+            source=entity.source,
+            item_id=entity.item_id,
+            item_updated_at=float(entity.item_updated_at or 0.0),
+            read_at=float(entity.read_at or 0.0),
         )
 
     def _apply_announcement(

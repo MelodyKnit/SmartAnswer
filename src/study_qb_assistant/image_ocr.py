@@ -19,10 +19,16 @@ from urllib.parse import urlparse
 import httpx
 
 from .input_anomalies import is_image_data_url, normalize_image_data_urls, normalize_image_urls
+from .logger import log_event
 from .models import QuestionQuery
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 DATA_URL_PREFIX_PATTERN = re.compile(r"^data:(image/[-+.\w]+);base64,", re.I)
+CHAOXING_IMAGE_REFERER = "https://mooc1.chaoxing.com/"
+IMAGE_FETCH_USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 " "Chrome/137 Safari/537.36"
+)
+IMAGE_FETCH_ACCEPT = "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
 
 
 @dataclass(slots=True)
@@ -102,10 +108,12 @@ def load_query_image_assets(query: QuestionQuery) -> tuple[ImageAsset, ...]:
         seen.add(key)
         assets.append(asset)
 
-    for url in normalize_image_urls(query.image_urls, (query.title,), query.option_image_urls.values()):
+    for url in normalize_image_urls(
+        query.image_urls, (query.title,), query.option_image_urls.values()
+    ):
         if url in seen:
             continue
-        asset = fetch_public_image_asset(url, referer=query.page_url)
+        asset = fetch_public_image_asset(url, referer=query.page_url, request_id=query.request_id)
         if asset is None:
             continue
         seen.add(url)
@@ -119,7 +127,13 @@ def fetch_public_image(url: str) -> bytes | None:
     if not is_public_http_url(url):
         return None
     try:
-        with httpx.stream("GET", url, timeout=10.0, follow_redirects=True) as response:
+        with httpx.stream(
+            "GET",
+            url,
+            timeout=10.0,
+            follow_redirects=True,
+            headers=browser_image_request_headers(url),
+        ) as response:
             response.raise_for_status()
             content_type = response.headers.get("content-type", "").lower()
             if content_type and not content_type.startswith("image/"):
@@ -136,12 +150,18 @@ def fetch_public_image(url: str) -> bytes | None:
         return None
 
 
-def fetch_public_image_asset(url: str, *, referer: str | None = None) -> ImageAsset | None:
+def fetch_public_image_asset(
+    url: str, *, referer: str | None = None, request_id: str | None = None
+) -> ImageAsset | None:
     """抓取图片并转换成带 mime/data-url 的统一资产对象。"""
 
-    image, mime_type = fetch_public_image_with_mime(url)
+    image, mime_type = fetch_public_image_with_mime(url, referer=referer, request_id=request_id)
     if image is None or not mime_type:
-        image, mime_type = fetch_image_via_playwright(url, referer=referer)
+        image, mime_type = fetch_image_via_playwright(
+            url,
+            referer=referer,
+            request_id=request_id,
+        )
     if image is None or not mime_type:
         return None
     data_url = image_bytes_to_data_url(image, mime_type)
@@ -150,27 +170,87 @@ def fetch_public_image_asset(url: str, *, referer: str | None = None) -> ImageAs
     return ImageAsset(source_url=url, mime_type=mime_type, content_bytes=image, data_url=data_url)
 
 
-def fetch_public_image_with_mime(url: str) -> tuple[bytes | None, str | None]:
+def fetch_public_image_with_mime(
+    url: str,
+    *,
+    referer: str | None = None,
+    request_id: str | None = None,
+) -> tuple[bytes | None, str | None]:
     """安全抓取公网图片，同时返回识别出的 mime type。"""
 
     if not is_public_http_url(url):
+        log_image_hydration(
+            request_id=request_id,
+            url=url,
+            method="httpx_browser_headers",
+            ok=False,
+            reason="non_public_url",
+        )
         return None, None
     try:
-        with httpx.stream("GET", url, timeout=10.0, follow_redirects=True) as response:
+        with httpx.stream(
+            "GET",
+            url,
+            timeout=10.0,
+            follow_redirects=True,
+            headers=browser_image_request_headers(url, referer=referer),
+        ) as response:
             response.raise_for_status()
             content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
             if content_type and not content_type.startswith("image/"):
+                log_image_hydration(
+                    request_id=request_id,
+                    url=url,
+                    method="httpx_browser_headers",
+                    ok=False,
+                    reason="non_image_content",
+                    mime_type=content_type,
+                )
                 return None, None
             chunks: list[bytes] = []
             total = 0
             for chunk in response.iter_bytes():
                 total += len(chunk)
                 if total > MAX_IMAGE_BYTES:
+                    log_image_hydration(
+                        request_id=request_id,
+                        url=url,
+                        method="httpx_browser_headers",
+                        ok=False,
+                        reason="image_too_large",
+                        mime_type=content_type,
+                        byte_count=total,
+                    )
                     return None, None
                 chunks.append(chunk)
             mime_type = content_type or guess_image_mime(url)
-            return b"".join(chunks), mime_type
-    except Exception:
+            image = b"".join(chunks)
+            log_image_hydration(
+                request_id=request_id,
+                url=url,
+                method="httpx_browser_headers",
+                ok=True,
+                mime_type=mime_type,
+                byte_count=len(image),
+            )
+            return image, mime_type
+    except httpx.HTTPStatusError as exc:
+        log_image_hydration(
+            request_id=request_id,
+            url=url,
+            method="httpx_browser_headers",
+            ok=False,
+            reason=f"http_status_{exc.response.status_code}",
+        )
+        return None, None
+    except Exception as exc:
+        log_image_hydration(
+            request_id=request_id,
+            url=url,
+            method="httpx_browser_headers",
+            ok=False,
+            reason=type(exc).__name__,
+        )
         return None, None
 
 
@@ -200,6 +280,60 @@ def is_public_http_url(url: str) -> bool:
         ):
             return False
     return True
+
+
+def browser_image_request_headers(url: str, *, referer: str | None = None) -> dict[str, str]:
+    """构造接近浏览器图片加载的请求头，提升防盗链图片抓取成功率。"""
+
+    headers = {
+        "User-Agent": IMAGE_FETCH_USER_AGENT,
+        "Accept": IMAGE_FETCH_ACCEPT,
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    }
+    resolved_referer = image_request_referer(url, referer=referer)
+    if resolved_referer:
+        headers["Referer"] = resolved_referer
+    return headers
+
+
+def image_request_referer(url: str, *, referer: str | None = None) -> str:
+    """选择图片抓取 Referer；优先页面来源，兼容超星常见图床。"""
+
+    text = str(referer or "").strip()
+    if text:
+        parsed = urlparse(text)
+        if parsed.scheme in {"http", "https"} and parsed.netloc:
+            return text
+    image_host = urlparse(str(url or "")).netloc.lower()
+    if image_host.endswith("p.cldisk.com"):
+        return CHAOXING_IMAGE_REFERER
+    return ""
+
+
+def log_image_hydration(
+    *,
+    request_id: str | None,
+    url: str,
+    method: str,
+    ok: bool,
+    reason: str = "",
+    mime_type: str = "",
+    byte_count: int = 0,
+) -> None:
+    """记录图片补强结果，避免把图片内容或完整 URL 写入日志。"""
+
+    log_event(
+        "image_hydration",
+        {
+            "request_id": request_id,
+            "domain": urlparse(str(url or "")).netloc,
+            "method": method,
+            "ok": ok,
+            "reason": reason,
+            "mime_type": mime_type,
+            "byte_count": byte_count,
+        },
+    )
 
 
 def ocr_image_bytes(image: bytes) -> str:
@@ -268,14 +402,33 @@ def image_bytes_to_data_url(content: bytes, mime_type: str) -> str:
     return f"data:{mime_type};base64,{payload}"
 
 
-def fetch_image_via_playwright(url: str, *, referer: str | None = None) -> tuple[bytes | None, str | None]:
+def fetch_image_via_playwright(
+    url: str,
+    *,
+    referer: str | None = None,
+    request_id: str | None = None,
+) -> tuple[bytes | None, str | None]:
     """使用 Playwright 以浏览器导航方式抓取图片，绕过部分防盗链限制。"""
 
     if not is_public_http_url(url):
+        log_image_hydration(
+            request_id=request_id,
+            url=url,
+            method="playwright",
+            ok=False,
+            reason="non_public_url",
+        )
         return None, None
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
+        log_image_hydration(
+            request_id=request_id,
+            url=url,
+            method="playwright",
+            ok=False,
+            reason="playwright_not_installed",
+        )
         return None, None
     try:
         from .llm.providers.web_search import resolve_browser_path
@@ -293,20 +446,61 @@ def fetch_image_via_playwright(url: str, *, referer: str | None = None) -> tuple
         if browser_path:
             launch_options["executable_path"] = browser_path
         browser = manager.chromium.launch(**launch_options)
-        headers = {"Referer": str(referer).strip()} if str(referer or "").strip() else None
+        headers = browser_image_request_headers(url, referer=referer)
         context = browser.new_context(extra_http_headers=headers or {})
         page = context.new_page()
         response = page.goto(url, wait_until="domcontentloaded", timeout=10000)
         if response is None or not response.ok:
+            log_image_hydration(
+                request_id=request_id,
+                url=url,
+                method="playwright",
+                ok=False,
+                reason="navigation_failed",
+            )
             return None, None
-        mime_type = (response.headers.get("content-type", "").split(";", 1)[0].lower() or guess_image_mime(url))
+        mime_type = response.headers.get("content-type", "").split(";", 1)[
+            0
+        ].lower() or guess_image_mime(url)
         if mime_type and not mime_type.startswith("image/"):
+            log_image_hydration(
+                request_id=request_id,
+                url=url,
+                method="playwright",
+                ok=False,
+                reason="non_image_content",
+                mime_type=mime_type,
+            )
             return None, None
         body = response.body()
         if not body or len(body) > MAX_IMAGE_BYTES:
+            log_image_hydration(
+                request_id=request_id,
+                url=url,
+                method="playwright",
+                ok=False,
+                reason="empty_or_too_large",
+                mime_type=mime_type,
+                byte_count=len(body or b""),
+            )
             return None, None
+        log_image_hydration(
+            request_id=request_id,
+            url=url,
+            method="playwright",
+            ok=True,
+            mime_type=mime_type,
+            byte_count=len(body),
+        )
         return body, mime_type
-    except Exception:
+    except Exception as exc:
+        log_image_hydration(
+            request_id=request_id,
+            url=url,
+            method="playwright",
+            ok=False,
+            reason=type(exc).__name__,
+        )
         return None, None
     finally:
         try:

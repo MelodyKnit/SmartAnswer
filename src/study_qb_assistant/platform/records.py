@@ -369,6 +369,26 @@ class NotificationRecord:
 
 
 @dataclass(slots=True)
+class NotificationReadReceiptRecord:
+    """通知中心按用户维度记录的已读回执。"""
+
+    user_id: str
+    source: str
+    item_id: str
+    item_updated_at: float
+    read_at: float
+
+    def to_dict(self) -> dict:
+        return {
+            "user_id": self.user_id,
+            "source": self.source,
+            "item_id": self.item_id,
+            "item_updated_at": self.item_updated_at,
+            "read_at": self.read_at,
+        }
+
+
+@dataclass(slots=True)
 class AnnouncementRecord:
     """系统公告记录。"""
 

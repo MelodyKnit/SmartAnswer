@@ -1,13 +1,11 @@
 <script setup lang="ts">
-/** 登录后全局公告横幅：只展示当前用户角色可见且有效的公告。 */
+/** 登录后全局公告横幅：只展示未读且高优先级的有效公告。 */
 import { computed, onMounted, ref } from 'vue'
-import { announcementApi } from '@/api/endpoints'
-import type { Announcement, AnnouncementLevel } from '@/api/types'
+import { notificationCenterApi } from '@/api/endpoints'
+import type { AnnouncementLevel, NotificationCenterItem } from '@/api/types'
 import { formatDateTime } from '@/utils/format'
 
-const STORAGE_KEY = 'study-qb-dismissed-announcements'
-
-const announcements = ref<Announcement[]>([])
+const announcements = ref<NotificationCenterItem[]>([])
 const dialogVisible = ref(false)
 
 const levelMeta: Record<
@@ -40,55 +38,40 @@ const levelMeta: Record<
   },
 }
 
-function readDismissedKeys() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    const parsed = raw ? JSON.parse(raw) : []
-    return new Set(Array.isArray(parsed) ? parsed.map(String) : [])
-  } catch {
-    return new Set<string>()
-  }
-}
-
-function writeDismissedKeys(keys: Set<string>) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify([...keys].slice(-100)))
-  } catch {
-    /* localStorage 不可用时忽略关闭记忆，不影响公告展示。 */
-  }
-}
-
-function dismissKey(item: Announcement) {
-  return `${item.announcement_id}:${item.updated_at}`
+function announcementMeta(level: string) {
+  return levelMeta[(level in levelMeta ? level : 'info') as AnnouncementLevel]
 }
 
 const visibleAnnouncements = computed(() => {
-  const dismissed = readDismissedKeys()
-  return announcements.value.filter((item) => !dismissed.has(dismissKey(item)))
+  return announcements.value.filter(
+    (item) =>
+      item.source === 'announcement' &&
+      !item.read &&
+      (item.pinned || item.level === 'danger' || item.level === 'warning'),
+  )
 })
 
 const current = computed(() => visibleAnnouncements.value[0] ?? null)
 
-function dismiss(item: Announcement) {
-  const dismissed = readDismissedKeys()
-  dismissed.add(dismissKey(item))
-  writeDismissedKeys(dismissed)
-  announcements.value = [...announcements.value]
+async function dismiss(item: NotificationCenterItem) {
+  try {
+    await notificationCenterApi.read('announcement', item.item_id)
+    item.read = true
+    announcements.value = [...announcements.value]
+  } catch {
+    /* 关闭失败时保留公告，避免误以为重要公告已确认。 */
+  }
 }
 
-function timeRange(item: Announcement) {
-  if (!item.starts_at && !item.ends_at) return '长期有效'
-  if (item.starts_at && item.ends_at) {
-    return `${formatDateTime(item.starts_at)} 至 ${formatDateTime(item.ends_at)}`
-  }
-  if (item.starts_at) return `${formatDateTime(item.starts_at)} 起`
-  return `${formatDateTime(item.ends_at)} 前有效`
+function timeRange(item: NotificationCenterItem) {
+  if (!item.expires_at) return '长期有效'
+  return `${formatDateTime(item.expires_at)} 前有效`
 }
 
 async function loadAnnouncements() {
   try {
-    const res = await announcementApi.active(10)
-    announcements.value = res.announcements
+    const res = await notificationCenterApi.list({ source: 'announcement', limit: 10 })
+    announcements.value = res.items
   } catch {
     /* 公告加载失败不阻塞业务页面。 */
   }
@@ -101,16 +84,16 @@ onMounted(loadAnnouncements)
   <div v-if="current" class="border-b border-line bg-card px-4 py-2 sm:px-6">
     <div
       class="flex items-start gap-3 rounded-xl border px-3 py-2 text-sm shadow-sm"
-      :class="levelMeta[current.level].panel"
+      :class="announcementMeta(current.level).panel"
     >
       <span
         class="mt-0.5 inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium"
-        :class="levelMeta[current.level].badge"
+        :class="announcementMeta(current.level).badge"
       >
         <el-icon :size="13">
-          <component :is="levelMeta[current.level].icon" />
+          <component :is="announcementMeta(current.level).icon" />
         </el-icon>
-        {{ levelMeta[current.level].label }}
+        {{ announcementMeta(current.level).label }}
       </span>
       <div class="min-w-0 flex-1">
         <div class="flex flex-wrap items-center gap-2">
@@ -135,11 +118,13 @@ onMounted(loadAnnouncements)
       <div class="space-y-3">
         <article
           v-for="item in visibleAnnouncements"
-          :key="item.announcement_id"
+          :key="item.item_id"
           class="rounded-xl border border-line bg-muted/40 p-4"
         >
           <div class="flex flex-wrap items-center gap-2">
-            <el-tag :type="item.level === 'danger' ? 'danger' : item.level">{{ levelMeta[item.level].label }}</el-tag>
+            <el-tag :type="item.level === 'danger' ? 'danger' : item.level">
+              {{ announcementMeta(item.level).label }}
+            </el-tag>
             <h3 class="text-base font-semibold text-ink">{{ item.title }}</h3>
             <el-tag v-if="item.pinned" type="warning" effect="plain">置顶</el-tag>
           </div>

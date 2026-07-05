@@ -15,6 +15,8 @@ import type {
   LlmModel,
   LlmRuntimeConfig,
   NotificationItem,
+  NotificationCenterItem,
+  NotificationCenterSource,
   OcsConfig,
   PointsPolicy,
   QueryResultPayload,
@@ -185,6 +187,27 @@ export const notificationApi = {
       `/notifications/${encodeURIComponent(id)}/read`,
     ),
   readAll: () => api.post<{ ok: true; count: number }>('/notifications/read-all'),
+}
+
+export const notificationCenterApi = {
+  list: (
+    params: {
+      status?: '' | 'read' | 'unread'
+      source?: '' | NotificationCenterSource
+      limit?: number
+    } = {},
+  ) =>
+    api.get<{
+      ok: true
+      items: NotificationCenterItem[]
+      unread_count: number
+      total: number
+    }>('/notification-center', params),
+  read: (source: NotificationCenterSource, id: string) =>
+    api.post<{ ok: true; item: NotificationCenterItem }>(
+      `/notification-center/${encodeURIComponent(source)}/${encodeURIComponent(id)}/read`,
+    ),
+  readAll: () => api.post<{ ok: true; count: number }>('/notification-center/read-all'),
 }
 
 /* ---------------- 公告 ---------------- */

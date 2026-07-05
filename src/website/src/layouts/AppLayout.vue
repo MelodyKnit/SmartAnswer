@@ -3,15 +3,13 @@
  *  - 桌面：固定侧边栏；移动端：抽屉式侧边栏 + 顶栏汉堡按钮。
  *  - 顶栏含主题切换（亮/暗/跟随系统）、通知铃、用户菜单。
  *  - 菜单按角色过滤。 */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { useThemeStore, type ThemeMode } from '@/stores/theme'
-import { notificationApi } from '@/api/endpoints'
-import type { NotificationItem } from '@/api/types'
-import { relativeTime } from '@/utils/format'
 import AnnouncementBanner from '@/components/AnnouncementBanner.vue'
+import NotificationCenterPopover from '@/components/NotificationCenterPopover.vue'
 import SidebarNav from './SidebarNav.vue'
 
 const auth = useAuthStore()
@@ -101,39 +99,6 @@ function chooseTheme(mode: ThemeMode) {
   theme.setMode(mode)
 }
 
-/* 通知铃 */
-const notifications = ref<NotificationItem[]>([])
-const unreadCount = computed(() => notifications.value.filter((n) => !n.read).length)
-
-async function loadNotifications() {
-  try {
-    const res = await notificationApi.list({ limit: 20 })
-    notifications.value = res.notifications
-  } catch {
-    /* 顶栏通知失败不阻塞主流程 */
-  }
-}
-
-async function markRead(item: NotificationItem) {
-  if (item.read) return
-  try {
-    await notificationApi.read(item.notification_id)
-    item.read = true
-  } catch {
-    /* 忽略 */
-  }
-}
-
-async function markAllRead() {
-  try {
-    await notificationApi.readAll()
-    notifications.value.forEach((n) => (n.read = true))
-    ElMessage.success('已全部标记为已读')
-  } catch {
-    ElMessage.error('操作失败')
-  }
-}
-
 function handleSelect(index: string) {
   if (index !== route.path) router.push(index)
 }
@@ -150,8 +115,6 @@ async function handleLogout() {
   await auth.logout()
   router.replace({ name: 'login' })
 }
-
-onMounted(loadNotifications)
 </script>
 
 <template>
@@ -216,40 +179,7 @@ onMounted(loadNotifications)
             </template>
           </el-dropdown>
 
-          <!-- 通知 -->
-          <el-popover placement="bottom-end" :width="320" trigger="click">
-            <template #reference>
-              <el-badge :value="unreadCount" :hidden="unreadCount === 0" :max="99">
-                <el-button circle text>
-                  <el-icon :size="20"><Bell /></el-icon>
-                </el-button>
-              </el-badge>
-            </template>
-            <div class="flex items-center justify-between pb-2">
-              <span class="font-medium text-ink">消息通知</span>
-              <el-button link type="primary" size="small" @click="markAllRead">全部已读</el-button>
-            </div>
-            <el-scrollbar max-height="320px">
-              <div v-if="notifications.length === 0" class="py-8 text-center text-sm text-ink-muted">
-                暂无消息
-              </div>
-              <div
-                v-for="n in notifications"
-                :key="n.notification_id"
-                class="cursor-pointer rounded-lg p-2.5 hover:bg-brand-50"
-                @click="markRead(n)"
-              >
-                <div class="flex items-center gap-2">
-                  <span v-if="!n.read" class="h-1.5 w-1.5 shrink-0 rounded-full bg-brand-600"></span>
-                  <span class="truncate text-sm font-medium text-ink">{{ n.title }}</span>
-                  <span class="ml-auto shrink-0 text-xs text-ink-muted">
-                    {{ relativeTime(n.created_at) }}
-                  </span>
-                </div>
-                <p class="mt-1 line-clamp-2 text-xs text-ink-soft">{{ n.content }}</p>
-              </div>
-            </el-scrollbar>
-          </el-popover>
+          <NotificationCenterPopover />
 
           <!-- 用户菜单 -->
           <el-dropdown trigger="click">

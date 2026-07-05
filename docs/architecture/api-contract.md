@@ -651,6 +651,35 @@
 
 ### 4.12 消息中心
 
+用户侧统一使用通知中心读取公告和消息。公告仍由公告表管理生命周期，消息仍由通知表保存；通知中心只做聚合展示和按用户维度记录已读状态。
+
+#### `GET /notification-center`
+
+查询参数：
+
+- `status`：可选，`read` / `unread`，为空返回全部。
+- `source`：可选，`announcement` / `notification`，为空返回全部来源。
+- `limit`：返回数量，默认 `20`，最大 `100`。
+
+返回字段：
+
+- `items`：统一列表项，字段包含 `item_id`、`source`、`level`、`category`、`title`、`content`、`read`、`pinned`、`created_at`、`updated_at`、`expires_at`。
+- `unread_count`：当前用户可见公告和消息的未读总数。
+- `total`：当前筛选条件下的列表总数。
+
+说明：
+
+- 公告已读按 `announcement_id + updated_at` 判断，公告内容更新后会重新变成未读。
+- `user_id=null` 的全局通知在通知中心内按用户回执判断已读，避免一个用户标记已读影响其他用户。
+
+#### `POST /notification-center/{source}/{item_id}/read`
+
+标记通知中心单条内容已读。`source` 只能是 `announcement` 或 `notification`。
+
+#### `POST /notification-center/read-all`
+
+将当前用户可见的公告和消息全部标记为已读。
+
 #### `GET /notifications`
 
 查询参数：
@@ -759,7 +788,7 @@
 - 角色：登录用户
 - 返回当前用户角色可见的有效公告。
 - 有效条件：`status=published`，且当前时间位于 `starts_at` / `ends_at` 窗口内；`0` 表示不限制。
-- 前端用于登录后全局顶部横幅展示，置顶公告优先。
+- 保留兼容旧调用；当前顶栏通知中心通过 `GET /notification-center` 聚合公告，顶部横幅只展示置顶或重要级别的未读公告。
 
 #### `POST /announcements`
 

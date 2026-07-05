@@ -216,6 +216,22 @@ class NotificationEntity(Base):
     created_at: Mapped[float] = mapped_column(Float, index=True)
 
 
+class NotificationReadReceiptEntity(Base):
+    """通知中心用户已读回执表。"""
+
+    __tablename__ = "notification_read_receipts"
+    __table_args__ = (
+        UniqueConstraint("user_id", "source", "item_id", name="uq_notification_receipt_user_item"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    source: Mapped[str] = mapped_column(String(32), index=True)
+    item_id: Mapped[str] = mapped_column(String(64), index=True)
+    item_updated_at: Mapped[float] = mapped_column(Float, default=0.0)
+    read_at: Mapped[float] = mapped_column(Float, index=True)
+
+
 class AnnouncementEntity(Base):
     """系统公告表。"""
 

@@ -30,6 +30,7 @@ from .records import (
     FeedbackRecord,
     ImportScriptRecord,
     LlmCallTraceRecord,
+    NotificationReadReceiptRecord,
     NotificationRecord,
     RedeemCodeRecord,
     RolePermissionRecord,
@@ -699,6 +700,233 @@ class PlatformService:
                 self.repository.save_notification(record)
                 count += 1
         return count
+
+    def notification_center(
+        self,
+        *,
+        user_id: str,
+        role: str,
+        status: str = "",
+        source: str = "",
+        limit: int = 20,
+    ) -> dict:
+        """聚合当前用户可见的公告和消息通知。"""
+
+        normalized_limit = max(1, min(int(limit or 20), 100))
+        normalized_source = (source or "").strip()
+        if normalized_source not in {"", "announcement", "notification"}:
+            raise AuthError("INVALID_SOURCE", "通知来源无效", http_status=400)
+        normalized_status = (status or "").strip()
+        if normalized_status not in {"", "read", "unread"}:
+            raise AuthError("INVALID_STATUS", "通知状态无效", http_status=400)
+
+        with self._lock:
+            items = self.build_notification_center_items(
+                user_id=user_id,
+                role=role,
+                source=normalized_source,
+                limit=500,
+            )
+
+        unread_count = sum(1 for item in items if not item["read"])
+        if normalized_status == "read":
+            items = [item for item in items if item["read"]]
+        elif normalized_status == "unread":
+            items = [item for item in items if not item["read"]]
+        return {
+            "items": items[:normalized_limit],
+            "unread_count": unread_count,
+            "total": len(items),
+        }
+
+    def mark_notification_center_item_read(
+        self,
+        *,
+        user_id: str,
+        role: str,
+        source: str,
+        item_id: str,
+    ) -> dict:
+        """按通知中心来源标记单条公告或消息为已读。"""
+
+        normalized_source = (source or "").strip()
+        with self._lock:
+            if normalized_source == "announcement":
+                record = self.repository.get_announcement(item_id)
+                now = time.time()
+                if record is None or not self.announcement_visible_for_role(
+                    record, role=role, now=now
+                ):
+                    raise AuthError("ANNOUNCEMENT_NOT_FOUND", "公告不存在", http_status=404)
+                self.repository.save_notification_read_receipt(
+                    NotificationReadReceiptRecord(
+                        user_id=user_id,
+                        source="announcement",
+                        item_id=record.announcement_id,
+                        item_updated_at=record.updated_at,
+                        read_at=now,
+                    )
+                )
+            elif normalized_source == "notification":
+                record = self.repository.get_notification(item_id)
+                if record is None:
+                    raise AuthError("NOTIFICATION_NOT_FOUND", "消息不存在", http_status=404)
+                if record.user_id not in {None, user_id}:
+                    raise AuthError("NOTIFICATION_FORBIDDEN", "无权操作该消息", http_status=403)
+                if record.user_id is None:
+                    self.repository.save_notification_read_receipt(
+                        NotificationReadReceiptRecord(
+                            user_id=user_id,
+                            source="notification",
+                            item_id=record.notification_id,
+                            item_updated_at=record.created_at,
+                            read_at=time.time(),
+                        )
+                    )
+                else:
+                    record.read = True
+                    self.repository.save_notification(record)
+            else:
+                raise AuthError("INVALID_SOURCE", "通知来源无效", http_status=400)
+
+            items = self.build_notification_center_items(
+                user_id=user_id,
+                role=role,
+                source=normalized_source,
+                limit=100,
+            )
+        for item in items:
+            if item["source"] == normalized_source and item["item_id"] == item_id:
+                return item
+        raise AuthError("NOTIFICATION_CENTER_ITEM_NOT_FOUND", "通知不存在", http_status=404)
+
+    def mark_all_notification_center_read(self, *, user_id: str, role: str) -> int:
+        """批量标记通知中心的可见未读内容。"""
+
+        with self._lock:
+            items = self.build_notification_center_items(
+                user_id=user_id,
+                role=role,
+                source="",
+                limit=500,
+            )
+            unread_items = [item for item in items if not item["read"]]
+            for item in unread_items:
+                if item["source"] == "announcement":
+                    self.repository.save_notification_read_receipt(
+                        NotificationReadReceiptRecord(
+                            user_id=user_id,
+                            source="announcement",
+                            item_id=item["item_id"],
+                            item_updated_at=float(item["updated_at"] or 0.0),
+                            read_at=time.time(),
+                        )
+                    )
+                else:
+                    record = self.repository.get_notification(str(item["item_id"]))
+                    if record is None:
+                        continue
+                    if record.user_id is None:
+                        self.repository.save_notification_read_receipt(
+                            NotificationReadReceiptRecord(
+                                user_id=user_id,
+                                source="notification",
+                                item_id=record.notification_id,
+                                item_updated_at=record.created_at,
+                                read_at=time.time(),
+                            )
+                        )
+                    else:
+                        record.read = True
+                        self.repository.save_notification(record)
+        return len(unread_items)
+
+    def build_notification_center_items(
+        self, *, user_id: str, role: str, source: str, limit: int
+    ) -> list[dict]:
+        """构建通知中心统一列表，保持公告和通知各自的存储语义。"""
+
+        items: list[dict] = []
+        keys: list[tuple[str, str]] = []
+        notification_records: list[NotificationRecord] = []
+        announcement_records: list[AnnouncementRecord] = []
+        if source in {"", "notification"}:
+            notification_records = self.repository.list_notifications(
+                user_id=user_id, limit=max(1, min(limit, 500))
+            )
+            keys.extend(("notification", item.notification_id) for item in notification_records)
+        if source in {"", "announcement"}:
+            announcement_records = self.repository.list_active_announcements(
+                role=role, now=time.time(), limit=max(1, min(limit, 500))
+            )
+            keys.extend(("announcement", item.announcement_id) for item in announcement_records)
+
+        receipts = self.repository.list_notification_read_receipts(
+            user_id=user_id,
+            keys=tuple(keys),
+        )
+
+        for record in notification_records:
+            item_updated_at = float(record.created_at or 0.0)
+            receipt = receipts.get(("notification", record.notification_id))
+            read = bool(record.read) if record.user_id else self.receipt_covers(
+                receipt, item_updated_at
+            )
+            items.append(
+                {
+                    "item_id": record.notification_id,
+                    "source": "notification",
+                    "level": record.level,
+                    "category": record.category,
+                    "title": record.title,
+                    "content": record.content,
+                    "read": read,
+                    "pinned": False,
+                    "created_at": item_updated_at,
+                    "updated_at": item_updated_at,
+                    "expires_at": 0.0,
+                }
+            )
+
+        for record in announcement_records:
+            item_updated_at = float(record.updated_at or 0.0)
+            receipt = receipts.get(("announcement", record.announcement_id))
+            created_at = float(record.published_at or record.updated_at or record.created_at)
+            items.append(
+                {
+                    "item_id": record.announcement_id,
+                    "source": "announcement",
+                    "level": record.level,
+                    "category": "announcement",
+                    "title": record.title,
+                    "content": record.content,
+                    "read": self.receipt_covers(receipt, item_updated_at),
+                    "pinned": bool(record.pinned),
+                    "created_at": created_at,
+                    "updated_at": item_updated_at,
+                    "expires_at": float(record.ends_at or 0.0),
+                }
+            )
+
+        items.sort(key=lambda item: (not item["pinned"], -float(item["created_at"] or 0.0)))
+        return items[: max(1, min(limit, 500))]
+
+    @staticmethod
+    def receipt_covers(
+        receipt: NotificationReadReceiptRecord | None, item_updated_at: float
+    ) -> bool:
+        return bool(receipt and receipt.item_updated_at >= item_updated_at)
+
+    @staticmethod
+    def announcement_visible_for_role(
+        record: AnnouncementRecord, *, role: str, now: float
+    ) -> bool:
+        return (
+            record.status == "published"
+            and record.audience in {"all", role}
+            and (record.starts_at <= 0 or record.starts_at <= now)
+            and (record.ends_at <= 0 or record.ends_at > now)
+        )
 
     def create_announcement(
         self,
