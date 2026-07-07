@@ -15,9 +15,10 @@ from dataclasses import dataclass, field
 from html import unescape
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urljoin, urlparse
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from playwright.sync_api import Playwright, Browser
+if TYPE_CHECKING:
+    from playwright.sync_api import Browser, Playwright
 
 from ...config import GlobalConfig, get_global_config
 from ...models import QuestionQuery
@@ -328,9 +329,7 @@ class BingPlaywrightSearchProvider:
         future = self._ensure_executor().submit(self._search_sync, query, top_k)
         return future.result()
 
-    def _search_sync(
-        self, query: QuestionQuery, top_k: int = 5
-    ) -> tuple[WebSearchResult, ...]:
+    def _search_sync(self, query: QuestionQuery, top_k: int = 5) -> tuple[WebSearchResult, ...]:
         """在专用线程里执行同步 Playwright 搜索。"""
         try:
             from playwright.sync_api import sync_playwright

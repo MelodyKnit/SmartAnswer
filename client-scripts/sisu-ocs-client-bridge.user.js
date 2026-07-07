@@ -517,7 +517,7 @@
       return false;
     }
     if (question.type === "completion") {
-      return fillTextAnswer(question.root, data.answer_text || answer);
+      return fillTextAnswer(question.root, answer || data.answer_text);
     }
     if (question.type === "judgement") {
       return clickJudgement(question.root, answer);
@@ -532,16 +532,70 @@
   }
 
   function fillTextAnswer(root, answer) {
-    const field = Array.from(root.querySelectorAll("textarea,input[type='text'],input:not([type])")).find(visible);
-    if (!field) {
+    const fields = Array.from(
+      root.querySelectorAll("textarea,input[type='text'],input:not([type]),[contenteditable='true']")
+    ).filter(textFieldUsable);
+    if (!fields.length) {
       markQuestion(root, "未找到输入框", "warn");
       return false;
     }
-    field.focus();
-    field.value = answer;
-    dispatchInputEvents(field);
+    const parts = splitCompletionAnswer(answer);
+    if (parts.length > 1 && fields.length > 1) {
+      const fillCount = Math.min(parts.length, fields.length);
+      for (let index = 0; index < fillCount; index += 1) {
+        setTextFieldValue(fields[index], parts[index]);
+      }
+      const suffix = parts.length === fields.length ? "" : `，答案 ${parts.length} 个/输入框 ${fields.length} 个`;
+      markQuestion(root, `已回填 ${fillCount} 个空${suffix}`, parts.length === fields.length ? "ok" : "warn");
+      return fillCount > 0;
+    }
+    setTextFieldValue(fields[0], parts.join(" ") || normalizeText(answer));
     markQuestion(root, "已回填文本", "ok");
     return true;
+  }
+
+  function textFieldUsable(field) {
+    if (!visible(field)) {
+      return false;
+    }
+    if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) {
+      return !field.disabled && !field.readOnly;
+    }
+    return field.isContentEditable === true;
+  }
+
+  function setTextFieldValue(field, value) {
+    field.focus();
+    if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) {
+      field.value = value;
+    } else {
+      field.textContent = value;
+    }
+    dispatchInputEvents(field);
+  }
+
+  function splitCompletionAnswer(answer) {
+    const text = normalizeText(answer);
+    if (!text) {
+      return [];
+    }
+    try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) {
+        return parsed.map((item) => normalizeText(item)).filter(Boolean);
+      }
+    } catch (_error) {
+      // 非 JSON 数组时继续按 OCS 常用分隔符拆分。
+    }
+    for (const separator of ["###", "===", "---", "#", "|", "；", ";"]) {
+      if (text.includes(separator)) {
+        const parts = text.split(separator).map(normalizeText).filter(Boolean);
+        if (parts.length > 1) {
+          return parts;
+        }
+      }
+    }
+    return [text];
   }
 
   function clickJudgement(root, answer) {

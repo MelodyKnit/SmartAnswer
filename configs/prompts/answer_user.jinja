@@ -1,0 +1,14 @@
+Question type: {{ question_type }}
+Question: {{ title }}
+{% if options_block %}
+Options:
+{{ options_block }}
+{% endif %}
+{% if evidence_block %}
+Web evidence:
+{{ evidence_block }}
+{% endif %}
+{% if previous_answer_block %}
+Previous answer:
+{{ previous_answer_block }}
+{% endif %}

@@ -19,8 +19,10 @@ import type {
 import { useAuthStore } from '@/stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
+import LlmCallStatsTable from '@/components/llm/LlmCallStatsTable.vue'
+import LlmTraceDetailDrawer from '@/components/llm/LlmTraceDetailDrawer.vue'
+import LlmTraceTable from '@/components/llm/LlmTraceTable.vue'
 import { DEFAULT_PAGE_SIZE, SYSTEM_DEFAULTS } from '@/config/constants'
-import { formatDateTime } from '@/utils/format'
 
 // === 1. 概览状态 ===
 const auth = useAuthStore()
@@ -567,45 +569,6 @@ function resetTraceFilters() {
   loadTraces()
 }
 
-const phaseLabel: Record<string, string> = {
-  answer: '模型作答',
-  answer_with_evidence: '证据作答',
-  verify_answer: '答案自检',
-  verify_answer_with_evidence: '证据复核',
-  model_request: '模型请求',
-  model_decode: '响应解码',
-  model_parse: '答案解析',
-  web_search: '联网检索',
-  failover: '主备降级',
-}
-
-function traceOutputLabel(row: LlmCallTrace) {
-  if (row.phase === 'web_search') {
-    const count = row.evidence?.length || 0
-    return count > 0 ? `命中 ${count} 条证据` : '未命中证据'
-  }
-  return row.candidate_answer || row.response_text || '—'
-}
-
-function traceResultLabel(row: LlmCallTrace) {
-  if (!row.ok) return '失败'
-  if (row.phase === 'web_search') {
-    return (row.evidence?.length || 0) > 0 ? '有证据' : '无证据'
-  }
-  return '成功'
-}
-
-function traceResultType(row: LlmCallTrace) {
-  if (!row.ok) return 'danger'
-  if (row.phase === 'web_search' && !(row.evidence?.length || 0)) return 'warning'
-  return 'success'
-}
-
-function traceCandidateLabel(row: LlmCallTrace) {
-  if (row.phase === 'web_search') return '不适用'
-  return row.candidate_answer || '—'
-}
-
 async function loadTraces() {
   tracesLoading.value = true
   try {
@@ -930,32 +893,7 @@ onMounted(async () => {
           <el-button :icon="'Refresh'" @click="loadStats">刷新统计</el-button>
         </div>
         <div class="app-card p-1">
-          <el-table v-loading="statsLoading" :data="stats" style="width: 100%">
-            <el-table-column label="模型" min-width="180">
-              <template #default="{ row }">
-                <span class="text-ink">{{ row.model_name || row.model_id || '（未关联模型）' }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="总调用次数" width="120" prop="total_calls" align="center" />
-            <el-table-column label="成功" width="100" align="center">
-              <template #default="{ row }">
-                <span class="text-success">{{ row.ok_calls }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="失败" width="100" align="center">
-              <template #default="{ row }">
-                <span :class="row.error_calls > 0 ? 'text-danger' : 'text-ink-muted'">
-                  {{ row.error_calls }}
-                </span>
-              </template>
-            </el-table-column>
-            <el-table-column label="平均耗时" width="120" align="center">
-              <template #default="{ row }">{{ (row.avg_elapsed_ms / 1000).toFixed(2) }}s</template>
-            </el-table-column>
-            <template #empty>
-              <el-empty description="暂无调用统计" />
-            </template>
-          </el-table>
+          <LlmCallStatsTable :loading="statsLoading" :stats="stats" />
         </div>
       </el-tab-pane>
 
@@ -989,52 +927,12 @@ onMounted(async () => {
         </div>
 
         <div class="app-card p-1">
-          <el-table v-loading="tracesLoading" :data="traces" style="width: 100%">
-            <el-table-column label="时间" width="170">
-              <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
-            </el-table-column>
-            <el-table-column label="阶段" width="100">
-              <template #default="{ row }">
-                <el-tag size="small" :type="row.phase === 'failover' ? 'danger' : 'info'" effect="light">
-                  {{ phaseLabel[row.phase] || row.phase }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="模型" width="140" show-overflow-tooltip>
-              <template #default="{ row }">{{ row.model_name || row.provider || '—' }}</template>
-            </el-table-column>
-            <el-table-column label="题目" min-width="200" show-overflow-tooltip>
-              <template #default="{ row }">{{ row.question_title || '—' }}</template>
-            </el-table-column>
-            <el-table-column label="阶段输出" width="140" show-overflow-tooltip>
-              <template #default="{ row }">
-                <span :class="row.phase === 'web_search' ? 'text-ink-muted' : 'text-success'">
-                  {{ traceOutputLabel(row) }}
-                </span>
-              </template>
-            </el-table-column>
-            <el-table-column label="结果" width="80" align="center">
-              <template #default="{ row }">
-                <el-tag size="small" :type="traceResultType(row)" effect="plain">
-                  {{ traceResultLabel(row) }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="耗时" width="90" align="center">
-              <template #default="{ row }">{{ (row.elapsed_ms / 1000).toFixed(2) }}s</template>
-            </el-table-column>
-            <el-table-column label="操作" width="150" align="right">
-              <template #default="{ row }">
-                <el-button link type="primary" @click="openTraceDetail(row)">详情</el-button>
-                <el-button v-if="row.request_id" link type="primary" @click="filterByRequest(row.request_id)">
-                  看链路
-                </el-button>
-              </template>
-            </el-table-column>
-            <template #empty>
-              <el-empty description="暂无调用追溯" />
-            </template>
-          </el-table>
+          <LlmTraceTable
+            :loading="tracesLoading"
+            :traces="traces"
+            @detail="openTraceDetail"
+            @filter-request="filterByRequest"
+          />
         </div>
 
         <div v-if="traceTotal > 0" class="mt-4 flex justify-end">
@@ -1187,78 +1085,6 @@ onMounted(async () => {
       </template>
     </el-dialog>
 
-    <el-drawer v-model="traceDetailVisible" title="调用追溯详情" size="560px">
-      <div v-if="traceDetail" class="space-y-4 text-sm">
-        <dl class="space-y-2">
-          <div class="flex justify-between border-b border-line pb-2">
-            <dt class="text-ink-muted">阶段</dt>
-            <dd class="text-ink">{{ phaseLabel[traceDetail.phase] || traceDetail.phase }}</dd>
-          </div>
-          <div class="flex justify-between border-b border-line pb-2">
-            <dt class="text-ink-muted">模型 / 提供方</dt>
-            <dd class="text-ink">{{ traceDetail.model_name || traceDetail.provider || '—' }}</dd>
-          </div>
-          <div class="flex justify-between border-b border-line pb-2">
-            <dt class="text-ink-muted">接口地址</dt>
-            <dd class="text-ink">{{ traceDetail.base_url || '—' }}</dd>
-          </div>
-          <div class="flex justify-between border-b border-line pb-2">
-            <dt class="text-ink-muted">关联 ID</dt>
-            <dd class="font-mono text-xs text-ink">{{ traceDetail.request_id || '—' }}</dd>
-          </div>
-          <div class="flex justify-between border-b border-line pb-2">
-            <dt class="text-ink-muted">阶段输出 / 置信度</dt>
-            <dd class="text-success">
-              {{ traceOutputLabel(traceDetail) }}（{{ (traceDetail.confidence * 100).toFixed(0) }}%）
-            </dd>
-          </div>
-          <div v-if="traceDetail.phase !== 'web_search'" class="flex justify-between border-b border-line pb-2">
-            <dt class="text-ink-muted">候选答案</dt>
-            <dd class="text-success">{{ traceCandidateLabel(traceDetail) }}</dd>
-          </div>
-          <div class="flex justify-between border-b border-line pb-2">
-            <dt class="text-ink-muted">结果 / 耗时</dt>
-            <dd>
-              <el-tag size="small" :type="traceResultType(traceDetail)" effect="plain">
-                {{ traceResultLabel(traceDetail) }}
-              </el-tag>
-              <span class="ml-2 text-ink">{{ (traceDetail.elapsed_ms / 1000).toFixed(2) }}s</span>
-            </dd>
-          </div>
-        </dl>
-
-        <div v-if="traceDetail.error">
-          <div class="mb-1 text-ink-muted">错误信息</div>
-          <p class="whitespace-pre-wrap rounded-lg bg-danger/10 p-3 text-danger">{{ traceDetail.error }}</p>
-        </div>
-
-        <div>
-          <div class="mb-1 text-ink-muted">输入提示词</div>
-          <pre class="max-h-48 overflow-auto rounded-lg bg-[#0f172a] p-3 text-xs leading-relaxed text-slate-200">{{ traceDetail.prompt || '—' }}</pre>
-        </div>
-
-        <div v-if="traceDetail.evidence && traceDetail.evidence.length">
-          <div class="mb-1 text-ink-muted">联网检索证据（{{ traceDetail.evidence.length }} 条）</div>
-          <ul class="space-y-2">
-            <li
-              v-for="(ev, index) in traceDetail.evidence"
-              :key="index"
-              class="rounded-lg bg-card-soft p-3"
-            >
-              <div class="font-medium text-ink">[{{ index + 1 }}] {{ ev.title || '—' }}</div>
-              <a v-if="ev.url" :href="ev.url" target="_blank" class="break-all text-xs text-primary">{{ ev.url }}</a>
-              <p class="mt-1 text-xs text-ink-muted">{{ ev.snippet || '' }}</p>
-            </li>
-          </ul>
-        </div>
-
-        <div>
-          <div class="mb-1 text-ink-muted">
-            {{ traceDetail.phase === 'web_search' ? '检索输出' : '模型输出' }}
-          </div>
-          <pre class="max-h-56 overflow-auto rounded-lg bg-[#0f172a] p-3 text-xs leading-relaxed text-slate-200">{{ traceDetail.response_text || '—' }}</pre>
-        </div>
-      </div>
-    </el-drawer>
+    <LlmTraceDetailDrawer v-model="traceDetailVisible" :trace="traceDetail" />
   </div>
 </template>

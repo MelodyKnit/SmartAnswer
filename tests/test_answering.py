@@ -631,6 +631,72 @@ class AnswerServiceTests(unittest.TestCase):
         self.assertEqual(second.candidate_answer, "南方谈话")
         self.assertEqual(provider.calls, 1)
 
+    def test_non_answer_text_is_rejected_even_with_high_model_confidence(self) -> None:
+        """模型把“信息不足”当答案且自报高置信时，不应回填、入库或缓存。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            provider = SequenceModelProvider(
+                (
+                    ModelAnswer(
+                        "题目信息不完整，无法确定答案",
+                        "题目信息不完整，无法确定答案",
+                        "当前题干缺少必要条件，因此不能可靠作答。",
+                        0.98,
+                    ),
+                )
+            )
+            repository = SqlAlchemyQuestionRepository(Path(temp_dir) / "questions.sqlite3")
+            service = AnswerService(
+                LocalQuestionIndex(()),
+                model_provider=provider,
+                allow_model_fallback=True,
+                llm_answer_cache=LlmAnswerCache(
+                    Path(temp_dir) / "ai-learned.jsonl",
+                    min_confidence=0.95,
+                    min_confirmations=1,
+                ),
+            )
+            service.question_repository = repository
+            query = QuestionQuery(
+                title="填空题(1分)函数在其上____。",
+                question_type="completion",
+            )
+
+            result = service.query(query)
+            stored = repository.list_question_records(keyword="无法确定")
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.resolution_mode, "input_anomaly")
+        self.assertEqual(result.error_code, "NO_RELIABLE_ANSWER")
+        self.assertIsNone(result.candidate_answer)
+        self.assertEqual(stored, [])
+        self.assertEqual(provider.calls, 1)
+
+    def test_empty_model_answer_is_rejected_as_no_reliable_answer(self) -> None:
+        """模型遵守提示返回空答案时，应明确失败而不是生成 ok=True 的空结果。"""
+        provider = SequenceModelProvider(
+            (
+                ModelAnswer(
+                    None,
+                    None,
+                    "题目信息不足，缺少必要条件，无法可靠作答。",
+                    0.12,
+                ),
+            )
+        )
+        service = AnswerService(
+            LocalQuestionIndex(()),
+            model_provider=provider,
+            allow_model_fallback=True,
+        )
+
+        result = service.query(
+            QuestionQuery(title="填空题(1分)函数在其上____。", question_type="completion")
+        )
+
+        self.assertFalse(result.ok)
+        self.assertEqual(result.error_code, "NO_RELIABLE_ANSWER")
+        self.assertIsNone(result.candidate_answer)
+
     def test_unreadable_image_answer_is_not_persisted_or_reused(self) -> None:
         """图片没有可传给视觉模型的 data URL 时返回输入异常，不写入题库或 AI 缓存。"""
         with tempfile.TemporaryDirectory() as temp_dir:

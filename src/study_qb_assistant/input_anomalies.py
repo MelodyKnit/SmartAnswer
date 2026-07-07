@@ -10,7 +10,7 @@ import re
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
-from .models import ModelAnswer, QueryResult, QuestionQuery
+from .models import QueryResult, QuestionQuery
 
 CHOICE_TYPES = {"single", "multiple", "单选", "单选题", "多选", "多选题"}
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
@@ -201,48 +201,6 @@ def choice_stem_requires_options(title: str) -> bool:
     return any(marker in text for marker in option_dependent_markers) or bool(
         re.search(r"[（(]\s*[）)]", text)
     )
-
-
-def model_answer_indicates_unreadable_image(query: QuestionQuery, answer: ModelAnswer) -> bool:
-    """识别模型实际没有读到图片却返回了低置信度占位文本的情况。"""
-
-    if not normalize_image_urls(query.image_urls, (query.title,)):
-        return False
-    combined = " ".join(
-        value
-        for value in (answer.candidate_answer, answer.answer_text, answer.explanation)
-        if value
-    ).casefold()
-    unreadable_markers = (
-        "can't access the image",
-        "cannot access the image",
-        "无法访问图片",
-        "无法查看图片",
-        "看不到图片",
-        "不能确定正确选项",
-    )
-    return answer.confidence < 0.3 or any(marker in combined for marker in unreadable_markers)
-
-
-def provider_error_indicates_unreadable_image(query: QuestionQuery, error: Exception) -> bool:
-    """识别图片题在模型请求阶段就因图片不可读而失败的异常。"""
-
-    if not normalize_image_urls(query.image_urls, (query.title,)):
-        return False
-    combined = str(error or "").casefold()
-    unreadable_markers = (
-        "can't access the image",
-        "cannot access the image",
-        "failed to download file",
-        "error getting file type",
-        "image unreadable",
-        "无法访问图片",
-        "无法查看图片",
-        "看不到图片",
-        "count_token_failed",
-        "status code: 403",
-    )
-    return any(marker in combined for marker in unreadable_markers)
 
 
 def result_from_input_anomaly(query: QuestionQuery, anomaly: InputAnomaly) -> QueryResult:

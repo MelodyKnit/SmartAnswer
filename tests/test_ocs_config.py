@@ -32,7 +32,8 @@ class OcsConfigTests(unittest.TestCase):
         self.assertEqual(item["url"], "http://127.0.0.1:8765/ocs/query")
         self.assertEqual(item["type"], "GM_xmlhttpRequest")
         self.assertEqual(item["data"]["title"], "${title}")
-        self.assertIn("[res.data.question, res.data.answer]", item["handler"])
+        self.assertIn("[res.data.question, res.data.answer", item["handler"])
+        self.assertNotIn("[res.data.answer, res.data.question", item["handler"])
 
     def test_static_config_matches_generated_default(self) -> None:
         """测试本地静态配置是否与默认 Base URL 生成结果一致。"""

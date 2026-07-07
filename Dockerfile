@@ -31,6 +31,7 @@ RUN pip install --no-cache-dir --upgrade pip -i https://pypi.tuna.tsinghua.edu.c
         dulwich \
         fastapi \
         httpx \
+        jinja2 \
         playwright \
         psycopg[binary] \
         python-dotenv \

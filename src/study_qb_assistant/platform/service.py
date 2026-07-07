@@ -29,7 +29,6 @@ from .records import (
     ApiTokenRecord,
     FeedbackRecord,
     ImportScriptRecord,
-    LlmCallTraceRecord,
     NotificationReadReceiptRecord,
     NotificationRecord,
     RedeemCodeRecord,
@@ -44,6 +43,7 @@ from .import_script_catalog import (
 )
 from .storage import hash_token, mask_token, public_token_dict
 from .wallet_ops import wallet_summary_payload
+from .llm_service import PlatformLlmService
 
 
 DEFAULT_ROLE_PERMISSIONS: dict[str, tuple[str, ...]] = {
@@ -103,6 +103,7 @@ class PlatformService:
         self.path = Path(path) if not isinstance(path, Path) and "://" not in str(path) else path
         self._lock = RLock()
         self.repository = SqlAlchemyPlatformRepository(path)
+        self.llm_service = PlatformLlmService(self.repository, self._lock)
 
     @staticmethod
     def default_system_config() -> dict[str, str]:
@@ -1378,21 +1379,12 @@ class PlatformService:
     def list_llm_models(self, *, reveal_secret: bool = False) -> list[dict]:
         """列出所有大模型配置。"""
 
-        return llm_config_service.list_llm_models(
-            self.repository,
-            self._lock,
-            reveal_secret=reveal_secret,
-        )
+        return self.llm_service.list_models(reveal_secret=reveal_secret)
 
     def get_llm_model(self, model_id: str, *, reveal_secret: bool = False) -> dict:
         """读取单个大模型配置。"""
 
-        return llm_config_service.get_llm_model(
-            self.repository,
-            self._lock,
-            model_id,
-            reveal_secret=reveal_secret,
-        )
+        return self.llm_service.get_model(model_id, reveal_secret=reveal_secret)
 
     def create_llm_model(
         self,
@@ -1410,9 +1402,7 @@ class PlatformService:
     ) -> dict:
         """新增大模型配置。"""
 
-        return llm_config_service.create_llm_model(
-            self.repository,
-            self._lock,
+        return self.llm_service.create_model(
             name=name,
             base_url=base_url,
             model=model,
@@ -1428,94 +1418,26 @@ class PlatformService:
     def update_llm_model(self, model_id: str, values: dict) -> dict:
         """更新大模型配置。"""
 
-        return llm_config_service.update_llm_model(
-            self.repository,
-            self._lock,
-            model_id,
-            values,
-        )
+        return self.llm_service.update_model(model_id, values)
 
     def delete_llm_model(self, model_id: str) -> bool:
         """删除大模型配置。"""
 
-        return llm_config_service.delete_llm_model(self.repository, self._lock, model_id)
+        return self.llm_service.delete_model(model_id)
 
     def active_llm_models(self):
         """返回可参与主备链的大模型配置。"""
 
-        return llm_config_service.active_llm_models(self.repository, self._lock)
+        return self.llm_service.active_models()
 
     def test_llm_model(self, model_id: str) -> dict:
         """测试指定大模型配置的连通性与接口解析。"""
-        from ..llm.providers.openai_compatible import OpenAICompatibleProvider
-        from ..models import QuestionQuery
-
-        model_dict = self.get_llm_model(model_id, reveal_secret=True)
-        provider = OpenAICompatibleProvider(
-            base_url=model_dict["base_url"],
-            model=model_dict["model"],
-            api_key=model_dict["api_key"] or None,
-            stream=model_dict["stream"],
-            max_completion_tokens=model_dict["max_completion_tokens"],
-            timeout_seconds=model_dict["timeout_seconds"],
-            model_id=model_id,
-            display_name=model_dict["name"],
-        )
-
-        query = QuestionQuery(
-            title="请验证接口，这道题的答案是: A。此为系统连通性测试，请输出: A",
-            options=("A", "B"),
-            question_type="single",
-        )
-
-        t0 = time.time()
-        try:
-            res = provider.answer(query)
-            elapsed = (time.time() - t0) * 1000
-            return {
-                "ok": True,
-                "elapsed_ms": elapsed,
-                "candidate_answer": res.candidate_answer,
-                "answer_text": res.answer_text,
-                "explanation": res.explanation,
-                "confidence": res.confidence,
-            }
-        except Exception as exc:
-            elapsed = (time.time() - t0) * 1000
-            return {
-                "ok": False,
-                "elapsed_ms": elapsed,
-                "error": str(exc),
-            }
+        return self.llm_service.test_model(model_id)
 
     def save_llm_call_trace(self, payload: dict) -> None:
         """落库一条 LLM 调用追溯，失败不影响答题主流程。"""
 
-        try:
-            record = LlmCallTraceRecord(
-                trace_id=str(payload.get("trace_id") or secrets.token_hex(12)),
-                request_id=str(payload.get("request_id") or ""),
-                phase=str(payload.get("phase") or ""),
-                model_id=str(payload.get("model_id") or payload.get("model_name") or ""),
-                model_name=str(payload.get("model_name") or payload.get("model_id") or ""),
-                base_url=str(payload.get("base_url") or ""),
-                provider=str(payload.get("provider") or ""),
-                question_title=str(payload.get("question_title") or ""),
-                prompt=str(payload.get("prompt") or payload.get("question_title") or ""),
-                evidence=json.dumps(payload.get("evidence") or [], ensure_ascii=False),
-                response_text=str(payload.get("response_text") or payload.get("response") or ""),
-                candidate_answer=(
-                    str(payload["candidate_answer"]) if payload.get("candidate_answer") else None
-                ),
-                confidence=float(payload.get("confidence") or 0.0),
-                ok=bool(payload.get("ok", True)),
-                error=str(payload.get("error") or ""),
-                elapsed_ms=float(payload.get("elapsed_ms") or payload.get("latency_ms") or 0.0),
-                created_at=float(payload.get("created_at") or time.time()),
-            )
-            self.repository.save_llm_call_trace(record)
-        except Exception:
-            return
+        self.llm_service.save_call_trace(payload)
 
     def list_llm_call_traces(
         self,
@@ -1528,17 +1450,13 @@ class PlatformService:
     ) -> list[dict]:
         """按条件分页读取 LLM 调用追溯。"""
 
-        with self._lock:
-            return [
-                item.to_dict()
-                for item in self.repository.list_llm_call_traces(
-                    request_id=request_id,
-                    model_id=model_id,
-                    phase=phase,
-                    limit=limit,
-                    offset=offset,
-                )
-            ]
+        return self.llm_service.list_call_traces(
+            request_id=request_id,
+            model_id=model_id,
+            phase=phase,
+            limit=limit,
+            offset=offset,
+        )
 
     def count_llm_call_traces(
         self,
@@ -1549,18 +1467,16 @@ class PlatformService:
     ) -> int:
         """统计 LLM 调用追溯数量。"""
 
-        with self._lock:
-            return self.repository.count_llm_call_traces(
-                request_id=request_id,
-                model_id=model_id,
-                phase=phase,
-            )
+        return self.llm_service.count_call_traces(
+            request_id=request_id,
+            model_id=model_id,
+            phase=phase,
+        )
 
     def llm_call_stats(self) -> list[dict]:
         """按模型聚合 LLM 调用统计。"""
 
-        with self._lock:
-            return self.repository.llm_call_stats()
+        return self.llm_service.call_stats()
 
     def project_update_status(self, *, refresh_remote: bool = False) -> dict:
         """返回项目更新状态。

@@ -307,6 +307,47 @@ class ProviderParsingTests(unittest.TestCase):
         self.assertEqual(answer.candidate_answer, "B")
         self.assertEqual(answer.answer_text, "经济安全")
 
+    def test_chat_completion_falls_back_when_token_parameter_is_rejected(self) -> None:
+        """测试上游拒绝 token 限制参数时会降级重试，不直接中断答题。"""
+        provider = OpenAICompatibleProvider(
+            base_url="http://example.test/v1",
+            model="mock",
+            max_completion_tokens=32,
+        )
+        payloads: list[dict] = []
+
+        def fake_post_json(_self, url: str, payload: dict) -> dict:
+            payloads.append(dict(payload))
+            if "max_completion_tokens" in payload or "max_tokens" in payload:
+                raise RuntimeError(
+                    "model provider request failed: HTTP 400: Bad Request; "
+                    'body={"error":{"message":"Unsupported parameter: max_output_tokens"}}'
+                )
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"candidate_answer":"A","answer_text":"甲","confidence":0.99}'
+                        }
+                    }
+                ]
+            }
+
+        with patch.object(OpenAICompatibleProvider, "_post_json", fake_post_json):
+            answer = provider.answer(
+                QuestionQuery(
+                    title="单选题(1分)参数兼容测试",
+                    options=("甲", "乙", "丙", "丁"),
+                    question_type="single",
+                )
+            )
+
+        self.assertEqual(answer.candidate_answer, "A")
+        self.assertEqual(len(payloads), 3)
+        self.assertIn("max_completion_tokens", payloads[0])
+        self.assertIn("max_tokens", payloads[1])
+        self.assertFalse(any(key in payloads[2] for key in ("max_completion_tokens", "max_tokens")))
+
     def test_verify_answer_returns_structured_answer_without_evidence(self) -> None:
         """测试无证据自检接口仍然返回可解析的结构化答案。"""
         provider = OpenAICompatibleProvider(base_url="http://example.test/v1", model="mock")

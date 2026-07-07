@@ -6,6 +6,7 @@ OCS 规范详见前端接口标准设计文档。
 
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -132,6 +133,67 @@ class OcsAdapterTests(unittest.TestCase):
 
         self.assertEqual(payload["data"]["answer"], '["第一空答案", "第二空答案"]')
         self.assertEqual(payload["data"]["answer_raw"], '["第一空答案", "第二空答案"]')
+        self.assertEqual(payload["data"]["ai"]["answer_parts_count"], 2)
+        self.assertEqual(payload["data"]["ai"]["ocs_answer_shape"], "json_array")
+
+    def test_multi_blank_completion_response_converts_hash_answer_to_json_array(self) -> None:
+        """测试旧缓存中的 # 分隔多空答案会在 OCS 边界转成 JSON 数组。"""
+        result = QueryResult(
+            ok=True,
+            query=QuestionQuery(
+                title=(
+                    "填空题(8分)1. I'm sorry, but I can't give you ________ to this information. "
+                    "2. A company car is just one ____________ of my new job. "
+                    "3. We like to go to the__________ every day after work. "
+                    "4. Have you seen his teeth? I'm not sure he's a good ________."
+                    "5. The company I work for pays for my health ________. "
+                    "6. If you want to be a(n) ________, you need to be able to type fast. "
+                    "7. In my new job, I'm earning a higher ________ and working fewer hours. "
+                    "8. I haven't had a(n) ____________for three months and I'm feeling really tired."
+                ),
+                question_type="completion",
+            ),
+            candidate_answer="access#benefit#gym#dentist#insurance#secretary#salary#vacation",
+            answer_text="access；benefit；gym；dentist；insurance；secretary；salary；vacation",
+            explanation="示例解析",
+            confidence=0.99,
+            resolution_mode="ai_cache",
+            review_required=False,
+        )
+
+        payload = to_ocs_response(result)
+
+        self.assertEqual(
+            json.loads(payload["data"]["answer"]),
+            ["access", "benefit", "gym", "dentist", "insurance", "secretary", "salary", "vacation"],
+        )
+        self.assertEqual(payload["data"]["answer_raw"], result.candidate_answer)
+        self.assertEqual(payload["data"]["ai"]["answer_parts_count"], 8)
+        self.assertEqual(payload["data"]["ai"]["blank_count_hint"], 8)
+        self.assertEqual(payload["data"]["ai"]["ocs_answer_shape"], "json_array")
+
+    def test_multi_blank_completion_response_converts_space_answer_when_blank_count_matches(
+        self,
+    ) -> None:
+        """测试空格分隔且数量匹配空位时也能转为多空数组。"""
+        result = QueryResult(
+            ok=True,
+            query=QuestionQuery(
+                title="填空题(2分)第一个空 ________，第二个空 ________。",
+                question_type="completion",
+            ),
+            candidate_answer="access benefit",
+            answer_text="access benefit",
+            explanation="示例解析",
+            confidence=0.95,
+            resolution_mode="llm_fallback",
+            review_required=True,
+        )
+
+        payload = to_ocs_response(result)
+
+        self.assertEqual(json.loads(payload["data"]["answer"]), ["access", "benefit"])
+        self.assertEqual(payload["data"]["ai"]["answer_parts_count"], 2)
 
     def test_open_text_completion_response_prefers_full_answer_text(self) -> None:
         """测试开放写作类 completion 题优先把完整正文返回给 OCS。"""

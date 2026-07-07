@@ -76,6 +76,7 @@ jwt_secret*
 # 排除 data 目录下本地生成的文件与日志
 data/raw/
 data/normalized/
+data/images/
 data/logs/
 data/runtime/
 data/manifests/

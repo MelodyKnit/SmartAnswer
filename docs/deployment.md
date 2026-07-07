@@ -24,6 +24,7 @@ Production paths are split into three categories:
   - `deploy-data/runtime/`
   - `deploy-data/logs/`
   - `deploy-data/normalized/`
+  - `deploy-data/images/ocs/`
   - any later runtime cache files under `deploy-data/`
 - Optional import assets:
   - manually uploaded or generated question-bank files after deployment
@@ -45,11 +46,16 @@ Recommended deployment values:
 - `STQB_LLM_MODEL`
 - `STQB_LLM_API_KEY`
 - `STQB_REQUIRE_AUTH=true`
+- `STQB_PUBLIC_BASE_URL=https://your-public-domain`
 - `STQB_REDIS_URL` only if shared session storage is needed
 
 When the model gateway or outbound proxy runs on the host machine instead of inside the
 same container network, use `host.docker.internal` rather than `127.0.0.1`.
 Inside the container, loopback only points to the application container itself.
+Vision questions store readable OCS images under `deploy-data/images/ocs/` and send the
+model a URL under `/media/ocs/images/`. Configure `STQB_PUBLIC_BASE_URL` to the public
+HTTPS origin that the model provider can reach; otherwise local loopback requests fall
+back to inline data URLs for development.
 
 The compose file does not require `.env.server` to exist. You can boot the site first,
 create the first `superadmin`, and then configure model/search providers from the admin UI.
@@ -70,7 +76,7 @@ docker compose up -d --build
 
 Docker creates `deploy-data/` automatically on first boot. The service uses
 `STQB_DATA_DIR=/app/data` in the container, so database, logs, and optional normalized
-question-bank files all live under the mounted server directory.
+question-bank files and OCS question images all live under the mounted server directory.
 
 On a brand-new runtime database, the first registered user becomes `superadmin`.
 

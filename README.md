@@ -138,6 +138,9 @@ Recommended release order:
 The Docker image builds the frontend and backend together. Runtime data is written to
 `deploy-data/` on the server and starts empty by default; local `data/` files are not
 required and are not copied into the image.
+For production vision-question support, set `STQB_PUBLIC_BASE_URL` to the public HTTPS
+origin of the service. OCS question images are stored under `deploy-data/images/ocs/`
+and exposed as `/media/ocs/images/<sha256>.<ext>` for vision models.
 
 Install and run commit hooks:
 

@@ -1,4 +1,4 @@
-"""图片题补强链路测试。"""
+"""图片题补强链路兼容测试。"""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ class FakeImageResponse:
 
 
 class ImageOcrHydrationTests(unittest.TestCase):
-    """覆盖 URL 图片转内联 data URL 的关键行为。"""
+    """覆盖旧 `image_ocr` 入口下的图片补强关键行为。"""
 
     def test_p_cldisk_image_uses_chaoxing_referer_by_default(self) -> None:
         headers = browser_image_request_headers(
@@ -68,7 +68,9 @@ class ImageOcrHydrationTests(unittest.TestCase):
 
         self.assertEqual(headers["Referer"], "https://mooc1.chaoxing.com/work/do-homework")
 
-    def test_build_model_query_hydrates_url_only_image_to_data_url(self) -> None:
+    def test_build_model_query_hydrates_url_only_image_to_data_url_fallback(self) -> None:
+        """未配置公开图床地址时，URL 图片仍应回退为 data URL 给模型使用。"""
+
         captured: dict[str, object] = {}
 
         def fake_stream(*args: object, **kwargs: object) -> FakeImageResponse:
@@ -85,9 +87,9 @@ class ImageOcrHydrationTests(unittest.TestCase):
         )
 
         with (
-            patch("study_qb_assistant.image_ocr.is_public_http_url", return_value=True),
-            patch("study_qb_assistant.image_ocr.httpx.stream", side_effect=fake_stream),
-            patch("study_qb_assistant.image_ocr.log_event") as log_event,
+            patch("study_qb_assistant.media.question_context.is_public_http_url", return_value=True),
+            patch("study_qb_assistant.media.question_context.httpx.stream", side_effect=fake_stream),
+            patch("study_qb_assistant.media.question_context.log_event") as log_event,
         ):
             hydrated = build_model_query(query)
 
@@ -122,10 +124,10 @@ class ImageOcrHydrationTests(unittest.TestCase):
             image_data_urls=("data:image/png;base64,AA==",),
         )
 
-        with patch("study_qb_assistant.image_ocr.fetch_public_image_asset") as fetch_asset:
+        with patch("study_qb_assistant.media.question_context.fetch_public_image_asset") as fetch_asset:
             hydrated = build_model_query(query)
 
-        self.assertIs(hydrated, query)
+        self.assertEqual(hydrated.image_data_urls, query.image_data_urls)
         fetch_asset.assert_not_called()
 
     def test_private_image_url_is_rejected_before_http_fetch(self) -> None:
@@ -137,11 +139,12 @@ class ImageOcrHydrationTests(unittest.TestCase):
         )
 
         with (
-            patch("study_qb_assistant.image_ocr.httpx.stream", stream),
+            patch("study_qb_assistant.media.question_context.httpx.stream", stream),
             patch(
-                "study_qb_assistant.image_ocr.fetch_image_via_playwright", return_value=(None, None)
+                "study_qb_assistant.media.question_context.fetch_image_via_playwright",
+                return_value=(None, None),
             ),
-            patch("study_qb_assistant.image_ocr.log_event"),
+            patch("study_qb_assistant.media.question_context.log_event"),
         ):
             hydrated = build_model_query(query)
 

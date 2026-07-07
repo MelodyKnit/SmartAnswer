@@ -64,6 +64,7 @@ pre-commit run --all-files
 
 - `fastapi`：成熟的路由处理、请求验证和 ASGI 集成
 - `httpx`：成熟的同步 HTTP 客户端，用于模型/搜索请求、代理支持、超时和状态错误处理
+- `jinja2`：大模型提示词模板渲染，使用严格变量校验避免残缺 prompt 静默进入模型
 - `python-dotenv`：健壮的 `.env.local` 解析，同时保留现有的进程变量
 - `uvicorn`：FastAPI 本地服务的 ASGI 运行环境，支持开发热重载
 - `pytest`：项目测试运行器
@@ -90,5 +91,6 @@ pre-commit run --all-files
 - `STQB_LLM_CACHE_ENABLED`
 - `STQB_LLM_CACHE_MIN_CONFIDENCE`
 - `STQB_LLM_CACHE_MIN_CONFIRMATIONS`
+- `STQB_PUBLIC_BASE_URL`
 
-API 密钥特意不存储在项目文件中。默认的 AI 已学题库路径为 `data\normalized\ai-learned.jsonl`；它以常规的 `CanonicalQuestionRecord` JSONL 行格式存储 AI 生成的答案，并带有 `ai_generated` 和 `auto_learned` 标签。当启用基于模型学习的模式时，遗留的 `data\runtime\ai-answer-cache.json` 文件将作为兼容性迁移源进行读取。
+API 密钥特意不存储在项目文件中。默认的 AI 已学题库路径为 `data\normalized\ai-learned.jsonl`；它以常规的 `CanonicalQuestionRecord` JSONL 行格式存储 AI 生成的答案，并带有 `ai_generated` 和 `auto_learned` 标签。当启用基于模型学习的模式时，遗留的 `data\runtime\ai-answer-cache.json` 文件将作为兼容性迁移源进行读取。生产环境如需处理图片题，`STQB_PUBLIC_BASE_URL` 应设置为模型提供商可访问的服务公开地址。

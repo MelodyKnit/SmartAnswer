@@ -5,6 +5,7 @@ dependencies:
   - python=3.13
   - fastapi
   - httpx
+  - jinja2
   - pip
   - pytest
   - python-dotenv

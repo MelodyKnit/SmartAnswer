@@ -14,6 +14,6 @@
       "options": "${options}",
       "type": "${type}"
     },
-    "handler": "return (res)=>res.code === 0 ? [res.data.question, res.data.answer] : [res.message || (res.data && res.data.question) || '未找到答案', undefined]"
+    "handler": "return (res)=>res.code === 0 ? [res.data.question, res.data.answer, {ai: res.data.ai, answer_text: res.data.answer_text}] : [res.message || (res.data && res.data.question) || '未找到答案', undefined]"
   }
 ]

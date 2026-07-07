@@ -47,6 +47,7 @@
 - `STQB_LLM_CACHE_ENABLED`：默认为 `true`；仅在多次一致后才持久化高置信度的 AI 答案
 - `STQB_LLM_CACHE_MIN_CONFIDENCE`：默认为 `0.95`
 - `STQB_LLM_CACHE_MIN_CONFIRMATIONS`：默认为 `2`
+- `STQB_PUBLIC_BASE_URL`：生产环境公开访问地址，用于把 OCS 图片题转换成本地图床 URL 提供给视觉模型
 - `STQB_ANSWER_RULES_PATH`：可选的本地规则文件路径；未配置时默认禁用规则文件机制
 
 任何 API 密钥都不应写入项目文件中。
@@ -91,6 +92,14 @@ $env:STQB_LLM_API_KEY="your-api-key"
 请仅在环境变量中保留 API 密钥。不要将其放入 OCS 配置、JSON 文件、示例、日志或源代码中。
 
 ClassBot/New API 风格的网关是通过兼容 OpenAI 的聊天补全（Chat Completions）契约进行处理的。该提供商默认发送 `stream: true`，并在解析答案之前将服务器发送事件（Server-Sent Events）的 `choices[].delta.content` 分块拼接为常规消息内容结构。
+
+图片题处理流程：
+
+- 服务端先把 OCS 传入的图片 URL 或 data URL 保存到 `data/images/ocs/`。
+- 图片文件按内容 SHA-256 去重命名，例如 `<sha256>.png`。
+- 视觉模型调用时优先使用 `{STQB_PUBLIC_BASE_URL}/media/ocs/images/<sha256>.png`。
+- 如果没有可靠公开地址，本地开发会回退为 data URL；生产环境建议始终配置 `STQB_PUBLIC_BASE_URL`。
+- 原始图片和 base64 不写入题库、调用追溯或日志，只记录必要的文件名和统计信息。
 
 设置完环境变量后验证所配置的模型提供商：
 

@@ -12,6 +12,7 @@ from .catalog import build_catalog_router
 from .feedback import build_feedback_router
 from .import_scripts import build_import_script_router
 from .llm import build_llm_router
+from .media import build_media_router
 from .query import build_query_router
 from .static import build_static_router
 from .system import build_system_router
@@ -32,6 +33,7 @@ PLATFORM_ROUTE_BUILDERS: tuple[RouterFactory, ...] = (
     build_catalog_router,
     build_import_script_router,
     build_llm_router,
+    build_media_router,
     build_system_router,
 )
 
@@ -58,5 +60,6 @@ __all__ = [
     "build_catalog_router",
     "build_import_script_router",
     "build_llm_router",
+    "build_media_router",
     "build_system_router",
 ]

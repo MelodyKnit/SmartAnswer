@@ -5,8 +5,12 @@
 
 from __future__ import annotations
 
+import json
+import re
+
+from ...logger import log_event
 from ...models import QueryResult
-from ...question_types import is_open_text_completion
+from ...question_types import is_completion_query, is_open_text_completion
 from .config import build_ocs_config
 
 _JUDGEMENT_TRUE_LABELS = {"A"}
@@ -51,7 +55,7 @@ def to_ocs_response(result: QueryResult) -> dict:
 
     # 查询成功，返回状态码 0 以及匹配到的候选答案、详细文本与解析信息。
     # OCS 判断题页面通常没有 A/B 可匹配选项，因此仅在判断题中把内部标签转换为“对/错”文本。
-    answer = _ocs_answer(result)
+    answer, answer_diagnostics = _ocs_answer_with_diagnostics(result)
     return {
         "code": 0,
         "message": "ok",
@@ -66,6 +70,7 @@ def to_ocs_response(result: QueryResult) -> dict:
                 "confidence": result.confidence,
                 "resolution_mode": result.resolution_mode,
                 "sources": list(result.sources),
+                **answer_diagnostics,
             },
         },
     }
@@ -95,25 +100,55 @@ def to_ocs_low_confidence_response(result: QueryResult, *, threshold: float) -> 
     }
 
 
-def _ocs_answer(result: QueryResult) -> str | None:
-    """Return the answer shape OCS can click on the current page."""
+def _ocs_answer_with_diagnostics(result: QueryResult) -> tuple[str | None, dict[str, object]]:
+    """返回 OCS 可消费答案及最小诊断信息。"""
+
     if not _is_judgement_result(result):
-        if (
-            is_open_text_completion(result.query)
-            and result.answer_text
-            and not _looks_like_json_array(result.candidate_answer)
-        ):
-            return result.answer_text
-        return result.candidate_answer or result.answer_text
+        return _non_judgement_ocs_answer(result)
     normalized_text = _normalize_judgement_text(result.answer_text)
     if normalized_text is not None:
-        return normalized_text
+        return normalized_text, {}
     candidate = (result.candidate_answer or "").strip().upper()
     if candidate in _JUDGEMENT_TRUE_LABELS:
-        return "对"
+        return "对", {}
     if candidate in _JUDGEMENT_FALSE_LABELS:
-        return "错"
-    return result.candidate_answer
+        return "错", {}
+    return result.candidate_answer, {}
+
+
+def _non_judgement_ocs_answer(result: QueryResult) -> tuple[str | None, dict[str, object]]:
+    """处理选择题和填空题在 OCS 中需要的答案形态。"""
+
+    if not is_completion_query(result.query):
+        return result.candidate_answer or result.answer_text, {}
+    if (
+        is_open_text_completion(result.query)
+        and result.answer_text
+        and not _looks_like_json_array(result.candidate_answer)
+    ):
+        return result.answer_text, {"ocs_answer_shape": "text"}
+
+    answer = result.candidate_answer or result.answer_text
+    parts = _completion_answer_parts(answer, blank_count_hint=_blank_count_hint(result.query.title))
+    diagnostics: dict[str, object] = {
+        "answer_parts_count": len(parts),
+        "blank_count_hint": _blank_count_hint(result.query.title),
+        "ocs_answer_shape": "text",
+    }
+    if len(parts) > 1:
+        diagnostics["ocs_answer_shape"] = "json_array"
+        blank_count = int(diagnostics["blank_count_hint"])
+        if blank_count and blank_count != len(parts):
+            log_event(
+                "ocs_completion_answer_count_mismatch",
+                {
+                    "title": result.query.title,
+                    "answer_parts_count": len(parts),
+                    "blank_count_hint": blank_count,
+                },
+            )
+        return json.dumps(parts, ensure_ascii=False), diagnostics
+    return answer, diagnostics
 
 
 def _is_judgement_result(result: QueryResult) -> bool:
@@ -140,3 +175,41 @@ def _normalize_judgement_text(value: str | None) -> str | None:
 def _looks_like_json_array(value: str | None) -> bool:
     text = (value or "").strip()
     return text.startswith("[") and text.endswith("]")
+
+
+def _completion_answer_parts(value: str | None, *, blank_count_hint: int = 0) -> list[str]:
+    """把填空答案拆成 OCS 多空可消费的答案片段。"""
+
+    text = (value or "").strip()
+    if not text:
+        return []
+    parsed_parts = _json_array_parts(text)
+    if parsed_parts:
+        return parsed_parts
+    for separator in ("###", "===", "---", "#", "|", "；", ";"):
+        if separator in text:
+            parts = [part.strip() for part in text.split(separator) if part.strip()]
+            if len(parts) > 1:
+                return parts
+    if blank_count_hint > 1:
+        words = [part.strip() for part in re.split(r"\s+", text) if part.strip()]
+        if len(words) == blank_count_hint and all(len(word) <= 40 for word in words):
+            return words
+    return [text]
+
+
+def _json_array_parts(value: str) -> list[str]:
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [str(item).strip() for item in parsed if str(item).strip()]
+
+
+def _blank_count_hint(title: str) -> int:
+    numbered = re.findall(r"[【\[]\s*\d+\s*[】\]]\s*[_＿]*", title or "")
+    if numbered:
+        return len(numbered)
+    return len(re.findall(r"(?:_{2,}|＿{2,})", title or ""))

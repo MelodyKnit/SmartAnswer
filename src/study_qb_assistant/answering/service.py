@@ -1,46 +1,35 @@
-"""本地检索和可选模型提供商之上的答案决议编排。
-
-该模块定义了 AnswerService 类，将本地题库检索、内置匹配规则、LLM 自动沉淀题库和 LLM 提供商 fallback 流程串联起来。
-"""
+"""本地检索和可选模型提供商之上的答案决议编排。"""
 
 from __future__ import annotations
 
-import time
-from typing import Protocol
-
-from .llm.cache import CachedLlmAnswer, LlmAnswerCache, cache_key
-from .llm.cache.support import cache_candidate_for_answer
-from .image_ocr import build_model_query
-from .answer_reuse import NON_REUSABLE_STATUS, decide_answer_reuse
-from .answer_quality import direct_known_answer, is_cache_safe_answer, repair_model_answer
-from .input_anomalies import (
-    analyze_query_input,
-    model_answer_indicates_unreadable_image,
-    normalize_image_data_urls,
-    normalize_image_urls,
-    provider_error_indicates_unreadable_image,
-    result_from_input_anomaly,
+from ..answer_quality import direct_known_answer, is_cache_safe_answer
+from ..answer_reuse import NON_REUSABLE_STATUS, decide_answer_reuse
+from ..input_anomalies import (
     InputAnomaly,
+    analyze_query_input,
+    result_from_input_anomaly,
 )
-from .models import CanonicalQuestionRecord, ModelAnswer, QueryResult, QuestionQuery
-from .llm.providers import ModelProvider
-from .search import LocalQuestionIndex
-from .logger import log_event
-
-
-class QuestionRecordRepository(Protocol):
-    """AI 答题沉淀只依赖题库仓储的保存能力。"""
-
-    def save_question_record(self, record: CanonicalQuestionRecord) -> None:
-        """保存或更新题库记录。"""
-        ...
+from ..llm.cache import CachedLlmAnswer, LlmAnswerCache
+from ..llm.providers import ModelProvider
+from ..media.image_anomalies import (
+    model_answer_indicates_unreadable_image,
+    provider_error_indicates_unreadable_image,
+)
+from ..models import ModelAnswer, QueryResult, QuestionQuery
+from ..search import LocalQuestionIndex
+from .non_answer_policy import (
+    model_answer_has_fillable_content,
+    model_answer_indicates_no_reliable_answer,
+    result_from_no_reliable_model_answer,
+)
+from .persistence import persist_model_answer_record
+from .policies import is_image_context_without_text_snapshot
+from .protocols import QuestionRecordRepository
+from .retry import retry_model_answer
 
 
 class AnswerService:
-    """答案决议服务类，优先通过本地检索解析答案，并在需要时降级使用大模型。
-
-    支持对本地匹配到的题目补充生成大模型解析，以及在大模型 fallback 时对答案进行一致性校验并沉淀进题库。
-    """
+    """答案决议服务类，串联本地题库、规则、AI 缓存和大模型 fallback。"""
 
     def __init__(
         self,
@@ -55,19 +44,8 @@ class AnswerService:
         trusted_confidence_threshold: float = 0.95,
         answer_retry_times: int = 3,
     ) -> None:
-        """初始化答案决议服务。
+        """初始化答案决议服务。"""
 
-        Args:
-            index: 本地题库索引。
-            model_provider: 大模型提供商接口实例（可选）。
-            allow_model_fallback: 是否在本地未找到题目时降级请求大模型。
-            explain_local_matches: 对于本地检索到的题目，若没有解析，是否调用大模型生成解析。
-            allow_known_rules: 是否启用内置高信号规则答案。
-            no_local_bank_mode: 是否跳过本地题库与 AI 本地缓存，仅保留规则和模型链路。
-            llm_answer_cache: LLM 自动沉淀题库管理实例（可选）。
-            trusted_confidence_threshold: AI 题目可自动进入本地命中链路的最低置信度。
-            answer_retry_times: AI/联网增强答题链路在异常时的重试次数。
-        """
         self.index = index
         self.model_provider = model_provider
         self.allow_model_fallback = allow_model_fallback
@@ -81,34 +59,18 @@ class AnswerService:
         self.question_repository: QuestionRecordRepository | None = None
 
     def query(self, query: QuestionQuery) -> QueryResult:
-        """查询问题的答案，返回带来源标记的本地结果或明确标识的模型结果。
+        """查询问题的答案，返回带来源标记的本地结果或明确标识的模型结果。"""
 
-        决议策略优先级：
-        1. 本地精确匹配
-        2. 本地预设/固定匹配规则 (direct_known_answer)
-        3. 已有的受信任 LLM 自动沉淀题库记录 (CachedLlmAnswer)
-        4. 本地模糊匹配
-        5. 大模型在线生成降级 (LLM fallback)
-
-        Args:
-            query: 问题查询对象。
-
-        Returns:
-            QueryResult: 决议后的查询结果。
-        """
-        # 步骤 1：尝试本地精确匹配（不开启模糊匹配）
         local_result: QueryResult | None = None
         if not self.no_local_bank_mode:
             local_result = self.index.query(query, allow_fuzzy=False)
             if local_result.ok:
-                # 如果本地成功匹配，且开启了本地匹配补充大模型解析配置，则调用大模型生成解析
                 if self.explain_local_matches and self.model_provider and not local_result.explanation:
                     return self._add_model_explanation(local_result, query)
                 return local_result
             if local_result.error_code != "NOT_FOUND":
                 return local_result
 
-        # 步骤 2：精确匹配失败，尝试匹配本地内置高信号固定规则
         direct_answer = direct_known_answer(query) if self.allow_known_rules else None
         if direct_answer is not None:
             return self._result_from_direct_answer(query, direct_answer)
@@ -117,7 +79,6 @@ class AnswerService:
         if input_anomaly is not None:
             return result_from_input_anomaly(query, input_anomaly)
 
-        # 步骤 3：尝试匹配已经过多次验证的受信任 LLM 自动沉淀记录
         cached_answer = (
             self.llm_answer_cache.get_trusted(query)
             if self.llm_answer_cache and not self.no_local_bank_mode
@@ -126,7 +87,6 @@ class AnswerService:
         if cached_answer is not None:
             return self._result_from_cached_answer(query, cached_answer)
 
-        # 步骤 4：尝试本地模糊匹配
         if not self.no_local_bank_mode:
             local_result = self.index.query(query)
             if local_result.ok:
@@ -134,7 +94,6 @@ class AnswerService:
                     return self._add_model_explanation(local_result, query)
                 return local_result
 
-        # 步骤 5：本地检索与规则均未命中，若配置允许降级，则请求大模型
         if (
             self.allow_model_fallback
             and self.model_provider
@@ -158,11 +117,8 @@ class AnswerService:
         )
 
     def status(self) -> dict:
-        """获取非敏感的服务运行时配置与状态信息，用于服务验证。
+        """获取非敏感的服务运行时配置与状态信息，用于服务验证。"""
 
-        Returns:
-            dict: 包含索引状态、模型提供商状态 and LLM 缓存配置的字典。
-        """
         provider_name = self.model_provider.provider_name if self.model_provider else None
         model_status: dict[str, object] = {
             "configured": self.model_provider is not None,
@@ -172,7 +128,6 @@ class AnswerService:
             "answer_retry_times": self.answer_retry_times,
         }
         if self.model_provider is not None:
-            # 提取大模型提供商的内部特征字段用于诊断
             model_name = getattr(self.model_provider, "model", None)
             stream = getattr(self.model_provider, "stream", None)
             max_completion_tokens = getattr(self.model_provider, "max_completion_tokens", None)
@@ -201,11 +156,11 @@ class AnswerService:
 
     def _add_model_explanation(self, result: QueryResult, query: QuestionQuery) -> QueryResult:
         """调用大模型为本地检索到的题目补全解析说明。"""
+
         assert self.model_provider is not None
         try:
             model_answer = self.model_provider.answer(query)
         except Exception:
-            # 补全解析失败时不影响本地题目的返回，静默失败并返回原结果
             return result
         if model_answer.explanation:
             result.explanation = model_answer.explanation
@@ -214,8 +169,8 @@ class AnswerService:
 
     def _model_fallback(self, query: QuestionQuery) -> QueryResult:
         """本地未命中的情况下降级请求大模型获取答案，并记录缓存。"""
+
         assert self.model_provider is not None
-        # 请求前再次校验规则和缓存，防范并发或状态漂移
         direct_answer = direct_known_answer(query) if self.allow_known_rules else None
         if direct_answer is not None:
             return self._result_from_direct_answer(query, direct_answer)
@@ -230,7 +185,6 @@ class AnswerService:
 
         attempts = 0
         try:
-            # 调用大模型并对模型返回的结果进行后处理修复
             model_answer, attempts = self._retry_model_answer(query)
         except Exception as exc:
             if provider_error_indicates_unreadable_image(query, exc):
@@ -246,7 +200,6 @@ class AnswerService:
                         },
                     ),
                 )
-            # 大模型接口异常时，返回明确的报错结果并标记需要审核
             return QueryResult(
                 ok=False,
                 query=query,
@@ -274,6 +227,15 @@ class AnswerService:
                     context={"provider": self.model_provider.provider_name},
                 ),
             )
+        if (
+            not model_answer_has_fillable_content(model_answer)
+            or model_answer_indicates_no_reliable_answer(query, model_answer)
+        ):
+            return result_from_no_reliable_model_answer(
+                query,
+                model_answer,
+                provider_name=self.model_provider.provider_name,
+            )
 
         answer_query = model_answer.source_query or query
         confidence = max(0.0, min(model_answer.confidence, 1.0))
@@ -288,7 +250,7 @@ class AnswerService:
             reuse_reason=model_answer.reuse_reason,
             reuse_confidence=model_answer.reuse_confidence,
         )
-        image_context_without_text = _is_image_context_without_text_snapshot(answer_query)
+        image_context_without_text = is_image_context_without_text_snapshot(answer_query)
         safe_for_question_bank = reuse_decision.reusable and is_cache_safe_answer(
             answer_query, model_answer
         )
@@ -315,13 +277,8 @@ class AnswerService:
                 reuse_tags=reuse_decision.tags,
                 original_query=query,
             )
-            if (
-                safe_for_question_bank
-                and learned_record is not None
-                and learned_status == "trusted"
-            ):
+            if safe_for_question_bank and learned_record is not None and learned_status == "trusted":
                 self.index.add_or_replace(learned_record)
-        # 校验模型答案是否满足内部一致性条件，若安全则尝试进行持久化缓存
         if self.llm_answer_cache is not None and safe_for_question_bank:
             cache_entry = self.llm_answer_cache.record_model_answer(
                 answer_query,
@@ -373,38 +330,7 @@ class AnswerService:
     def _retry_model_answer(self, query: QuestionQuery) -> tuple[ModelAnswer, int]:
         """在 AI/联网增强答题链路异常时按配置次数重试。"""
 
-        assert self.model_provider is not None
-        max_attempts = max(1, self.answer_retry_times + 1)
-        last_error: Exception | None = None
-        attempts = 0
-        model_query = build_model_query(query)
-        if _has_unhydrated_image_context(model_query):
-            error = RuntimeError("image unreadable: no local image payload available")
-            setattr(error, "stqb_retry_attempts", 1)
-            raise error
-        for attempt in range(1, max_attempts + 1):
-            attempts = attempt
-            try:
-                answer = self.model_provider.answer(model_query)
-                return repair_model_answer(answer.source_query or model_query, answer), attempt
-            except Exception as exc:
-                last_error = exc
-                if attempt >= max_attempts:
-                    break
-                log_event(
-                    "answer_retry",
-                    {
-                        "request_id": model_query.request_id,
-                        "title": model_query.title,
-                        "provider": self.model_provider.provider_name,
-                        "attempt": attempt,
-                        "max_retries": self.answer_retry_times,
-                        "error": str(exc),
-                    },
-                )
-        assert last_error is not None
-        setattr(last_error, "stqb_retry_attempts", attempts)
-        raise last_error
+        return retry_model_answer(self, query)
 
     def _result_from_direct_answer(
         self,
@@ -412,6 +338,7 @@ class AnswerService:
         direct_answer: ModelAnswer,
     ) -> QueryResult:
         """从匹配到的高信号固定规则中封装标准 QueryResult。"""
+
         confidence = max(0.0, min(direct_answer.confidence, 1.0))
         return QueryResult(
             ok=True,
@@ -441,6 +368,7 @@ class AnswerService:
         cached_answer: CachedLlmAnswer,
     ) -> QueryResult:
         """从受信任的 LLM 自动沉淀题库条目中封装标准 QueryResult。"""
+
         confidence = max(0.0, min(cached_answer.confidence, 1.0))
         return QueryResult(
             ok=True,
@@ -480,75 +408,12 @@ class AnswerService:
     ):
         """把结构化 AI 答案写入题库仓储，并按状态决定后续是否可命中。"""
 
-        repository = self.question_repository
-        if repository is None:
-            return None
-        candidate = cache_candidate_for_answer(query, answer) or str(answer.answer_text or "").strip()
-        if not candidate:
-            return None
-        now = time.time()
-        entry = CachedLlmAnswer(
-            key=cache_key(query),
-            title=query.title,
-            question_type=query.question_type,
-            options=query.options,
-            candidate_answer=candidate,
-            answer_text=answer.answer_text,
-            explanation=answer.explanation,
-            confidence=max(0.0, min(answer.confidence, 1.0)),
-            confirmations=1,
-            conflicts=0,
+        return persist_model_answer_record(
+            self,
+            query,
+            answer,
             status=status,
-            provider_name=self.model_provider.provider_name if self.model_provider else "unknown",
-            created_at=now,
-            updated_at=now,
+            reuse_policy=reuse_policy,
+            reuse_tags=reuse_tags,
+            original_query=original_query,
         )
-        record = entry.to_record()
-        if reuse_tags or reuse_policy != "reusable" or original_query is not None:
-            payload = record.to_dict()
-            metadata = dict(record.metadata)
-            metadata["reuse_policy"] = reuse_policy
-            metadata["status"] = status
-            if original_query is not None:
-                image_urls = normalize_image_urls(
-                    original_query.image_urls,
-                    (original_query.title,),
-                    original_query.option_image_urls.values(),
-                )
-                if image_urls:
-                    metadata["source_image_urls"] = "#".join(image_urls)
-            if answer.question_form:
-                metadata["question_form"] = answer.question_form
-            if answer.reuse_reason:
-                metadata["reuse_reason"] = answer.reuse_reason
-            if answer.reuse_confidence is not None:
-                metadata["reuse_confidence"] = str(answer.reuse_confidence)
-            payload["metadata"] = metadata
-            payload["tags"] = tuple(dict.fromkeys((*record.tags, *reuse_tags)))
-            record = CanonicalQuestionRecord.from_dict(payload)
-        try:
-            repository.save_question_record(record)
-        except Exception:
-            return None
-        return record
-
-
-def _is_image_context_without_text_snapshot(query: QuestionQuery) -> bool:
-    """图片题没有 OCR 文本快照时，不把 URL 题干沉淀为可复用题。"""
-
-    if not normalize_image_urls(query.image_urls, (query.title,)):
-        return False
-    return not str(query.title or "").strip() or bool(normalize_image_urls((query.title,)))
-
-
-def _has_unhydrated_image_context(query: QuestionQuery) -> bool:
-    """图片题必须先在服务端或浏览器侧转成 data URL，避免把外链交给模型下载。"""
-
-    return bool(
-        normalize_image_urls(query.image_urls, (query.title,), query.option_image_urls.values())
-    ) and not bool(
-        normalize_image_data_urls(
-            query.image_data_urls,
-            query.option_image_data_urls.values(),
-        )
-    )

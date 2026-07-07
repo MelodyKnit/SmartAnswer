@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import ipaddress
 import secrets
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import Request
 from starlette.responses import JSONResponse
@@ -14,6 +16,7 @@ from starlette.responses import JSONResponse
 from ..adapters import to_ocs_low_confidence_response, to_ocs_response
 from ..answering import AnswerService
 from ..auth import AuthError, AuthService
+from ..config import get_global_config
 from ..models import QuestionQuery
 from ..platform import PlatformService
 from ..platform.service import local_day_range_from_text
@@ -43,6 +46,8 @@ def run_lookup(
     """执行查题主流程，并完成计费、日志与响应转换。"""
     if not query.request_id:
         query.request_id = secrets.token_hex(12)
+    if not query.service_base_url:
+        query.service_base_url = model_visible_base_url(request, platform)
     started = time.time()
     try:
         set_request_id(str(query.request_id or ""))
@@ -211,6 +216,25 @@ def base_url_from_request(request: Request, platform: PlatformService | None = N
     if proto not in {"http", "https"}:
         proto = "http"
     return f"{proto}://{host}"
+
+
+def model_visible_base_url(request: Request, platform: PlatformService | None = None) -> str:
+    """返回模型大概率可访问的服务基础 URL；本地地址返回空串触发 data URL 兜底。"""
+
+    configured = get_global_config().public_base_url
+    if configured:
+        return configured
+    inferred = base_url_from_request(request, platform)
+    host = urlparse(inferred).hostname or ""
+    if host.lower() in {"localhost", "testserver"}:
+        return ""
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return inferred
+    if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_unspecified:
+        return ""
+    return inferred
 
 
 def base_url_from_headers(headers) -> str:

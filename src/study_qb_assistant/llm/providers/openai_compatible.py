@@ -13,14 +13,12 @@ from dataclasses import dataclass
 
 from ...http_client import HttpClientError, normalize_container_loopback_url, request_text
 from ...image_ocr import build_ocr_query
-from ...input_anomalies import (
-    model_answer_indicates_unreadable_image,
-    normalize_image_data_urls,
-    normalize_image_urls,
-)
+from ...input_anomalies import normalize_image_data_urls, normalize_image_urls
+from ...media.image_anomalies import model_answer_indicates_unreadable_image
 from ...models import ModelAnswer, QuestionQuery
 from ...logger import log_event
 from ...question_types import is_open_text_completion
+from ..prompts import render_prompt
 from ..tracing import record_trace
 from .openai_answer_parser import (
     answer_field,
@@ -38,6 +36,9 @@ from .openai_answer_parser import (
 )
 from .web_search import WebSearchResult
 from ..orchestration.search_augmented import render_search_evidence
+
+
+TOKEN_LIMIT_PARAMETER_KEYS = ("max_completion_tokens", "max_tokens", "max_output_tokens")
 
 
 @dataclass(slots=True)
@@ -163,33 +164,10 @@ class OpenAICompatibleProvider:
             ModelAnswer: 解析归一化后的模型答案。
         """
 
-        # 构造约束模型输出行为的 System Prompt
-        system_prompt = (
-            "You are a study assistant. Return only JSON with keys "
-            "candidate_answer, answer_text, explanation, confidence, "
-            "question_form, reuse_policy, reuse_reason, reuse_confidence. "
-            "When options are provided, candidate_answer must use option letters only. "
-            "For multiple-choice questions, join letters with #, for example A#C. "
-            "Set reuse_policy to reusable for choice, judgement, real blank, calculation, "
-            "and deterministic short-answer questions. Set reuse_policy to "
-            "non_reusable_open_text only for personalized long-form writing tasks such as "
-            "reflections, essays, papers, reports, summaries, reviews, or experiences. "
-            "Do not mark a question as non_reusable_open_text merely because words like "
-            "essay, report, 作文, or 报告 appear as ordinary nouns in a deterministic question. "
-            "If unsure, set confidence below 0.5 and reuse_confidence below 0.5."
+        system_prompt = self._system_prompt(
+            evidence=evidence,
+            verification_answer=verification_answer,
         )
-        # 如果提供了证据，在 System Prompt 中加入检索依赖提示
-        if evidence:
-            system_prompt += (
-                " Use the provided web evidence before answering. "
-                "If evidence conflicts with memory, trust the evidence. "
-                "Mention the most relevant evidence number in explanation."
-            )
-        if verification_answer is not None:
-            system_prompt += (
-                " Verify the previous answer and correct it if necessary. "
-                "Still return only the same JSON object with all required keys."
-            )
         prompt = self._render_question(
             query,
             evidence=evidence,
@@ -224,19 +202,13 @@ class OpenAICompatibleProvider:
                 "title": query.title,
                 "options_count": len(query.options),
                 "evidence_count": len(evidence),
-                "image_count": len(
-                    normalize_image_data_urls(
-                        query.image_data_urls,
-                        query.option_image_data_urls.values(),
-                    )
-                    or normalize_image_urls(query.image_urls, query.option_image_urls.values())
-                ),
+                "image_count": len(self._image_refs(query)),
             },
         )
         started = time.time()
         response_text = ""
         try:
-            raw_response = self._post_json(self._chat_url(), payload)
+            raw_response = self._post_chat_completion(payload)
             content = self._response_content(raw_response)
             response_text = content
             # 解析返回的文本为 ModelAnswer
@@ -323,6 +295,21 @@ class OpenAICompatibleProvider:
                     return ocr_answer
             raise
 
+    def _system_prompt(
+        self,
+        *,
+        evidence: tuple[WebSearchResult, ...],
+        verification_answer: ModelAnswer | None,
+    ) -> str:
+        """按调用场景渲染 System Prompt。"""
+
+        system_prompt = render_prompt("answer_system.jinja")
+        if evidence:
+            system_prompt += "\n" + render_prompt("answer_with_evidence_system_append.jinja")
+        if verification_answer is not None:
+            system_prompt += "\n" + render_prompt("answer_verification_system_append.jinja")
+        return system_prompt
+
     def _chat_url(self) -> str:
         """获取聊天补全接口的完整 URL 请求地址。"""
         return f"{self.base_url.rstrip('/')}/chat/completions"
@@ -342,6 +329,77 @@ class OpenAICompatibleProvider:
             )
             raise error from exc
         return str(content or "")
+
+    def _post_chat_completion(self, payload: dict) -> dict:
+        """发送聊天补全请求，并兼容不同上游网关的 token 限制参数。
+
+        OpenAI 兼容网关对最大输出 token 字段的支持并不统一：有的只接受
+        ``max_completion_tokens``，有的只接受 ``max_tokens``，也有部分转发层会把
+        字段转换成 ``max_output_tokens`` 后被下游拒绝。这里仅在上游明确返回
+        token 参数不兼容时降级重试，不吞掉其它模型错误。
+        """
+
+        url = self._chat_url()
+        first_error: Exception | None = None
+        for variant_name, variant_payload in self._chat_payload_variants(payload):
+            try:
+                return self._post_json(url, variant_payload)
+            except Exception as exc:
+                if first_error is None:
+                    first_error = exc
+                if not self._is_token_parameter_compatibility_error(exc):
+                    raise
+                log_event(
+                    "model_parameter_fallback",
+                    {
+                        "provider": self.provider_name,
+                        "base_url": self.base_url,
+                        "model": self.model,
+                        "variant": variant_name,
+                        "error": str(exc)[:500],
+                    },
+                )
+        if first_error is not None:
+            raise first_error
+        raise RuntimeError("model provider request failed: no chat completion payload variant")
+
+    def _chat_payload_variants(self, payload: dict) -> tuple[tuple[str, dict], ...]:
+        """生成 token 参数兼容请求载荷，保持原始载荷优先。"""
+
+        token_limit = next(
+            (payload[key] for key in TOKEN_LIMIT_PARAMETER_KEYS if key in payload),
+            None,
+        )
+        variants: list[tuple[str, dict]] = [("max_completion_tokens", dict(payload))]
+        if token_limit is None:
+            return tuple(variants)
+
+        payload_without_token_limit = {
+            key: value for key, value in payload.items() if key not in TOKEN_LIMIT_PARAMETER_KEYS
+        }
+        max_tokens_payload = dict(payload_without_token_limit)
+        max_tokens_payload["max_tokens"] = token_limit
+        if max_tokens_payload != variants[-1][1]:
+            variants.append(("max_tokens", max_tokens_payload))
+        if payload_without_token_limit != variants[-1][1]:
+            variants.append(("no_token_limit", payload_without_token_limit))
+        return tuple(variants)
+
+    def _is_token_parameter_compatibility_error(self, exc: Exception) -> bool:
+        """判断错误是否属于上游 token 限制参数不兼容。"""
+
+        text = str(exc).lower()
+        if not any(
+            marker in text
+            for marker in (
+                "unsupported parameter",
+                "unrecognized request argument",
+                "unknown parameter",
+                "invalid parameter",
+            )
+        ):
+            return False
+        return any(parameter in text for parameter in TOKEN_LIMIT_PARAMETER_KEYS)
 
     def _post_json(self, url: str, payload: dict) -> dict:
         """向指定的 URL 发送 POST 请求并返回解析后的 JSON 字典。
@@ -437,9 +495,7 @@ class OpenAICompatibleProvider:
             reuse_policy=text_field(payload.get("reuse_policy")),
             reuse_reason=text_field(payload.get("reuse_reason")),
             reuse_confidence=(
-                max(0.0, min(reuse_confidence, 1.0))
-                if reuse_confidence is not None
-                else None
+                max(0.0, min(reuse_confidence, 1.0)) if reuse_confidence is not None else None
             ),
         )
         return normalize_answer_for_query(answer, query)
@@ -489,32 +545,47 @@ class OpenAICompatibleProvider:
         返回:
             str: 格式化后的 Prompt 文本。
         """
-        lines = [f"Question type: {query.question_type}", f"Question: {query.title}"]
+        options_block = ""
         if query.options:
-            lines.append("Options:")
             labels = ("A", "B", "C", "D", "E", "F")
-            lines.extend(
+            options_block = "\n".join(
                 f"{label}. {strip_option_label(option)}"
                 for label, option in zip(labels, query.options, strict=False)
             )
-        if evidence:
-            lines.append("Web evidence:")
-            lines.append(render_search_evidence(evidence))
+        evidence_block = render_search_evidence(evidence) if evidence else ""
+        previous_answer_block = ""
         if verification_answer is not None:
-            lines.append("Previous answer:")
-            lines.append(f"candidate_answer: {verification_answer.candidate_answer or ''}")
-            lines.append(f"answer_text: {verification_answer.answer_text or ''}")
-            lines.append(f"explanation: {verification_answer.explanation or ''}")
-            lines.append(f"confidence: {verification_answer.confidence}")
-        return "\n".join(lines)
+            previous_answer_block = "\n".join(
+                (
+                    f"candidate_answer: {verification_answer.candidate_answer or ''}",
+                    f"answer_text: {verification_answer.answer_text or ''}",
+                    f"explanation: {verification_answer.explanation or ''}",
+                    f"confidence: {verification_answer.confidence}",
+                )
+            )
+        return render_prompt(
+            "answer_user.jinja",
+            question_type=query.question_type,
+            title=query.title,
+            options_block=options_block,
+            evidence_block=evidence_block,
+            previous_answer_block=previous_answer_block,
+        )
+
+    def _image_refs(self, query: QuestionQuery) -> tuple[str, ...]:
+        """合并题干与选项图片引用，避免混合 data URL / URL 时丢图。"""
+
+        data_refs = normalize_image_data_urls(
+            query.image_data_urls,
+            query.option_image_data_urls.values(),
+        )
+        url_refs = normalize_image_urls(query.image_urls, query.option_image_urls.values())
+        return tuple(dict.fromkeys((*data_refs, *url_refs)))
 
     def _message_content(self, query: QuestionQuery, prompt: str) -> str | list[dict]:
         """按 OpenAI 兼容多模态格式构造用户消息内容。"""
 
-        image_refs = normalize_image_data_urls(
-            query.image_data_urls,
-            query.option_image_data_urls.values(),
-        ) or normalize_image_urls(query.image_urls, query.option_image_urls.values())
+        image_refs = self._image_refs(query)
         if not image_refs:
             return prompt
         content: list[dict] = [{"type": "text", "text": prompt}]

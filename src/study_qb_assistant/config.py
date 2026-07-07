@@ -15,6 +15,7 @@ DATA_RAW_DIR = DATA_DIR / "raw"
 DATA_NORMALIZED_DIR = DATA_DIR / "normalized"
 DATA_RUNTIME_DIR = DATA_DIR / "runtime"
 DATA_LOGS_DIR = DATA_DIR / "logs"
+PROMPTS_DIR = CONFIG_DIR / "prompts"
 
 ENV_DATABASE_URL = "STQB_DATABASE_URL"
 ENV_DATA_DIR = "STQB_DATA_DIR"
@@ -176,6 +177,16 @@ class GlobalConfig(BaseModel):
     def data_logs_dir(self) -> Path:
         """返回结构化日志目录。"""
         return self.data_dir / "logs"
+
+    @property
+    def prompts_dir(self) -> Path:
+        """返回可提交的大模型提示词模板目录。"""
+        return self.config_dir / "prompts"
+
+    @property
+    def ocs_images_dir(self) -> Path:
+        """返回 OCS 题目图片运行时存储目录。"""
+        return self.data_dir / "images" / "ocs"
 
     @property
     def database_locator(self) -> str:
