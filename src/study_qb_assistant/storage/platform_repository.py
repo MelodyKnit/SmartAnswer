@@ -248,19 +248,27 @@ class SqlAlchemyPlatformRepository:
                 start_time=start_time,
                 end_time=end_time,
             )
-            entities = session.scalars(
-                stmt.offset(max(0, int(offset))).limit(max(1, min(limit, 5000)))
+            stmt = stmt.outerjoin(ApiTokenEntity, UsageLogEntity.token_id == ApiTokenEntity.token_id)
+            rows = session.execute(
+                stmt.with_only_columns(UsageLogEntity, ApiTokenEntity)
+                .offset(max(0, int(offset)))
+                .limit(max(1, min(limit, 5000)))
             ).all()
-            return [self._usage_log_record(entity) for entity in entities]
+            return [
+                self._usage_log_record(log_entity, token_entity)
+                for log_entity, token_entity in rows
+            ]
 
     def get_usage_log(self, log_id: str) -> UsageLogRecord | None:
         """按日志 ID 读取单条使用记录。"""
 
         with self.session_factory() as session:
-            entity = session.scalar(
-                select(UsageLogEntity).where(UsageLogEntity.log_id == log_id)
-            )
-            return self._usage_log_record(entity) if entity else None
+            row = session.execute(
+                select(UsageLogEntity, ApiTokenEntity)
+                .outerjoin(ApiTokenEntity, UsageLogEntity.token_id == ApiTokenEntity.token_id)
+                .where(UsageLogEntity.log_id == log_id)
+            ).first()
+            return self._usage_log_record(row[0], row[1]) if row else None
 
     def count_usage_logs(
         self,
@@ -927,12 +935,23 @@ class SqlAlchemyPlatformRepository:
             ),
         )
 
-    def _usage_log_record(self, entity: UsageLogEntity) -> UsageLogRecord:
+    def _usage_log_record(
+        self,
+        entity: UsageLogEntity,
+        token_entity: ApiTokenEntity | None = None,
+    ) -> UsageLogRecord:
+        token_description, token_key_mask, token_label = self._usage_log_token_display(
+            entity.token_id,
+            token_entity,
+        )
         return UsageLogRecord(
             log_id=entity.log_id,
             user_id=entity.user_id,
             username=entity.username,
             token_id=entity.token_id,
+            token_description=token_description,
+            token_key_mask=token_key_mask,
+            token_label=token_label,
             title=entity.title,
             question_type=entity.question_type,
             resolution_mode=entity.resolution_mode,
@@ -954,6 +973,32 @@ class SqlAlchemyPlatformRepository:
             source_url=str(getattr(entity, "source_url", "") or ""),
             context_json=str(getattr(entity, "context_json", "{}") or "{}"),
         )
+
+    def _usage_log_token_display(
+        self,
+        token_id: str | None,
+        token_entity: ApiTokenEntity | None,
+    ) -> tuple[str, str, str]:
+        """生成使用记录里可安全展示的 API Key 标识。"""
+
+        if not token_id:
+            return "", "", ""
+        if token_entity is None:
+            return "", "", self._compact_identifier(token_id)
+
+        description = str(getattr(token_entity, "description", "") or "").strip()
+        key_mask = str(getattr(token_entity, "key_mask", "") or "").strip()
+        label = description or key_mask or self._compact_identifier(token_id)
+        return description, key_mask, label
+
+    @staticmethod
+    def _compact_identifier(value: str) -> str:
+        """把缺失令牌记录里的 ID 压缩成便于排查且不抢眼的短标识。"""
+
+        text = str(value or "").strip()
+        if len(text) <= 12:
+            return text
+        return f"{text[:8]}...{text[-4:]}"
 
     def _feedback_record(self, entity: FeedbackEntity) -> FeedbackRecord:
         image_urls = tuple(json.loads(entity.image_urls or "[]"))

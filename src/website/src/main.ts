@@ -10,6 +10,7 @@ import './style.css'
 import App from './App.vue'
 import router from './router'
 import { useAuthStore } from './stores/auth'
+import { useSiteStore } from './stores/site'
 import { useThemeStore } from './stores/theme'
 import { ApiException, registerUnauthorizedHandler } from './api/http'
 
@@ -22,6 +23,8 @@ app.use(ElementPlus, { locale: zhCn })
 
 // 初始化主题（亮/暗/跟随系统），需在挂载前应用，避免首屏闪烁
 useThemeStore(pinia).init()
+useSiteStore(pinia).applyBrowserBrand(router.currentRoute.value.meta.title as string | undefined)
+void useSiteStore(pinia).load()
 
 // 注册全部 Element Plus 图标为全局组件
 for (const [name, component] of Object.entries(ElementPlusIconsVue)) {

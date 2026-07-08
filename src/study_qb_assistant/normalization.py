@@ -11,6 +11,32 @@ import re
 _WHITESPACE_RE = re.compile(r"\s+")
 # 用于匹配并滤除选项开头的字母前缀（如 "A."，"[B]"，"(C)"，"D、" 等）的正则表达式
 _CHOICE_PREFIX_RE = re.compile(r"^\s*[\(\[]?([A-Fa-f])[\)\].、:：]\s*")
+_QUESTION_TYPE_LABEL_RE = re.compile(
+    r"^\s*[\[【(（]\s*"
+    r"(?:single[-_\s]?choice|multiple[-_\s]?choice|multi[-_\s]?choice|"
+    r"true[-_\s]?false|judge(?:ment)?|judgement|completion|blank|"
+    r"fill[-_\s]?in[-_\s]?blank)"
+    r"\s*[\]】)）]\s*[:：、.．\-—–]*\s*",
+    re.IGNORECASE,
+)
+
+
+def strip_question_type_prefix(value: str | None) -> str:
+    """剥离平台采集时混入题干开头的英文题型标签。
+
+    该函数只处理 `【Single-choice】` 这类明确的英文题型标签，不删除
+    `【词汇-选择题】` 等可能属于题目内容的中文分类信息。
+    """
+
+    if value is None:
+        return ""
+    cleaned = str(value).strip()
+    for _ in range(3):
+        next_value = _QUESTION_TYPE_LABEL_RE.sub("", cleaned)
+        if next_value == cleaned:
+            break
+        cleaned = next_value.strip()
+    return cleaned
 
 
 def normalize_text(value: str | None) -> str:

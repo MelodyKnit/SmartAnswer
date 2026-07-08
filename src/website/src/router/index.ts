@@ -1,6 +1,7 @@
 /** 路由表与导航守卫（含登录态与角色边界控制）。 */
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useSiteStore } from '@/stores/site'
 
 /** 路由 meta 扩展：访问级别。 */
 declare module 'vue-router' {
@@ -176,6 +177,10 @@ router.beforeEach(async (to) => {
   }
 
   return true
+})
+
+router.afterEach((to) => {
+  useSiteStore().applyBrowserBrand(to.meta.title)
 })
 
 export default router

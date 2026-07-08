@@ -63,6 +63,9 @@ export interface UsageLog {
   user_id: string
   username: string
   token_id: string | null
+  token_description?: string
+  token_key_mask?: string
+  token_label?: string
   title: string
   question_type: string
   resolution_mode: string
@@ -298,6 +301,8 @@ export interface UsageAudit {
 }
 
 export interface SystemConfig {
+  site_title?: string
+  site_logo_url?: string
   smart_proto_enabled?: string
   custom_proto_header?: string
   default_user_points?: string
@@ -307,6 +312,11 @@ export interface SystemConfig {
   answer_retry_times?: string
   registration_enabled?: string
   [key: string]: string | boolean | undefined
+}
+
+export interface SiteConfig {
+  site_title: string
+  site_logo_url: string
 }
 
 export interface LlmRuntimeConfig {

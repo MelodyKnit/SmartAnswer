@@ -1,22 +1,25 @@
 <script setup lang="ts">
 /** 登录页：支持用户名或邮箱 + 密码，链接注册与找回密码。 */
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { ApiException } from '@/api/http'
 import { authApi } from '@/api/endpoints'
+import { useSiteStore } from '@/stores/site'
 import AuthShell from './AuthShell.vue'
 
 const auth = useAuthStore()
 const router = useRouter()
 const route = useRoute()
+const site = useSiteStore()
 
 const formRef = ref<FormInstance>()
 const loading = ref(false)
 const registrationEnabled = ref(true)
 const form = reactive({ username: '', password: '', remember: true })
+const loginSubtitle = computed(() => `登录${site.title}，继续管理你的接入能力`)
 
 onMounted(async () => {
   try {
@@ -51,7 +54,7 @@ async function submit() {
 </script>
 
 <template>
-  <AuthShell title="欢迎回来" subtitle="登录答题接入管理平台，继续管理你的接入能力">
+  <AuthShell title="欢迎回来" :subtitle="loginSubtitle">
     <el-form ref="formRef" :model="form" :rules="rules" size="large" @submit.prevent="submit">
       <el-form-item prop="username">
         <el-input v-model="form.username" placeholder="用户名或邮箱" :prefix-icon="'User'" />

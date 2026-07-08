@@ -151,6 +151,8 @@ class SystemConfigPayload(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
+    site_title: str | None = None
+    site_logo_url: str | None = None
     smart_proto_enabled: str | None = None
     custom_proto_header: str | None = None
     default_user_points: str | None = None

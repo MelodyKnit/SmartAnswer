@@ -85,6 +85,9 @@ class UsageLogRecord:
     source_id: str = ""
     source_url: str = ""
     context_json: str = "{}"
+    token_description: str = ""
+    token_key_mask: str = ""
+    token_label: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -92,6 +95,9 @@ class UsageLogRecord:
             "user_id": self.user_id,
             "username": self.username,
             "token_id": self.token_id,
+            "token_description": self.token_description,
+            "token_key_mask": self.token_key_mask,
+            "token_label": self.token_label,
             "title": self.title,
             "question_type": self.question_type,
             "resolution_mode": self.resolution_mode,
@@ -134,6 +140,9 @@ class UsageLogRecord:
             source_id=str(payload.get("source_id") or ""),
             source_url=str(payload.get("source_url") or ""),
             context_json=str(payload.get("context_json") or "{}"),
+            token_description=str(payload.get("token_description") or ""),
+            token_key_mask=str(payload.get("token_key_mask") or ""),
+            token_label=str(payload.get("token_label") or ""),
         )
 
 

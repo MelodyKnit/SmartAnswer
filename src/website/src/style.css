@@ -4,7 +4,7 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 /*
- * 答题接入管理平台 · 设计令牌
+ * AI题库 · 设计令牌
  * 运行时变量（--c-*）在 :root / .dark 两套主题下给出实际色值，
  * 再由 @theme inline 映射成 Tailwind 工具类（bg-canvas / text-ink / border-line ...），
  * 因此所有页面无需改类名即可自动随主题切换。

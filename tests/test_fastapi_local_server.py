@@ -602,6 +602,73 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(blocked.status_code, 403)
         self.assertEqual(blocked.json()["error"]["code"], "REGISTRATION_DISABLED")
 
+    def test_site_config_is_public_and_follows_system_config(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                )
+            )
+
+            public_before = client.get("/site-config")
+            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            login = client.post(
+                "/auth/login", json={"username": "owner", "password": "password123"}
+            )
+            headers = {"Authorization": f"Bearer {login.json()['token']}"}
+            updated = client.patch(
+                "/system-config",
+                json={"site_title": "校园题库", "site_logo_url": "/brand/logo.png"},
+                headers=headers,
+            )
+            public_after = client.get("/site-config")
+            empty_title = client.patch(
+                "/system-config",
+                json={"site_title": "", "site_logo_url": ""},
+                headers=headers,
+            )
+            public_after_empty = client.get("/site-config")
+
+        self.assertEqual(public_before.status_code, 200)
+        self.assertEqual(public_before.json()["site_title"], "AI题库")
+        self.assertEqual(public_before.json()["site_logo_url"], "")
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(updated.json()["config"]["site_title"], "校园题库")
+        self.assertEqual(updated.json()["config"]["site_logo_url"], "/brand/logo.png")
+        self.assertEqual(public_after.json()["site_title"], "校园题库")
+        self.assertEqual(public_after.json()["site_logo_url"], "/brand/logo.png")
+        self.assertEqual(empty_title.json()["config"]["site_title"], "AI题库")
+        self.assertEqual(public_after_empty.json()["site_title"], "AI题库")
+        self.assertEqual(public_after_empty.json()["site_logo_url"], "")
+
+    def test_site_logo_url_rejects_unsafe_protocols(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                )
+            )
+
+            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            login = client.post(
+                "/auth/login", json={"username": "owner", "password": "password123"}
+            )
+            headers = {"Authorization": f"Bearer {login.json()['token']}"}
+            rejected = client.patch(
+                "/system-config",
+                json={"site_logo_url": "javascript:alert(1)"},
+                headers=headers,
+            )
+
+        self.assertEqual(rejected.status_code, 400)
+        self.assertEqual(rejected.json()["error"]["code"], "INVALID_INPUT")
+
     def test_first_superadmin_registration_still_works_when_registration_is_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
@@ -856,6 +923,17 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertGreater(usage_after.json()["logs"][0]["elapsed_ms"], 0)
         self.assertTrue(usage_after.json()["logs"][0]["request_id"])
         self.assertTrue(usage_after.json()["logs"][0]["provider"])
+        self.assertEqual(
+            usage_after.json()["logs"][0]["token_id"],
+            token_create.json()["token_info"]["token_id"],
+        )
+        self.assertEqual(usage_after.json()["logs"][0]["token_description"], "我的 OCS")
+        self.assertEqual(
+            usage_after.json()["logs"][0]["token_key_mask"],
+            token_create.json()["token_info"]["key_mask"],
+        )
+        self.assertEqual(usage_after.json()["logs"][0]["token_label"], "我的 OCS")
+        self.assertNotEqual(usage_after.json()["logs"][0]["token_key_mask"], raw_api_token)
         self.assertEqual(usage_after.json()["logs"][0]["question_id"], "unit:sample:1")
         self.assertEqual(usage_after.json()["logs"][0]["source_id"], "unit:sample:1")
         self.assertEqual(usage_after.json()["logs"][0]["source_type"], "qa_record")
@@ -1782,6 +1860,50 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(next_day_response.json()["logs"][0]["title"], "次日零点题目")
         self.assertEqual(invalid_response.status_code, 400)
         self.assertEqual(invalid_response.json()["error"]["code"], "INVALID_DATE")
+
+    def test_usage_logs_show_compact_label_when_token_record_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                )
+            )
+
+            client.post("/auth/register", json={"username": "alice", "password": "password123"})
+            token = client.post(
+                "/auth/login", json={"username": "alice", "password": "password123"}
+            ).json()["token"]
+            headers = {"Authorization": f"Bearer {token}"}
+            user = auth.get_user("alice")
+            _raw_token, token_info = platform.create_token(
+                user_id=user["user_id"],
+                description="临时令牌",
+            )
+            platform.record_usage(
+                user_id=user["user_id"],
+                username="alice",
+                token_id=token_info["token_id"],
+                title="缺失令牌记录",
+                question_type="single",
+                resolution_mode="local_hit",
+                answer="A",
+                confidence=1.0,
+                provider="local",
+                points_cost=0,
+            )
+            platform.delete_token(user_id=user["user_id"], token_id=token_info["token_id"])
+
+            response = client.get("/usage-logs", headers=headers)
+
+        self.assertEqual(response.status_code, 200)
+        log = response.json()["logs"][0]
+        self.assertEqual(log["token_id"], token_info["token_id"])
+        self.assertEqual(log["token_description"], "")
+        self.assertEqual(log["token_key_mask"], "")
+        self.assertEqual(log["token_label"], f"{token_info['token_id'][:8]}...{token_info['token_id'][-4:]}")
 
     def test_debug_recent_tolerates_bad_log_lines_and_validates_date_format(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

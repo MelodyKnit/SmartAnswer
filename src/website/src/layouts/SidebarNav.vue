@@ -1,5 +1,8 @@
 <script setup lang="ts">
 /** 侧边栏导航：接收已按权限过滤的菜单分组，负责展示和选择事件。 */
+import SiteLogo from '@/components/SiteLogo.vue'
+import { useSiteStore } from '@/stores/site'
+
 interface MenuEntry {
   index: string
   label: string
@@ -20,15 +23,15 @@ defineProps<{
 const emit = defineEmits<{
   select: [path: string]
 }>()
+
+const site = useSiteStore()
 </script>
 
 <template>
   <aside class="flex flex-col border-r border-line bg-card">
     <div class="flex items-center gap-2.5 px-5 py-5">
-      <div class="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-brand-500 to-accent-600 text-white shadow-float">
-        <el-icon :size="20"><Cpu /></el-icon>
-      </div>
-      <span class="text-[17px] font-semibold text-ink">答题接入平台</span>
+      <SiteLogo />
+      <span class="truncate text-[17px] font-semibold text-ink">{{ site.title }}</span>
     </div>
 
     <el-scrollbar class="flex-1">
@@ -51,6 +54,6 @@ const emit = defineEmits<{
       </nav>
     </el-scrollbar>
 
-    <div class="px-4 py-3 text-xs text-ink-muted">© 2026 答题接入管理平台</div>
+    <div class="px-4 py-3 text-xs text-ink-muted">© 2026 {{ site.title }}</div>
   </aside>
 </template>

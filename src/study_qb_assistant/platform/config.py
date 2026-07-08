@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 SYSTEM_CONFIG_KEYS = {
+    "site_title",
+    "site_logo_url",
     "smart_proto_enabled",
     "custom_proto_header",
     "default_user_points",
@@ -46,6 +48,8 @@ LLM_RUNTIME_SECRET_KEYS = {
 }
 
 SYSTEM_CONFIG_DEFAULTS = {
+    "site_title": "AI题库",
+    "site_logo_url": "",
     "smart_proto_enabled": "true",
     "custom_proto_header": "http",
     "default_user_points": "100",

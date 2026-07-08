@@ -25,6 +25,7 @@ import type {
   RedeemCode,
   RolePermission,
   RuntimeEvent,
+  SiteConfig,
   UsageAudit,
   SystemConfig,
   TokenImportScriptResponse,
@@ -273,6 +274,10 @@ export const systemConfigApi = {
   get: () => api.get<{ ok: true; config: SystemConfig }>('/system-config'),
   update: (body: Record<string, string>) =>
     api.patch<{ ok: true; config: SystemConfig; reload_required: boolean }>('/system-config', body),
+}
+
+export const siteConfigApi = {
+  get: () => api.get<{ ok: true } & SiteConfig>('/site-config'),
 }
 
 /* ---------------- 钱包 / 兑换码 ---------------- */

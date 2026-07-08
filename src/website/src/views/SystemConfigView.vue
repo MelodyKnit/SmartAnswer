@@ -1,17 +1,24 @@
 <script setup lang="ts">
 /** 系统配置：积分策略、账户与服务配置。仅超级管理员可访问与修改。
  *  敏感项后端只返回 *_configured 标志，不回明文；留空表示不修改。 */
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { billingApi, systemConfigApi } from '@/api/endpoints'
 import { ApiException } from '@/api/http'
 import PageHeader from '@/components/PageHeader.vue'
+import SiteLogo from '@/components/SiteLogo.vue'
+import { useSiteStore } from '@/stores/site'
 
 const loading = ref(false)
 const saving = ref(false)
+const route = useRoute()
+const site = useSiteStore()
 
 /* 表单：明文字段直接编辑；密钥字段为“新值”，留空表示保持不变。 */
 const form = reactive({
+  site_title: 'AI题库',
+  site_logo_url: '',
   smart_proto_enabled: 'true',
   custom_proto_header: 'http',
   default_user_points: 100,
@@ -28,12 +35,22 @@ const billingForm = reactive({
   llm_fallback: 3,
 })
 
+const previewLogoUrl = computed(() => {
+  const value = form.site_logo_url.trim()
+  if (!value) return ''
+  if (value.startsWith('/') && !value.startsWith('//') && !/\s/.test(value)) return value
+  if (/^https?:\/\/\S+$/i.test(value)) return value
+  return ''
+})
+
 async function load() {
   loading.value = true
   try {
     const res = await systemConfigApi.get()
     const billing = await billingApi.get()
     // 大模型推理、联网搜索和 AI 学习缓存统一在“大模型配置”页维护。
+    form.site_title = (res.config.site_title as string) || 'AI题库'
+    form.site_logo_url = (res.config.site_logo_url as string) || ''
     form.smart_proto_enabled = (res.config.smart_proto_enabled as string) || 'true'
     form.custom_proto_header = (res.config.custom_proto_header as string) || 'http'
     form.default_user_points = Number(res.config.default_user_points || 100)
@@ -54,6 +71,8 @@ async function save() {
   saving.value = true
   try {
     const body: Record<string, string> = {
+      site_title: form.site_title,
+      site_logo_url: form.site_logo_url,
       smart_proto_enabled: form.smart_proto_enabled,
       custom_proto_header: form.custom_proto_header,
       default_user_points: String(form.default_user_points),
@@ -64,7 +83,9 @@ async function save() {
       registration_enabled: form.registration_enabled,
     }
 
-    await systemConfigApi.update(body)
+    const updated = await systemConfigApi.update(body)
+    site.applyConfig(updated.config)
+    site.applyBrowserBrand(route.meta.title as string | undefined)
     await billingApi.update({
       local_hit: billingForm.local_hit,
       web_search: billingForm.web_search,
@@ -84,13 +105,38 @@ onMounted(load)
 
 <template>
   <div v-loading="loading">
-    <PageHeader title="系统配置" description="配置积分策略、账户开关与服务协议。大模型相关能力请到“大模型配置”中维护。">
+    <PageHeader title="系统配置" description="配置站点外观、积分策略、账户开关与服务协议。大模型相关能力请到“大模型配置”中维护。">
       <template #actions>
         <el-button type="primary" :loading="saving" @click="save">保存配置</el-button>
       </template>
     </PageHeader>
 
     <div class="space-y-4">
+      <!-- 站点外观 -->
+      <div class="app-card p-6">
+        <h3 class="mb-4 text-base font-semibold text-ink">站点外观</h3>
+        <div class="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_280px]">
+          <el-form label-position="top" class="grid grid-cols-1 gap-x-6 md:grid-cols-2">
+            <el-form-item label="网站标题">
+              <el-input v-model="form.site_title" maxlength="40" show-word-limit placeholder="AI题库" />
+            </el-form-item>
+            <el-form-item label="Logo 地址">
+              <el-input v-model="form.site_logo_url" placeholder="/favicon.svg 或 https://example.com/logo.png" />
+            </el-form-item>
+          </el-form>
+          <div class="rounded-xl border border-line bg-card-soft p-4">
+            <div class="mb-3 text-xs font-medium text-ink-muted">预览</div>
+            <div class="flex items-center gap-3">
+              <SiteLogo :title="form.site_title" :logo-url="previewLogoUrl" />
+              <div class="min-w-0">
+                <div class="truncate text-base font-semibold text-ink">{{ form.site_title || 'AI题库' }}</div>
+                <div class="truncate text-xs text-ink-muted">{{ form.site_logo_url || '使用默认图标' }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- 积分策略 -->
       <div class="app-card p-6">
         <h3 class="mb-4 text-base font-semibold text-ink">积分策略</h3>

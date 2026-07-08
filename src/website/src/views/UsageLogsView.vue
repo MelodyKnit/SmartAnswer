@@ -163,10 +163,24 @@ function resetFilters() {
   load()
 }
 
-function tokenLabel(tokenId?: string | null) {
-  if (!tokenId) return '—'
-  const token = tokens.value.find((item) => item.token_id === tokenId)
-  return token?.description || token?.key_mask || tokenId
+function compactTokenId(tokenId?: string | null) {
+  if (!tokenId) return ''
+  return tokenId.length <= 12 ? tokenId : `${tokenId.slice(0, 8)}...${tokenId.slice(-4)}`
+}
+
+function tokenLabel(log?: UsageLog | null) {
+  if (!log?.token_id) return '—'
+  const token = tokens.value.find((item) => item.token_id === log.token_id)
+  return log.token_label || token?.description || token?.key_mask || compactTokenId(log.token_id) || '—'
+}
+
+function tokenTooltip(log: UsageLog) {
+  const parts = [
+    log.token_description ? `描述：${log.token_description}` : '',
+    log.token_key_mask ? `密钥：${log.token_key_mask}` : '',
+    log.token_id ? `ID：${log.token_id}` : '',
+  ].filter(Boolean)
+  return parts.join('\n') || tokenLabel(log)
 }
 
 onMounted(() => {
@@ -242,6 +256,13 @@ onMounted(() => {
           </template>
         </el-table-column>
         <el-table-column v-if="auth.isAdmin" label="用户" width="120" prop="username" />
+        <el-table-column label="令牌" width="150" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="text-ink-soft" :title="tokenTooltip(row)">
+              {{ tokenLabel(row) }}
+            </span>
+          </template>
+        </el-table-column>
         <el-table-column label="题型" width="90">
           <template #default="{ row }">
             <el-tag size="small" effect="plain">{{ questionTypeLabel(row.question_type) }}</el-tag>
@@ -360,7 +381,7 @@ onMounted(() => {
           </div>
           <div class="flex justify-between border-b border-line pb-2">
             <dt class="text-ink-muted">使用的 API Key</dt>
-            <dd class="text-ink">{{ tokenLabel(detail.token_id) }}</dd>
+            <dd class="text-ink">{{ tokenLabel(detail) }}</dd>
           </div>
           <div class="flex justify-between border-b border-line pb-2">
             <dt class="text-ink-muted">消耗积分</dt>

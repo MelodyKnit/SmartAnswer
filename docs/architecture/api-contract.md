@@ -1,6 +1,6 @@
 # API 契约
 
-更新时间：`2026-07-04`
+更新时间：`2026-07-07`
 
 ## 1. 目的
 
@@ -266,6 +266,26 @@
 
 使用令牌提交新密码。
 
+#### `GET /site-config`
+
+公开读取站点品牌配置，用于登录页、浏览器标题、favicon 与前端初始化。该接口只返回安全展示字段，不暴露完整系统配置。
+
+响应：
+
+```json
+{
+  "ok": true,
+  "site_title": "AI题库",
+  "site_logo_url": ""
+}
+```
+
+说明：
+
+- `site_title` 为空时后端回退为 `AI题库`。
+- `site_logo_url` 为空时前端使用默认图标。
+- `site_logo_url` 只支持站内绝对路径、`http://` 或 `https://` 地址。
+
 ### 4.2 用户与角色
 
 #### `GET /users/me`
@@ -447,6 +467,8 @@
 
 - 角色：仅 `superadmin`
 - 支持字段：
+  - `site_title`
+  - `site_logo_url`
   - `default_user_points`
   - `invite_bonus_points`
   - `manual_grant_default_points`
@@ -465,6 +487,8 @@
   "ok": true,
   "config": {
     "smart_proto_enabled": "true",
+    "site_title": "AI题库",
+    "site_logo_url": "",
     "custom_proto_header": "http",
     "default_user_points": "100",
     "invite_bonus_points": "0",

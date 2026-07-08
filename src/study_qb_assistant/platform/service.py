@@ -9,6 +9,7 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from threading import RLock
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 from ..auth import AuthError
@@ -1750,10 +1751,11 @@ class PlatformService:
                 },
             ]
         )
+        site_title = self.get_site_config()["site_title"]
         return {
             "scope": effective_scope,
             "hero": {
-                "title": "答题接入平台 全新上线",
+                "title": f"{site_title} 全新上线",
                 "subtitle": "更稳定的接口服务，更便捷的接入体验，助力平台高效接入答题能力",
                 "badges": ["高可用保障", "快速接入", "安全合规"],
             },
@@ -1921,6 +1923,21 @@ class PlatformService:
                     payload[key] = value
             return payload
 
+    def get_site_config(self) -> dict[str, str]:
+        """读取可公开暴露给登录页和前端初始化使用的站点品牌配置。"""
+
+        config = self.get_system_config()
+        title = str(config.get("site_title") or SYSTEM_CONFIG_DEFAULTS["site_title"]).strip()
+        raw_logo_url = str(config.get("site_logo_url") or "").strip()
+        try:
+            logo_url = normalize_site_logo_url(raw_logo_url)
+        except AuthError:
+            logo_url = ""
+        return {
+            "site_title": title or SYSTEM_CONFIG_DEFAULTS["site_title"],
+            "site_logo_url": logo_url,
+        }
+
     def get_llm_runtime_config(self, *, reveal_secret: bool = False) -> dict:
         """读取统一后的 LLM 答题运行时配置。"""
 
@@ -1967,7 +1984,13 @@ class PlatformService:
             if key not in SYSTEM_CONFIG_KEYS:
                 raise AuthError("INVALID_INPUT", f"不支持的系统配置项: {key}", http_status=400)
             text = "" if value is None else str(value).strip()
-            if key in SYSTEM_CONFIG_BOOLEAN_KEYS:
+            if key == "site_title":
+                text = text or SYSTEM_CONFIG_DEFAULTS["site_title"]
+                if len(text) > 40:
+                    raise AuthError("INVALID_INPUT", "网站标题不能超过 40 个字符", http_status=400)
+            elif key == "site_logo_url":
+                text = normalize_site_logo_url(text)
+            elif key in SYSTEM_CONFIG_BOOLEAN_KEYS:
                 text = (
                     "false" if text.lower() in {"0", "false", "no", "off", "disabled"} else "true"
                 )
@@ -1996,6 +2019,28 @@ class PlatformService:
         }
         env.update(self.llm_runtime_env())
         return env
+
+
+def normalize_site_logo_url(value: str) -> str:
+    """校验站点 Logo 地址，只允许空值、站内绝对路径或 HTTP(S) URL。"""
+
+    text = (value or "").strip()
+    if not text:
+        return ""
+    if len(text) > 2048:
+        raise AuthError("INVALID_INPUT", "Logo 地址不能超过 2048 个字符", http_status=400)
+    if text.startswith("/"):
+        if text.startswith("//") or any(ch.isspace() for ch in text):
+            raise AuthError("INVALID_INPUT", "Logo 地址格式不正确", http_status=400)
+        return text
+    parsed = urlparse(text)
+    if (
+        parsed.scheme in {"http", "https"}
+        and parsed.netloc
+        and not any(ch.isspace() for ch in text)
+    ):
+        return text
+    raise AuthError("INVALID_INPUT", "Logo 地址仅支持站内路径或 http/https URL", http_status=400)
 
 
 def normalize_ranking_dimension(value: str) -> str:

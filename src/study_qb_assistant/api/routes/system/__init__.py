@@ -33,6 +33,11 @@ def build_system_router() -> APIRouter:
         platform = get_platform_service(request)
         return JSONResponse({"ok": True, "config": platform.get_system_config()})
 
+    @router.get("/site-config")
+    def site_config_get(request: Request) -> JSONResponse:
+        platform = get_platform_service(request)
+        return JSONResponse({"ok": True, **platform.get_site_config()})
+
     @router.patch("/system-config")
     def system_config_patch(request: Request, payload: SystemConfigPayload) -> JSONResponse:
         denied = require_roles(request, {"superadmin"})
