@@ -112,7 +112,7 @@ onMounted(async () => {
     <div class="app-card p-1">
       <el-table v-loading="loading" :data="users" style="width: 100%">
         <el-table-column label="用户名" min-width="140" prop="username" />
-        <el-table-column label="角色" width="120">
+        <el-table-column label="角色" width="120" align="center">
           <template #default="{ row }">
             <el-tag
               size="small"
@@ -122,21 +122,21 @@ onMounted(async () => {
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="100">
+        <el-table-column label="状态" width="100" align="center">
           <template #default="{ row }">
             <el-tag size="small" :type="row.status === 'active' ? 'success' : 'info'">
               {{ row.status === 'active' ? '正常' : '已禁用' }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="积分" width="100" prop="points" />
-        <el-table-column label="邮箱" min-width="160">
+        <el-table-column label="积分" width="100" prop="points" align="center" />
+        <el-table-column label="邮箱" min-width="160" align="center">
           <template #default="{ row }">{{ row.email || '—' }}</template>
         </el-table-column>
-        <el-table-column label="邀请人" min-width="140" show-overflow-tooltip>
+        <el-table-column label="邀请人" min-width="140" show-overflow-tooltip align="center">
           <template #default="{ row }">{{ row.invited_by || '—' }}</template>
         </el-table-column>
-        <el-table-column label="注册时间" width="170">
+        <el-table-column label="注册时间" width="170" align="center">
           <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
         </el-table-column>
         <el-table-column label="操作" width="160" align="right">

@@ -422,7 +422,7 @@ onMounted(() => {
       <div class="app-card overflow-hidden" v-loading="loading">
         <el-table :data="questions" style="width: 100%" row-key="question_id" stripe>
           <!-- 题型 -->
-          <el-table-column label="题型" width="100">
+          <el-table-column label="题型" width="100" align="center">
             <template #default="{ row }">
               <el-tag :type="getQuestionTypeTag(row.question_type).type" effect="light" size="small">
                 {{ getQuestionTypeTag(row.question_type).label }}
@@ -435,7 +435,7 @@ onMounted(() => {
             <template #default="{ row }">
               <div class="space-y-2">
                 <!-- 题干 -->
-                <div class="font-medium text-ink break-words text-sm">{{ row.title_raw }}</div>
+                <div class="font-medium text-ink wrap-break-word text-sm">{{ row.title_raw }}</div>
                 
                 <!-- 选项列表 -->
                 <div v-if="row.options_raw && row.options_raw.length > 0" class="grid grid-cols-1 md:grid-cols-2 gap-2 pl-4">
@@ -445,7 +445,7 @@ onMounted(() => {
                     class="text-xs text-ink-muted flex items-start gap-1"
                   >
                     <span class="font-semibold text-primary">{{ getOptionLabel(index) }}.</span>
-                    <span class="break-words">{{ option }}</span>
+                    <span class="wrap-break-word">{{ option }}</span>
                   </div>
                 </div>
               </div>
@@ -453,7 +453,7 @@ onMounted(() => {
           </el-table-column>
 
           <!-- 答案 -->
-          <el-table-column label="参考答案" width="120">
+          <el-table-column label="参考答案" width="120" align="center">
             <template #default="{ row }">
               <el-tag type="danger" effect="dark" size="small" class="font-bold">
                 {{ row.answer_raw }}
@@ -461,7 +461,7 @@ onMounted(() => {
             </template>
           </el-table-column>
 
-          <el-table-column label="状态" width="120">
+          <el-table-column label="状态" width="120" align="center">
             <template #default="{ row }">
               <el-tag size="small" :type="getQuestionStatusTag(row.status).type">
                 {{ getQuestionStatusTag(row.status).label }}
@@ -469,14 +469,14 @@ onMounted(() => {
             </template>
           </el-table-column>
 
-          <el-table-column label="修改时间" width="170">
+          <el-table-column label="修改时间" width="170" align="center">
             <template #default="{ row }">
               <span class="text-sm text-ink-soft">{{ formatDateTime(row.updated_at) }}</span>
             </template>
           </el-table-column>
 
           <!-- 科目/解析 -->
-          <el-table-column label="科目 & 来源" width="180">
+          <el-table-column label="科目 & 来源" width="180" align="center">
             <template #default="{ row }">
               <div class="text-xs space-y-1">
                 <div><span class="text-ink-soft">科目:</span> <span class="text-ink font-medium">{{ row.subject || '未分类' }}</span></div>
@@ -486,7 +486,7 @@ onMounted(() => {
           </el-table-column>
 
           <!-- 操作 -->
-          <el-table-column label="操作" width="140" align="center">
+          <el-table-column label="操作" width="140" align="right">
             <template #default="{ row }">
               <div class="flex justify-center gap-2">
                 <el-button type="primary" size="small" circle @click="openEdit(row)">
@@ -568,7 +568,7 @@ onMounted(() => {
               :key="index"
               class="flex items-center gap-2"
             >
-              <el-tag type="primary" class="font-bold flex-shrink-0 w-8 text-center">{{ getOptionLabel(index) }}</el-tag>
+              <el-tag type="primary" class="font-bold shrink-0 w-8 text-center">{{ getOptionLabel(index) }}</el-tag>
               <el-input v-model="editForm.options_raw[index]" placeholder="请输入选项内容" />
               <el-button 
                 type="danger" 

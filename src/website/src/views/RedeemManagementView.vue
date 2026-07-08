@@ -255,33 +255,33 @@ onMounted(load)
                   <el-button link type="primary" size="small" class="ml-2" @click="copyCode(row.code)">复制</el-button>
                 </template>
               </el-table-column>
-              <el-table-column label="积分" width="120">
+              <el-table-column label="积分" width="120" align="center">
                 <template #default="{ row }">
                   <span class="font-semibold text-brand-600">+{{ row.points }} 分</span>
                 </template>
               </el-table-column>
-              <el-table-column label="使用情况" width="120">
+              <el-table-column label="使用情况" width="120" align="center">
                 <template #default="{ row }">
                   <span class="font-medium text-ink">{{ row.used_uses }}</span>
                   <span class="text-ink-muted"> / {{ row.max_uses }}</span>
                 </template>
               </el-table-column>
-              <el-table-column label="状态" width="110">
+              <el-table-column label="状态" width="110" align="center">
                 <template #default="{ row }">
                   <el-tag size="small" :type="redeemCodeStatus(row).type" effect="light">
                     {{ redeemCodeStatus(row).label }}
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="有效期" min-width="170">
+              <el-table-column label="有效期" min-width="170" align="center">
                 <template #default="{ row }">
                   <el-tag v-if="!row.expires_at" size="small" type="info" effect="plain">永久有效</el-tag>
                   <el-tag v-else-if="isRedeemCodeExpired(row)" size="small" type="danger" effect="light">已过期</el-tag>
                   <span v-else class="text-ink">{{ formatDateTime(row.expires_at) }}</span>
                 </template>
               </el-table-column>
-              <el-table-column label="创建人" width="140" prop="created_by" />
-              <el-table-column label="创建时间" min-width="170">
+              <el-table-column label="创建人" width="140" prop="created_by" align="center" />
+              <el-table-column label="创建时间" min-width="170" align="right">
                 <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
               </el-table-column>
               <template #empty><el-empty description="暂无兑换码" /></template>
@@ -324,23 +324,23 @@ onMounted(load)
             <div class="px-4 pt-4 pb-2 text-base font-semibold text-ink">全平台积分流水</div>
             <el-table v-loading="loading" :data="orders" style="width: 100%">
               <el-table-column label="用户" min-width="120" prop="username" />
-              <el-table-column label="变更" width="140">
+              <el-table-column label="变更" width="140" align="center">
                 <template #default="{ row }">
                   <span class="font-semibold text-success">+{{ row.points_delta }} 分</span>
                 </template>
               </el-table-column>
-              <el-table-column label="来源" min-width="140">
+              <el-table-column label="来源" min-width="140" align="center">
                 <template #default="{ row }">{{ walletSourceLabel(row.source) }}</template>
               </el-table-column>
-              <el-table-column label="操作人" width="140" prop="created_by" />
-              <el-table-column label="状态" width="110">
+              <el-table-column label="操作人" width="140" prop="created_by" align="center" />
+              <el-table-column label="状态" width="110" align="center">
                 <template #default="{ row }">
                   <el-tag size="small" :type="row.status === 'completed' ? 'success' : 'info'" effect="light">
                     {{ row.status === 'completed' ? '已完成' : row.status }}
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="时间" min-width="170">
+              <el-table-column label="时间" min-width="170" align="right">
                 <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
               </el-table-column>
               <template #empty><el-empty description="暂无积分流水" /></template>

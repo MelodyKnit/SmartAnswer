@@ -350,15 +350,15 @@ onMounted(() => {
             </div>
           </template>
         </el-table-column>
-        <el-table-column v-if="auth.isAdmin" label="提交人" width="120" prop="username" />
-        <el-table-column label="状态" width="100">
+        <el-table-column v-if="auth.isAdmin" label="提交人" width="120" prop="username" align="center" />
+        <el-table-column label="操作" width="120" align="right">
           <template #default="{ row }">
             <el-tag size="small" :type="statusType(row.status) as any">
               {{ feedbackStatusLabel(row.status) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="当前答案" width="150" show-overflow-tooltip>
+        <el-table-column label="当前答案" width="150" show-overflow-tooltip align="center">
           <template #default="{ row }">
             <span v-if="feedbackAnswer(row) !== '—'" class="font-medium text-success">
               {{ feedbackAnswer(row) }}
@@ -366,7 +366,7 @@ onMounted(() => {
             <span v-else class="text-ink-muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="奖励积分" width="90">
+        <el-table-column label="奖励积分" width="90" align="center">
           <template #default="{ row }">
             <span v-if="row.reward_points > 0" class="font-medium text-warning">
               +{{ row.reward_points }}
@@ -374,7 +374,7 @@ onMounted(() => {
             <span v-else class="text-ink-muted">—</span>
           </template>
         </el-table-column>
-        <el-table-column label="提交时间" width="170">
+        <el-table-column label="提交时间" width="170" align="center">
           <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
         </el-table-column>
         <el-table-column label="操作" width="120" align="right">

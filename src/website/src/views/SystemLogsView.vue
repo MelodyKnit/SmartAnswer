@@ -193,8 +193,8 @@ onUnmounted(() => {
 
 <style scoped>
 .system-log-date-range {
-  width: 320px !important;
-  flex: 0 0 320px;
+  width: 240px !important;
+  flex: 0 0 240px;
 }
 
 @media (max-width: 768px) {

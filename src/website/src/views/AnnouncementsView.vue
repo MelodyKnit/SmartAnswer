@@ -277,26 +277,26 @@ onMounted(load)
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="等级" width="100">
+        <el-table-column label="等级" width="100" align="center">
           <template #default="{ row }">
             <el-tag :type="levelMeta(row.level).type">{{ levelMeta(row.level).label }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="投放范围" width="120">
+        <el-table-column label="投放范围" width="120" align="center">
           <template #default="{ row }">{{ audienceLabel(row.audience) }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="100">
+        <el-table-column label="状态" width="100" align="center">
           <template #default="{ row }">
             <el-tag :type="statusMeta(row.status).type" effect="plain">{{ statusMeta(row.status).label }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="展示时间" min-width="230">
+        <el-table-column label="展示时间" min-width="230" align="center">
           <template #default="{ row }">{{ timeRange(row) }}</template>
         </el-table-column>
-        <el-table-column label="更新时间" width="150">
+        <el-table-column label="更新时间" width="150" align="center">
           <template #default="{ row }">{{ formatDateTime(row.updated_at) }}</template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" width="150">
+        <el-table-column label="操作" fixed="right" width="150" align="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
             <el-button

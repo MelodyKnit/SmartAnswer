@@ -196,7 +196,7 @@ onMounted(load)
             <span class="font-medium text-ink">{{ row.description || '未命名令牌' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="密钥" min-width="210">
+        <el-table-column label="密钥" min-width="210" align="center">
           <template #default="{ row }">
             <div class="inline-flex items-center gap-1.5">
               <code
@@ -217,15 +217,15 @@ onMounted(load)
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="90">
+        <el-table-column label="状态" width="90" align="center">
           <template #default="{ row }">
             <el-tag :type="row.status === 'active' ? 'success' : 'info'" size="small">
               {{ row.status === 'active' ? '正常' : '已吊销' }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="调用次数" width="90" prop="usage_count" />
-        <el-table-column label="已用 / 限额" width="160">
+        <el-table-column label="调用次数" width="90" prop="usage_count" align="center" />
+        <el-table-column label="已用 / 限额" width="160" align="center">
           <template #default="{ row }">
             <span class="text-ink-soft">{{ row.quota_used }}</span>
             <span class="text-ink-muted"> / </span>
@@ -234,17 +234,17 @@ onMounted(load)
             </span>
           </template>
         </el-table-column>
-        <el-table-column label="低信任度" width="130">
+        <el-table-column label="低信任度" width="130" align="center">
           <template #default="{ row }">
             <el-tag :type="row.reject_low_confidence ? 'warning' : 'info'" size="small">
               {{ row.reject_low_confidence ? `拒答 ${row.min_answer_confidence || '系统'}` : '允许' }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="最近使用" width="170">
+        <el-table-column label="最近使用" width="170" align="center">
           <template #default="{ row }">{{ formatDateTime(row.last_used_at) }}</template>
         </el-table-column>
-        <el-table-column label="创建时间" width="170">
+        <el-table-column label="创建时间" width="170" align="center">
           <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
         </el-table-column>
         <el-table-column label="操作" width="230" align="right">

@@ -104,23 +104,23 @@ onMounted(load)
     <div class="app-card p-1">
       <div class="px-4 pt-4 text-base font-semibold text-ink">积分流水</div>
       <el-table :data="orders" style="width: 100%">
-        <el-table-column label="类型" width="120">
+        <el-table-column label="类型" width="120" align="center">
           <template #default="{ row }">
             <el-tag size="small" type="warning" effect="light">
               {{ row.kind === 'points' ? '积分' : row.kind }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="变更" width="140">
+        <el-table-column label="变更" width="140" align="center">
           <template #default="{ row }">
             <span class="font-medium text-success">+{{ row.points_delta }} 分</span>
           </template>
         </el-table-column>
-        <el-table-column label="来源" width="140">
+        <el-table-column label="来源" width="140" align="center">
           <template #default="{ row }">{{ walletSourceLabel(row.source) }}</template>
         </el-table-column>
-        <el-table-column label="操作人" width="140" prop="created_by" />
-        <el-table-column label="时间" min-width="170">
+        <el-table-column label="操作人" width="140" prop="created_by" align="center" />
+        <el-table-column label="时间" min-width="170" align="right">
           <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
         </el-table-column>
         <template #empty>

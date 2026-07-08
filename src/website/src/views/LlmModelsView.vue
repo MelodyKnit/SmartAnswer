@@ -763,21 +763,21 @@ onMounted(async () => {
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="供应商模板" width="180">
+              <el-table-column label="供应商模板" width="180" align="center">
                 <template #default="{ row }">
                   <el-tag size="small" type="info">
                     {{ providerTemplateLabel(row) }}
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="页面搜索" width="110">
+              <el-table-column label="页面搜索" width="110" align="center">
                 <template #default="{ row }">
                   <span class="text-ink-muted text-xs">
                     {{ playwrightSearchEngineLabel(row) }}
                   </span>
                 </template>
               </el-table-column>
-              <el-table-column label="独立代理" width="160" show-overflow-tooltip>
+              <el-table-column label="独立代理" width="160" show-overflow-tooltip align="center">
                 <template #default="{ row }">
                   <span class="text-ink-muted text-xs">{{ row.proxy_url || '—' }}</span>
                 </template>
@@ -850,9 +850,9 @@ onMounted(async () => {
                 <span class="font-medium text-ink">{{ row.name }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="模型标识" width="160" prop="model" show-overflow-tooltip />
-            <el-table-column label="接口地址" min-width="200" prop="base_url" show-overflow-tooltip />
-            <el-table-column label="角色" width="90">
+            <el-table-column label="模型标识" width="160" prop="model" show-overflow-tooltip align="center" />
+            <el-table-column label="接口地址" min-width="200" prop="base_url" show-overflow-tooltip align="center" />
+            <el-table-column label="角色" width="90" align="center">
               <template #default="{ row }">
                 <el-tag size="small" :type="roleTagType[row.role]" effect="light">
                   {{ roleLabel[row.role] || row.role }}

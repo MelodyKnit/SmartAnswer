@@ -255,36 +255,36 @@ onMounted(() => {
             <span class="text-ink">{{ row.title || '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column v-if="auth.isAdmin" label="用户" width="120" prop="username" />
-        <el-table-column label="令牌" width="150" show-overflow-tooltip>
+        <el-table-column v-if="auth.isAdmin" label="用户" width="120" prop="username" align="center" />
+        <el-table-column label="令牌" width="150" show-overflow-tooltip align="center">
           <template #default="{ row }">
             <span class="text-ink-soft" :title="tokenTooltip(row)">
               {{ tokenLabel(row) }}
             </span>
           </template>
         </el-table-column>
-        <el-table-column label="题型" width="90">
+        <el-table-column label="题型" width="90" align="center">
           <template #default="{ row }">
             <el-tag size="small" effect="plain">{{ questionTypeLabel(row.question_type) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="命中方式" width="110">
+        <el-table-column label="命中方式" width="110" align="center">
           <template #default="{ row }">
             <el-tag size="small" type="success" effect="light">
               {{ resolutionLabel(row.resolution_mode) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="答案" width="110" show-overflow-tooltip>
+        <el-table-column label="答案" width="110" show-overflow-tooltip align="center">
           <template #default="{ row }">
             <span class="font-medium text-success">{{ row.answer || '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="置信度" width="90">
+        <el-table-column label="置信度" width="90" align="center">
           <template #default="{ row }">{{ (row.confidence * 100).toFixed(0) }}%</template>
         </el-table-column>
-        <el-table-column label="积分" width="70" prop="points_cost" />
-        <el-table-column label="时间" width="170">
+        <el-table-column label="积分" width="70" prop="points_cost" align="center" />
+        <el-table-column label="时间" width="170" align="center">
           <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
         </el-table-column>
         <el-table-column label="操作" width="130" align="right">
@@ -446,8 +446,8 @@ onMounted(() => {
 
 <style scoped>
 .usage-date-range {
-  width: 320px !important;
-  flex: 0 0 320px;
+  width: 240px !important;
+  flex: 0 0 240px;
 }
 
 @media (max-width: 768px) {
