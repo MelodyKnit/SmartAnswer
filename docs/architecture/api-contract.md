@@ -201,9 +201,16 @@
 {
   "username": "alice",
   "password": "password123",
-  "email": "alice@example.com"
+  "email": "alice@qq.com",
+  "email_code": "123456"
 }
 ```
+
+说明：
+
+- 邮箱验证默认关闭，关闭时 `email` 与 `email_code` 仍按旧逻辑可选。
+- 开启邮箱验证后，`email` 与 `email_code` 必填；邮箱域名必须命中 `configs/email-domain-whitelist.json`。
+- 验证码只用于注册用途，成功注册后立即消费，不能重复使用。
 
 响应：
 
@@ -265,6 +272,36 @@
 #### `POST /auth/reset-confirm`
 
 使用令牌提交新密码。
+
+#### `POST /auth/email-verification-codes`
+
+公开发送注册邮箱验证码。接口只在系统配置 `email_verification_enabled=true` 时可用。
+
+请求：
+
+```json
+{
+  "email": "alice@qq.com",
+  "purpose": "register"
+}
+```
+
+响应：
+
+```json
+{
+  "ok": true,
+  "message": "验证码已发送，请查看邮箱"
+}
+```
+
+错误码：
+
+- `EMAIL_VERIFICATION_DISABLED`：邮箱验证未开启。
+- `EMAIL_DOMAIN_NOT_ALLOWED`：邮箱域名不在白名单中。
+- `EMAIL_CODE_RATE_LIMITED`：同邮箱或同 IP 发送过于频繁。
+- `EMAIL_SEND_FAILED`：SMTP 发送失败。
+- `INVALID_INPUT`：邮箱格式、用途或配置不合法。
 
 #### `GET /site-config`
 
@@ -337,7 +374,9 @@
   "ok": true,
   "registration_enabled": true,
   "config_enabled": true,
-  "first_user_allowed": false
+  "first_user_allowed": false,
+  "email_verification_enabled": false,
+  "email_required": false
 }
 ```
 
@@ -477,6 +516,26 @@
   - `custom_proto_header`
   - `answer_retry_times`
   - `registration_enabled`
+  - `email_verification_enabled`
+  - `smtp_host`
+  - `smtp_port`
+  - `smtp_security`
+  - `smtp_username`
+  - `smtp_password`
+  - `smtp_from_email`
+  - `smtp_from_name`
+  - `email_code_ttl_minutes`
+  - `email_code_cooldown_seconds`
+  - `email_code_daily_limit`
+  - `email_code_ip_hourly_limit`
+  - `email_code_max_attempts`
+
+说明：
+
+- `smtp_password` 是敏感配置，`GET /system-config` 不返回明文，只返回 `smtp_password_configured`。
+- `PATCH /system-config` 中 `smtp_password=""` 表示保持原密码不变。
+- 开启 `email_verification_enabled=true` 时必须先完整配置 SMTP 主机、端口、加密方式、用户名、密码和发件邮箱。
+- 邮箱域名白名单存储在 `configs/email-domain-whitelist.json`，按文件修改时间轻量缓存，修改后无需重启。
 
 大模型推理、联网搜索和 LLM 学习缓存配置统一通过 `/llm-runtime-config` 维护，系统配置页不再展示这些字段。
 
@@ -495,7 +554,20 @@
     "manual_grant_default_points": "100",
     "redeem_code_default_points": "50",
     "answer_retry_times": "3",
-    "registration_enabled": "true"
+    "registration_enabled": "true",
+    "email_verification_enabled": "false",
+    "smtp_host": "",
+    "smtp_port": "465",
+    "smtp_security": "ssl",
+    "smtp_username": "",
+    "smtp_password_configured": false,
+    "smtp_from_email": "",
+    "smtp_from_name": "AI题库",
+    "email_code_ttl_minutes": "10",
+    "email_code_cooldown_seconds": "60",
+    "email_code_daily_limit": "5",
+    "email_code_ip_hourly_limit": "20",
+    "email_code_max_attempts": "5"
   },
   "reload_required": false
 }

@@ -31,6 +31,23 @@ class UserEntity(Base):
     reset_expires_at: Mapped[float] = mapped_column(Float, default=0.0)
 
 
+class EmailVerificationCodeEntity(Base):
+    """邮箱验证码表。"""
+
+    __tablename__ = "email_verification_codes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    email: Mapped[str] = mapped_column(String(256), index=True)
+    purpose: Mapped[str] = mapped_column(String(32), index=True)
+    code_hash: Mapped[str] = mapped_column(String(128))
+    expires_at: Mapped[float] = mapped_column(Float, index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    send_ip_hash: Mapped[str] = mapped_column(String(128), index=True)
+    created_at: Mapped[float] = mapped_column(Float, index=True)
+    consumed_at: Mapped[float] = mapped_column(Float, default=0.0, index=True)
+
+
 class ApiTokenEntity(Base):
     """API 令牌表。"""
 

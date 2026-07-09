@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 from ..auth import AuthError
+from ..auth.email_verification import normalize_email, smtp_settings_from_config
 from ..logger import log_path
 from ..llm.config import service as llm_config_service
 from ..storage.platform_repository import SqlAlchemyPlatformRepository
@@ -295,6 +296,12 @@ class PlatformService:
         """返回公开注册入口是否启用。"""
 
         raw = self.get_system_config().get("registration_enabled", "true")
+        return str(raw).strip().lower() not in {"0", "false", "no", "off", "disabled"}
+
+    def is_email_verification_enabled(self) -> bool:
+        """返回注册邮箱验证是否启用。"""
+
+        raw = self.get_system_config().get("email_verification_enabled", "false")
         return str(raw).strip().lower() not in {"0", "false", "no", "off", "disabled"}
 
     def get_points_policy(self) -> dict[str, int]:
@@ -1910,14 +1917,14 @@ class PlatformService:
             "llm_model": first_model.model if first_model else "",
         }
 
-    def get_system_config(self) -> dict:
-        """读取系统运行配置，并对敏感项只暴露是否已配置。"""
+    def get_system_config(self, *, reveal_secret: bool = False) -> dict:
+        """读取系统运行配置；默认对敏感项只暴露是否已配置。"""
         with self._lock:
             raw = {key: SYSTEM_CONFIG_DEFAULTS.get(key, "") for key in SYSTEM_CONFIG_KEYS}
             raw.update(self.repository.get_settings("system_config", keys=set(SYSTEM_CONFIG_KEYS)))
             payload: dict[str, str | bool] = {}
             for key, value in raw.items():
-                if key in SYSTEM_CONFIG_SECRET_KEYS:
+                if key in SYSTEM_CONFIG_SECRET_KEYS and not reveal_secret:
                     payload[f"{key}_configured"] = bool(str(value).strip())
                 else:
                     payload[key] = value
@@ -1984,12 +1991,44 @@ class PlatformService:
             if key not in SYSTEM_CONFIG_KEYS:
                 raise AuthError("INVALID_INPUT", f"不支持的系统配置项: {key}", http_status=400)
             text = "" if value is None else str(value).strip()
+            if key in SYSTEM_CONFIG_SECRET_KEYS and not text:
+                continue
             if key == "site_title":
                 text = text or SYSTEM_CONFIG_DEFAULTS["site_title"]
                 if len(text) > 40:
                     raise AuthError("INVALID_INPUT", "网站标题不能超过 40 个字符", http_status=400)
             elif key == "site_logo_url":
                 text = normalize_site_logo_url(text)
+            elif key == "smtp_security":
+                text = text.lower() or SYSTEM_CONFIG_DEFAULTS["smtp_security"]
+                if text not in {"ssl", "starttls", "none"}:
+                    raise AuthError(
+                        "INVALID_INPUT", "SMTP 加密方式必须为 ssl、starttls 或 none", http_status=400
+                    )
+            elif key == "smtp_port":
+                try:
+                    parsed_port = int(text or SYSTEM_CONFIG_DEFAULTS["smtp_port"])
+                except ValueError as exc:
+                    raise AuthError("INVALID_INPUT", "SMTP 端口必须为有效整数", http_status=400) from exc
+                if parsed_port < 1 or parsed_port > 65535:
+                    raise AuthError("INVALID_INPUT", "SMTP 端口必须在 1 到 65535 之间", http_status=400)
+                text = str(parsed_port)
+            elif key in {
+                "email_code_ttl_minutes",
+                "email_code_cooldown_seconds",
+                "email_code_daily_limit",
+                "email_code_ip_hourly_limit",
+                "email_code_max_attempts",
+            }:
+                text = normalize_email_code_policy_value(key, text)
+            elif key == "smtp_from_email" and text:
+                text = normalize_email(text)
+            elif key == "smtp_from_name":
+                text = text or SYSTEM_CONFIG_DEFAULTS["smtp_from_name"]
+                if any(ch in text for ch in "\r\n"):
+                    raise AuthError("INVALID_INPUT", "发件人名称格式不正确", http_status=400)
+                if len(text) > 40:
+                    raise AuthError("INVALID_INPUT", "发件人名称不能超过 40 个字符", http_status=400)
             elif key in SYSTEM_CONFIG_BOOLEAN_KEYS:
                 text = (
                     "false" if text.lower() in {"0", "false", "no", "off", "disabled"} else "true"
@@ -2006,6 +2045,11 @@ class PlatformService:
                 text = str(parsed)
             normalized[key] = text
         with self._lock:
+            current = {key: SYSTEM_CONFIG_DEFAULTS.get(key, "") for key in SYSTEM_CONFIG_KEYS}
+            current.update(self.repository.get_settings("system_config", keys=set(SYSTEM_CONFIG_KEYS)))
+            candidate = {**current, **normalized}
+            if str(candidate.get("email_verification_enabled") or "").lower() == "true":
+                smtp_settings_from_config(candidate)
             self.repository.set_settings("system_config", normalized)
         return self.get_system_config()
 
@@ -2041,6 +2085,30 @@ def normalize_site_logo_url(value: str) -> str:
     ):
         return text
     raise AuthError("INVALID_INPUT", "Logo 地址仅支持站内路径或 http/https URL", http_status=400)
+
+
+def normalize_email_code_policy_value(key: str, value: str) -> str:
+    """校验邮箱验证码策略数值，避免误配置拖垮注册入口。"""
+
+    bounds = {
+        "email_code_ttl_minutes": (1, 60),
+        "email_code_cooldown_seconds": (0, 3600),
+        "email_code_daily_limit": (1, 100),
+        "email_code_ip_hourly_limit": (1, 500),
+        "email_code_max_attempts": (1, 20),
+    }
+    minimum, maximum = bounds[key]
+    try:
+        parsed = int(value or SYSTEM_CONFIG_DEFAULTS[key])
+    except ValueError as exc:
+        raise AuthError("INVALID_INPUT", f"{key} 必须为整数", http_status=400) from exc
+    if parsed < minimum or parsed > maximum:
+        raise AuthError(
+            "INVALID_INPUT",
+            f"{key} 必须在 {minimum} 到 {maximum} 之间",
+            http_status=400,
+        )
+    return str(parsed)
 
 
 def normalize_ranking_dimension(value: str) -> str:

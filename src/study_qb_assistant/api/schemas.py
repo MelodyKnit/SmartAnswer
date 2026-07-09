@@ -35,7 +35,17 @@ class RegisterPayload(BaseModel):
     username: str = ""
     password: str = ""
     email: str | None = None
+    email_code: str | None = None
     invite_code: str = ""
+
+
+class EmailVerificationCodePayload(BaseModel):
+    """发送邮箱验证码请求体。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    email: str = ""
+    purpose: str = "register"
 
 
 class LoginPayload(BaseModel):
@@ -161,6 +171,19 @@ class SystemConfigPayload(BaseModel):
     redeem_code_default_points: str | None = None
     answer_retry_times: str | None = None
     registration_enabled: str | None = None
+    email_verification_enabled: str | None = None
+    smtp_host: str | None = None
+    smtp_port: str | None = None
+    smtp_security: str | None = None
+    smtp_username: str | None = None
+    smtp_password: str | None = None
+    smtp_from_email: str | None = None
+    smtp_from_name: str | None = None
+    email_code_ttl_minutes: str | None = None
+    email_code_cooldown_seconds: str | None = None
+    email_code_daily_limit: str | None = None
+    email_code_ip_hourly_limit: str | None = None
+    email_code_max_attempts: str | None = None
 
 
 class LlmRuntimeConfigPayload(BaseModel):

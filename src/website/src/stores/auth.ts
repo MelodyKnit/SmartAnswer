@@ -32,8 +32,20 @@ export const useAuthStore = defineStore('auth', () => {
     initialized.value = true
   }
 
-  async function register(username: string, password: string, email?: string, inviteCode?: string): Promise<User> {
-    const res = await authApi.register({ username, password, email, invite_code: inviteCode || undefined })
+  async function register(
+    username: string,
+    password: string,
+    email?: string,
+    inviteCode?: string,
+    emailCode?: string,
+  ): Promise<User> {
+    const res = await authApi.register({
+      username,
+      password,
+      email,
+      invite_code: inviteCode || undefined,
+      email_code: emailCode || undefined,
+    })
     return res.user
   }
 

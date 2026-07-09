@@ -19,6 +19,7 @@ export interface Billing {
   local_hit: number
   web_search: number
   llm_fallback: number
+  invite_bonus_points?: number
 }
 
 export interface PointsPolicy {
@@ -311,6 +312,19 @@ export interface SystemConfig {
   redeem_code_default_points?: string
   answer_retry_times?: string
   registration_enabled?: string
+  email_verification_enabled?: string
+  smtp_host?: string
+  smtp_port?: string
+  smtp_security?: string
+  smtp_username?: string
+  smtp_password_configured?: boolean
+  smtp_from_email?: string
+  smtp_from_name?: string
+  email_code_ttl_minutes?: string
+  email_code_cooldown_seconds?: string
+  email_code_daily_limit?: string
+  email_code_ip_hourly_limit?: string
+  email_code_max_attempts?: string
   [key: string]: string | boolean | undefined
 }
 

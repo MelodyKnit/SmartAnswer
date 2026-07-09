@@ -25,13 +25,38 @@ from study_qb_assistant import __version__  # noqa: E402
 from study_qb_assistant.api.local_server import create_app  # noqa: E402
 from study_qb_assistant.auth import AuthService  # noqa: E402
 from study_qb_assistant.logger import log_path  # noqa: E402
-from study_qb_assistant.models import CanonicalQuestionRecord, ModelAnswer, QuestionQuery  # noqa: E402
+from study_qb_assistant.models import (  # noqa: E402
+    CanonicalQuestionRecord,
+    ModelAnswer,
+    QuestionQuery,
+)  # noqa: E402
 from study_qb_assistant.platform import PlatformService  # noqa: E402
 from study_qb_assistant.http_client import HttpClientError  # noqa: E402
 from study_qb_assistant.llm.providers import OpenAICompatibleProvider  # noqa: E402
 from study_qb_assistant.search import LocalQuestionIndex  # noqa: E402
 from study_qb_assistant.storage import database as database_module  # noqa: E402
-from study_qb_assistant.storage.question_repository import SqlAlchemyQuestionRepository  # noqa: E402
+from study_qb_assistant.storage.question_repository import (  # noqa: E402
+    SqlAlchemyQuestionRepository,
+)  # noqa: E402
+
+
+class FakeEmailSender:
+    """测试用邮件发送器，记录验证码正文但不触达外部 SMTP。"""
+
+    def __init__(self) -> None:
+        self.sent: list[dict[str, object]] = []
+
+    def send_verification_code(
+        self, *, settings, to_email: str, code: str, ttl_minutes: int
+    ) -> None:
+        self.sent.append(
+            {
+                "settings": settings,
+                "to_email": to_email,
+                "code": code,
+                "ttl_minutes": ttl_minutes,
+            }
+        )
 
 
 class LowConfidenceProvider:
@@ -122,9 +147,7 @@ class FastAPILocalServerTests(unittest.TestCase):
         """注册首个管理员用户，并返回后台会话头与原始 API Key。"""
 
         client.post("/auth/register", json={"username": "owner", "password": "password123"})
-        session = client.post(
-            "/auth/login", json={"username": "owner", "password": "password123"}
-        )
+        session = client.post("/auth/login", json={"username": "owner", "password": "password123"})
         headers = {"Authorization": f"Bearer {session.json()['token']}"}
         token_create = client.post("/tokens", json={"description": "trace"}, headers=headers)
         return headers, token_create.json()["token"]
@@ -562,6 +585,126 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(invited.json()["user"]["invited_by"], "owner")
         self.assertEqual(alice["invited_by"], "owner")
 
+    def test_invite_registration_grants_bonus_to_both_users(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            platform.set_system_config({"invite_bonus_points": "50"})
+            client = TestClient(
+                create_app(
+                    _sample_index(),
+                    auth_service=auth,
+                    platform_service=platform,
+                    require_auth=True,
+                )
+            )
+
+            owner = client.post(
+                "/auth/register",
+                json={"username": "owner", "password": "password123"},
+            )
+            invite_code = owner.json()["user"]["invite_code"]
+            invited = client.post(
+                "/auth/register",
+                json={
+                    "username": "alice",
+                    "password": "password123",
+                    "invite_code": invite_code,
+                },
+            )
+            login = client.post(
+                "/auth/login",
+                json={"username": "owner", "password": "password123"},
+            )
+            users = client.get(
+                "/users",
+                headers={"Authorization": f"Bearer {login.json()['token']}"},
+            )
+
+        self.assertTrue(owner.json()["ok"])
+        self.assertTrue(invited.json()["ok"])
+        self.assertEqual(invited.json()["user"]["points"], 150)
+        owner_record = next(item for item in users.json()["users"] if item["username"] == "owner")
+        self.assertEqual(owner_record["points"], 150)
+
+    def test_register_rejects_unknown_invite_code(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            auth = AuthService(self._runtime_database_path(directory))
+            client = TestClient(create_app(_sample_index(), auth_service=auth, require_auth=True))
+
+            response = client.post(
+                "/auth/register",
+                json={
+                    "username": "alice",
+                    "password": "password123",
+                    "invite_code": "NOTREAL",
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "INVALID_INVITE_CODE")
+
+    def test_legacy_user_keeps_missing_invite_code_until_explicit_generation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            auth = AuthService(self._runtime_database_path(directory))
+            client = TestClient(create_app(_sample_index(), auth_service=auth, require_auth=True))
+
+            register = client.post(
+                "/auth/register",
+                json={"username": "legacy", "password": "password123"},
+            )
+            user = auth.repository.get_user("legacy")
+            assert user is not None
+            user.invite_code = ""
+            auth.repository.save_user(user)
+
+            login = client.post(
+                "/auth/login",
+                json={"username": "legacy", "password": "password123"},
+            )
+            session = client.get(
+                "/auth/session",
+                headers={"Authorization": f"Bearer {login.json()['token']}"},
+            )
+            refreshed = auth.repository.get_user("legacy")
+
+        self.assertTrue(register.json()["ok"])
+        self.assertEqual(login.status_code, 200)
+        self.assertTrue(login.json()["ok"])
+        self.assertEqual(login.json()["user"]["invite_code"], "")
+        self.assertEqual(session.status_code, 200)
+        self.assertEqual(session.json()["user"]["invite_code"], "")
+        assert refreshed is not None
+        self.assertEqual(refreshed.invite_code, "")
+
+    def test_current_user_can_generate_missing_invite_code(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            auth = AuthService(self._runtime_database_path(directory))
+            client = TestClient(create_app(_sample_index(), auth_service=auth, require_auth=True))
+
+            client.post("/auth/register", json={"username": "legacy", "password": "password123"})
+            login = client.post(
+                "/auth/login",
+                json={"username": "legacy", "password": "password123"},
+            )
+            user = auth.repository.get_user("legacy")
+            assert user is not None
+            user.invite_code = ""
+            auth.repository.save_user(user)
+
+            generated = client.post(
+                "/users/me/invite-code",
+                headers={"Authorization": f"Bearer {login.json()['token']}"},
+            )
+            refreshed = auth.repository.get_user("legacy")
+
+        self.assertEqual(generated.status_code, 200)
+        self.assertTrue(generated.json()["ok"])
+        self.assertTrue(generated.json()["user"]["invite_code"])
+        assert refreshed is not None
+        self.assertEqual(refreshed.invite_code, generated.json()["user"]["invite_code"])
+
     def test_registration_can_be_disabled_after_first_user_exists(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
@@ -699,6 +842,298 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertFalse(status_after.json()["registration_enabled"])
         self.assertEqual(second.status_code, 403)
         self.assertEqual(second.json()["error"]["code"], "REGISTRATION_DISABLED")
+
+    def test_email_verification_config_requires_complete_smtp_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                )
+            )
+
+            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            login = client.post(
+                "/auth/login", json={"username": "owner", "password": "password123"}
+            )
+            headers = {"Authorization": f"Bearer {login.json()['token']}"}
+            rejected = client.patch(
+                "/system-config",
+                json={"email_verification_enabled": "true"},
+                headers=headers,
+            )
+            accepted = client.patch(
+                "/system-config",
+                json={
+                    "email_verification_enabled": "true",
+                    "smtp_host": "smtp.example.com",
+                    "smtp_port": "465",
+                    "smtp_security": "ssl",
+                    "smtp_username": "noreply@example.com",
+                    "smtp_password": "secret-password",
+                    "smtp_from_email": "noreply@example.com",
+                    "smtp_from_name": "AI题库",
+                },
+                headers=headers,
+            )
+            masked = client.get("/system-config", headers=headers)
+            keep_password = client.patch(
+                "/system-config",
+                json={"smtp_password": "", "smtp_from_name": "AI题库运营"},
+                headers=headers,
+            )
+            raw_password_after_blank_patch = platform.get_system_config(reveal_secret=True)[
+                "smtp_password"
+            ]
+
+        self.assertEqual(rejected.status_code, 400)
+        self.assertEqual(rejected.json()["error"]["code"], "INVALID_INPUT")
+        self.assertEqual(accepted.status_code, 200)
+        self.assertNotIn("smtp_password", accepted.json()["config"])
+        self.assertTrue(accepted.json()["config"]["smtp_password_configured"])
+        self.assertTrue(masked.json()["config"]["smtp_password_configured"])
+        self.assertEqual(keep_password.status_code, 200)
+        self.assertEqual(raw_password_after_blank_patch, "secret-password")
+
+    def test_email_verification_register_flow_with_domain_whitelist(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            platform.set_system_config(
+                {
+                    "email_verification_enabled": "true",
+                    "smtp_host": "smtp.example.com",
+                    "smtp_port": "465",
+                    "smtp_security": "ssl",
+                    "smtp_username": "noreply@example.com",
+                    "smtp_password": "secret-password",
+                    "smtp_from_email": "noreply@example.com",
+                    "email_code_cooldown_seconds": "0",
+                    "email_code_max_attempts": "2",
+                }
+            )
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                )
+            )
+            sender = FakeEmailSender()
+            client.app.state.email_sender = sender
+
+            status = client.get("/auth/register-status")
+            forbidden_domain = client.post(
+                "/auth/email-verification-codes",
+                json={"email": "alice@example.invalid", "purpose": "register"},
+            )
+            sent = client.post(
+                "/auth/email-verification-codes",
+                json={"email": "Alice@qq.com", "purpose": "register"},
+            )
+            stored = auth.repository.latest_email_verification_code(
+                email="alice@qq.com", purpose="register"
+            )
+            missing_code = client.post(
+                "/auth/register",
+                json={
+                    "username": "alice",
+                    "password": "password123",
+                    "email": "alice@qq.com",
+                },
+            )
+            wrong = client.post(
+                "/auth/register",
+                json={
+                    "username": "alice",
+                    "password": "password123",
+                    "email": "alice@qq.com",
+                    "email_code": "000000",
+                },
+            )
+            code = str(sender.sent[-1]["code"])
+            created = client.post(
+                "/auth/register",
+                json={
+                    "username": "alice",
+                    "password": "password123",
+                    "email": "alice@qq.com",
+                    "email_code": code,
+                },
+            )
+            reused = client.post(
+                "/auth/register",
+                json={
+                    "username": "bob",
+                    "password": "password123",
+                    "email": "bob@qq.com",
+                    "email_code": code,
+                },
+            )
+
+        self.assertTrue(status.json()["email_verification_enabled"])
+        self.assertTrue(status.json()["email_required"])
+        self.assertEqual(forbidden_domain.status_code, 400)
+        self.assertEqual(forbidden_domain.json()["error"]["code"], "EMAIL_DOMAIN_NOT_ALLOWED")
+        self.assertEqual(sent.status_code, 200)
+        self.assertEqual(sender.sent[-1]["to_email"], "alice@qq.com")
+        self.assertIsNotNone(stored)
+        self.assertNotEqual(stored.code_hash, str(sender.sent[-1]["code"]))
+        self.assertEqual(missing_code.status_code, 400)
+        self.assertEqual(missing_code.json()["error"]["code"], "EMAIL_VERIFICATION_REQUIRED")
+        self.assertEqual(wrong.status_code, 400)
+        self.assertEqual(wrong.json()["error"]["code"], "EMAIL_CODE_INVALID")
+        self.assertEqual(created.status_code, 200)
+        self.assertEqual(created.json()["user"]["email"], "alice@qq.com")
+        self.assertEqual(reused.status_code, 400)
+        self.assertIn(
+            reused.json()["error"]["code"], {"EMAIL_CODE_INVALID", "EMAIL_DOMAIN_NOT_ALLOWED"}
+        )
+
+    def test_email_verification_code_survives_register_validation_error(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            platform.set_system_config(
+                {
+                    "email_verification_enabled": "true",
+                    "smtp_host": "smtp.example.com",
+                    "smtp_port": "465",
+                    "smtp_security": "ssl",
+                    "smtp_username": "noreply@example.com",
+                    "smtp_password": "secret-password",
+                    "smtp_from_email": "noreply@example.com",
+                    "email_code_cooldown_seconds": "0",
+                }
+            )
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                )
+            )
+            sender = FakeEmailSender()
+            client.app.state.email_sender = sender
+            auth.register("taken", "password123", "taken@qq.com")
+
+            sent = client.post(
+                "/auth/email-verification-codes",
+                json={"email": "fresh@qq.com", "purpose": "register"},
+            )
+            code = str(sender.sent[-1]["code"])
+            conflict = client.post(
+                "/auth/register",
+                json={
+                    "username": "taken",
+                    "password": "password123",
+                    "email": "fresh@qq.com",
+                    "email_code": code,
+                },
+            )
+            retry = client.post(
+                "/auth/register",
+                json={
+                    "username": "fresh",
+                    "password": "password123",
+                    "email": "fresh@qq.com",
+                    "email_code": code,
+                },
+            )
+
+        self.assertEqual(sent.status_code, 200)
+        self.assertEqual(conflict.status_code, 409)
+        self.assertEqual(conflict.json()["error"]["code"], "USERNAME_TAKEN")
+        self.assertEqual(retry.status_code, 200)
+        self.assertEqual(retry.json()["user"]["email"], "fresh@qq.com")
+
+    def test_email_verification_rate_limits_email_and_ip(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            platform.set_system_config(
+                {
+                    "email_verification_enabled": "true",
+                    "smtp_host": "smtp.example.com",
+                    "smtp_port": "465",
+                    "smtp_security": "ssl",
+                    "smtp_username": "noreply@example.com",
+                    "smtp_password": "secret-password",
+                    "smtp_from_email": "noreply@example.com",
+                    "email_code_cooldown_seconds": "60",
+                    "email_code_daily_limit": "5",
+                    "email_code_ip_hourly_limit": "1",
+                }
+            )
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                )
+            )
+            client.app.state.email_sender = FakeEmailSender()
+
+            first = client.post(
+                "/auth/email-verification-codes",
+                json={"email": "rate@qq.com", "purpose": "register"},
+            )
+            cooldown = client.post(
+                "/auth/email-verification-codes",
+                json={"email": "rate@qq.com", "purpose": "register"},
+            )
+            ip_limited = client.post(
+                "/auth/email-verification-codes",
+                json={"email": "other@qq.com", "purpose": "register"},
+            )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(cooldown.status_code, 429)
+        self.assertEqual(cooldown.json()["error"]["code"], "EMAIL_CODE_RATE_LIMITED")
+        self.assertEqual(ip_limited.status_code, 429)
+        self.assertEqual(ip_limited.json()["error"]["code"], "EMAIL_CODE_RATE_LIMITED")
+
+    def test_email_verification_cooldown_counts_consumed_codes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            platform.set_system_config(
+                {
+                    "email_verification_enabled": "true",
+                    "smtp_host": "smtp.example.com",
+                    "smtp_port": "465",
+                    "smtp_security": "ssl",
+                    "smtp_username": "noreply@example.com",
+                    "smtp_password": "secret-password",
+                    "smtp_from_email": "noreply@example.com",
+                    "email_code_cooldown_seconds": "60",
+                    "email_code_ip_hourly_limit": "20",
+                }
+            )
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                )
+            )
+            client.app.state.email_sender = FakeEmailSender()
+
+            first = client.post(
+                "/auth/email-verification-codes",
+                json={"email": "cooldown@qq.com", "purpose": "register"},
+            )
+            latest = auth.repository.latest_email_verification_code(
+                email="cooldown@qq.com", purpose="register"
+            )
+            self.assertIsNotNone(latest)
+            auth.repository.consume_email_verification_code(latest.code_id, time.time())
+            cooldown = client.post(
+                "/auth/email-verification-codes",
+                json={"email": "cooldown@qq.com", "purpose": "register"},
+            )
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(cooldown.status_code, 429)
+        self.assertEqual(cooldown.json()["error"]["code"], "EMAIL_CODE_RATE_LIMITED")
 
     def test_ocs_bearer_key_can_bypass_session_when_auth_is_required(self) -> None:
         previous = __import__("os").environ.get("STQB_OCS_API_KEYS")
@@ -906,7 +1341,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 json={
                     "username": "invited",
                     "password": "password123",
-                    "invite_code": "demo-code",
+                    "invite_code": register.json()["user"]["invite_code"],
                 },
             )
 
@@ -981,7 +1416,9 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertNotIn("subscription_active", wallet_me.json()["wallet"])
         self.assertNotIn("subscription_expires_at", wallet_me.json()["wallet"])
         self.assertEqual(len(wallet_orders_after_feedback.json()["orders"]), 1)
-        self.assertEqual(wallet_orders_after_feedback.json()["orders"][0]["source"], "feedback_reward")
+        self.assertEqual(
+            wallet_orders_after_feedback.json()["orders"][0]["source"], "feedback_reward"
+        )
         self.assertEqual(wallet_orders_after_feedback.json()["orders"][0]["points_delta"], 20)
         self.assertNotIn("subscription_days", redeem_code_create.json()["redeem_code"])
         self.assertEqual(subscription_code_rejected.status_code, 422)
@@ -998,13 +1435,19 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertNotIn("ai_cache_enabled", system_config_get.json()["config"])
         self.assertIn("https://example.com/ocs/query", ocs_config_after_proto_change.text)
         self.assertEqual(system_config_get.json()["config"]["default_user_points"], "150")
-        self.assertEqual(points_policy_get.json()["points_policy"]["manual_grant_default_points"], 88)
-        self.assertEqual(points_policy_get.json()["points_policy"]["redeem_code_default_points"], 66)
+        self.assertEqual(
+            points_policy_get.json()["points_policy"]["manual_grant_default_points"], 88
+        )
+        self.assertEqual(
+            points_policy_get.json()["points_policy"]["redeem_code_default_points"], 66
+        )
         self.assertTrue(llm_model_create.json()["model"]["api_key_configured"])
         self.assertEqual(llm_model_create.json()["model"]["api_key"], "******")
         self.assertTrue(llm_models.json()["models"][0]["api_key_configured"])
         self.assertEqual(llm_models.json()["models"][0]["api_key"], "******")
         self.assertEqual(llm_traces.json()["traces"][0]["evidence"][0]["title"], "证据标题")
+        self.assertEqual(plain_register.status_code, 200, plain_register.json())
+        self.assertEqual(invited_register.status_code, 200, invited_register.json())
         self.assertEqual(plain_register.json()["user"]["points"], 150)
         self.assertEqual(invited_register.json()["user"]["points"], 180)
 
@@ -1168,7 +1611,9 @@ class FastAPILocalServerTests(unittest.TestCase):
             engine = create_engine(f"sqlite:///{database_path}")
             with engine.begin() as connection:
                 connection.execute(
-                    text("UPDATE redeem_codes SET expires_at = :expires_at WHERE code_id = :code_id"),
+                    text(
+                        "UPDATE redeem_codes SET expires_at = :expires_at WHERE code_id = :code_id"
+                    ),
                     {
                         "expires_at": time.time() - 60,
                         "code_id": limited.json()["redeem_code"]["code_id"],
@@ -1651,7 +2096,9 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertNotIn("integration_manage", admin_actions)
         self.assertTrue(scripts.json()["ok"])
         default_scripts = [
-            item for item in scripts.json()["scripts"] if item.get("script_id") == "ocs_local_question_bank"
+            item
+            for item in scripts.json()["scripts"]
+            if item.get("script_id") == "ocs_local_question_bank"
         ]
         self.assertEqual(len(default_scripts), 1)
         self.assertTrue(default_scripts[0]["builtin"])
@@ -1664,9 +2111,7 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(missing_script_detail.status_code, 404)
         self.assertEqual(missing_script_detail.json()["error"]["code"], "SCRIPT_NOT_FOUND")
         self.assertEqual(default_script_delete.status_code, 400)
-        self.assertEqual(
-            default_script_delete.json()["error"]["code"], "BUILTIN_SCRIPT_READONLY"
-        )
+        self.assertEqual(default_script_delete.json()["error"]["code"], "BUILTIN_SCRIPT_READONLY")
         self.assertEqual(quota_package_create.status_code, 405)
         self.assertEqual(quota_packages.status_code, 404)
         self.assertTrue(roles_before_update.json()["ok"])
@@ -1903,7 +2348,9 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(log["token_id"], token_info["token_id"])
         self.assertEqual(log["token_description"], "")
         self.assertEqual(log["token_key_mask"], "")
-        self.assertEqual(log["token_label"], f"{token_info['token_id'][:8]}...{token_info['token_id'][-4:]}")
+        self.assertEqual(
+            log["token_label"], f"{token_info['token_id'][:8]}...{token_info['token_id'][-4:]}"
+        )
 
     def test_debug_recent_tolerates_bad_log_lines_and_validates_date_format(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1936,7 +2383,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                         b'{"ts":"2026-06-27T08:00:00+08:00","event":"query","title":"ok"}\n'
                     )
                     handle.write(b'{"ts":"2026-06-27T08:01:00+08:00","event":"query"\n')
-                    handle.write(b'\xff\xfe\xfd\n')
+                    handle.write(b"\xff\xfe\xfd\n")
                     handle.write(
                         b'{"ts":"2026-06-28T08:00:00+08:00","event":"query","title":"next"}\n'
                     )
@@ -2085,7 +2532,8 @@ class FastAPILocalServerTests(unittest.TestCase):
         database_module.ensure_sqlite_compat_columns(engine)
         with engine.connect() as connection:
             columns = {
-                row[1] for row in connection.execute(text("PRAGMA table_info(usage_logs)")).fetchall()
+                row[1]
+                for row in connection.execute(text("PRAGMA table_info(usage_logs)")).fetchall()
             }
             elapsed_ms = connection.execute(
                 text("SELECT elapsed_ms FROM usage_logs WHERE log_id = 'legacy-log'")
@@ -2187,7 +2635,9 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
 
             owner_default = client.get("/dashboard/workbench", headers=owner_headers)
-            owner_self = client.get("/dashboard/workbench", params={"scope": "self"}, headers=owner_headers)
+            owner_self = client.get(
+                "/dashboard/workbench", params={"scope": "self"}, headers=owner_headers
+            )
             alice_global = client.get(
                 "/dashboard/summary",
                 params={"scope": "global", "days": 1},
@@ -2226,7 +2676,9 @@ class FastAPILocalServerTests(unittest.TestCase):
                 headers={"Authorization": f"Bearer {raw_token}"},
             )
             date_text = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d")
-            audit = client.get("/debug/usage-audit", params={"date": date_text}, headers=owner_headers)
+            audit = client.get(
+                "/debug/usage-audit", params={"date": date_text}, headers=owner_headers
+            )
 
         self.assertEqual(audit.status_code, 200)
         self.assertTrue(audit.json()["ok"])

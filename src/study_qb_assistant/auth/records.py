@@ -73,3 +73,18 @@ class SessionRecord:
     username: str
     role: str
     expires_at: float
+
+
+@dataclass(slots=True)
+class EmailVerificationCodeRecord:
+    """邮箱验证码持久化记录，只保存哈希和审计必要字段。"""
+
+    code_id: str
+    email: str
+    purpose: str
+    code_hash: str
+    expires_at: float
+    attempts: int
+    send_ip_hash: str
+    created_at: float
+    consumed_at: float = 0.0

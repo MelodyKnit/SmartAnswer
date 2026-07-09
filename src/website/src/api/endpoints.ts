@@ -43,14 +43,22 @@ export const authApi = {
     username: string
     password: string
     email?: string
+    email_code?: string
     invite_code?: string
   }) => api.post<{ ok: true; user: User }>('/auth/register', body),
+  sendEmailVerificationCode: (body: { email: string; purpose?: 'register' }) =>
+    api.post<{ ok: true; message: string }>('/auth/email-verification-codes', {
+      purpose: 'register',
+      ...body,
+    }),
   registerStatus: () =>
     api.get<{
       ok: true
       registration_enabled: boolean
       config_enabled: boolean
       first_user_allowed: boolean
+      email_verification_enabled: boolean
+      email_required: boolean
     }>('/auth/register-status'),
   login: (body: { username: string; password: string; remember: boolean }) =>
     api.post<{ ok: true; user: User; token: string; expires_in: number }>('/auth/login', body),
@@ -70,6 +78,7 @@ export const userApi = {
     api.patch<{ ok: true; user: User }>(`/users/${encodeURIComponent(username)}`, body),
   updateProfile: (display_name: string) =>
     api.patch<{ ok: true; user: User }>('/users/me/profile', { display_name }),
+  ensureInviteCode: () => api.post<{ ok: true; user: User }>('/users/me/invite-code'),
   changePassword: (body: { old_password: string; new_password: string }) =>
     api.post<{ ok: true; message: string }>('/users/me/password', body),
   batchDelete: (usernames: string[]) =>

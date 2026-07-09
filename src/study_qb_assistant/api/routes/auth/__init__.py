@@ -6,6 +6,7 @@ from fastapi import APIRouter, Request
 from starlette.responses import JSONResponse
 
 from ....auth import AuthError
+from ....auth.email_verification import EmailVerificationService
 from ...context import (
     SESSION_COOKIE,
     auth_error_response,
@@ -16,7 +17,13 @@ from ...context import (
     unauthorized_response,
 )
 from ....logger import console_log
-from ...schemas import LoginPayload, RegisterPayload, ResetConfirmPayload, ResetRequestPayload
+from ...schemas import (
+    EmailVerificationCodePayload,
+    LoginPayload,
+    RegisterPayload,
+    ResetConfirmPayload,
+    ResetRequestPayload,
+)
 
 
 def build_auth_router() -> APIRouter:
@@ -39,6 +46,22 @@ def build_auth_router() -> APIRouter:
                 AuthError("REGISTRATION_DISABLED", "系统已关闭用户注册", http_status=403)
             )
         try:
+            email_code_record = None
+            verification = None
+            auth.assert_invite_code_valid(payload.invite_code)
+            if platform.is_email_verification_enabled():
+                if not payload.email or not payload.email_code:
+                    raise AuthError(
+                        "EMAIL_VERIFICATION_REQUIRED",
+                        "请先完成邮箱验证码校验",
+                        http_status=400,
+                    )
+                verification = email_verification_service(request)
+                email_code_record = verification.verify(
+                    email=payload.email,
+                    purpose="register",
+                    code=payload.email_code,
+                )
             user = auth.register(
                 payload.username,
                 payload.password,
@@ -47,9 +70,31 @@ def build_auth_router() -> APIRouter:
                 invite_bonus=platform.get_invite_bonus() if payload.invite_code.strip() else 0,
                 initial_points=platform.get_default_user_points(),
             )
+            if verification is not None and email_code_record is not None:
+                verification.consume_code(email_code_record.code_id)
         except AuthError as exc:
             return auth_error_response(exc)
         return JSONResponse({"ok": True, "user": user})
+
+    @router.post("/auth/email-verification-codes")
+    def send_email_verification_code(
+        request: Request, payload: EmailVerificationCodePayload
+    ) -> JSONResponse:
+        auth = get_auth_service(request)
+        platform = get_platform_service(request)
+        if auth.has_users() and not platform.is_registration_enabled():
+            return auth_error_response(
+                AuthError("REGISTRATION_DISABLED", "系统已关闭用户注册", http_status=403)
+            )
+        try:
+            email_verification_service(request).send_code(
+                email=payload.email,
+                purpose=payload.purpose,
+                client_ip=request.client.host if request.client else "",
+            )
+        except AuthError as exc:
+            return auth_error_response(exc)
+        return JSONResponse({"ok": True, "message": "验证码已发送，请查看邮箱"})
 
     @router.get("/auth/register-status")
     def register_status(request: Request) -> JSONResponse:
@@ -63,6 +108,8 @@ def build_auth_router() -> APIRouter:
                 "registration_enabled": config_enabled or first_user_allowed,
                 "config_enabled": config_enabled,
                 "first_user_allowed": first_user_allowed,
+                "email_verification_enabled": platform.is_email_verification_enabled(),
+                "email_required": platform.is_email_verification_enabled(),
             }
         )
 
@@ -122,3 +169,15 @@ def build_auth_router() -> APIRouter:
         return JSONResponse({"ok": True, "message": "密码已重置，请使用新密码登录"})
 
     return router
+
+
+def email_verification_service(request: Request) -> EmailVerificationService:
+    """构建邮箱验证码服务，测试环境可通过 app.state.email_sender 注入发送器。"""
+
+    platform = get_platform_service(request)
+    auth = get_auth_service(request)
+    return EmailVerificationService(
+        auth.repository,
+        config=platform.get_system_config(reveal_secret=True),
+        sender=getattr(request.app.state, "email_sender", None),
+    )

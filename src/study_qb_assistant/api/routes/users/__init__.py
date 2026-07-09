@@ -37,7 +37,10 @@ def build_user_router() -> APIRouter:
             {
                 "ok": True,
                 "user": user,
-                "billing": platform.get_billing(),
+                "billing": {
+                    **platform.get_billing(),
+                    "invite_bonus_points": platform.get_invite_bonus(),
+                },
                 "wallet": platform.wallet_summary(
                     user_id=str(user["user_id"]),
                     username=str(user["username"]),
@@ -56,6 +59,17 @@ def build_user_router() -> APIRouter:
             updated = auth.set_display_name(str(user["username"]), payload.display_name)
         except AuthError as exc:
             return auth_error_response(exc)
+        return JSONResponse({"ok": True, "user": updated})
+
+    @router.post("/users/me/invite-code")
+    def ensure_invite_code(request: Request) -> JSONResponse:
+        user = current_user(request)
+        if user is None:
+            return unauthorized_response("请先登录")
+        auth = get_auth_service(request)
+        updated = auth.ensure_invite_code_for_user(str(user["username"]))
+        if updated is None:
+            return auth_error_response(AuthError("USER_NOT_FOUND", "用户不存在", http_status=404))
         return JSONResponse({"ok": True, "user": updated})
 
     @router.post("/users/me/password")

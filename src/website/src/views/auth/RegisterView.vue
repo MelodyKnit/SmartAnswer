@@ -1,6 +1,6 @@
 <script setup lang="ts">
-/** 注册页：用户名/密码/确认密码 + 可选邮箱 + 可选邀请码，含实时校验。 */
-import { onMounted, reactive, ref } from 'vue'
+/** 注册页：用户名/密码/邮箱验证码/邀请码，含实时校验。 */
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { FormInstance, FormItemRule, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
@@ -16,8 +16,27 @@ const route = useRoute()
 const formRef = ref<FormInstance>()
 const loading = ref(false)
 const registrationEnabled = ref(true)
+const emailVerificationEnabled = ref(false)
 const statusLoading = ref(false)
-const form = reactive({ username: '', password: '', confirm: '', email: '', invite_code: '' })
+const sendingEmailCode = ref(false)
+const emailCountdown = ref(0)
+let countdownTimer: number | undefined
+const form = reactive({
+  username: '',
+  password: '',
+  confirm: '',
+  email: '',
+  email_code: '',
+  invite_code: '',
+})
+
+const emailPlaceholder = computed(() =>
+  emailVerificationEnabled.value ? '邮箱' : '邮箱（可选）',
+)
+const emailCodeButtonText = computed(() => {
+  if (emailCountdown.value > 0) return `${emailCountdown.value}s`
+  return '发送验证码'
+})
 
 onMounted(async () => {
   const invite = route.query.invite
@@ -26,16 +45,38 @@ onMounted(async () => {
   try {
     const status = await authApi.registerStatus()
     registrationEnabled.value = status.registration_enabled
+    emailVerificationEnabled.value = status.email_verification_enabled
   } catch {
     registrationEnabled.value = true
+    emailVerificationEnabled.value = false
   } finally {
     statusLoading.value = false
   }
 })
 
+onBeforeUnmount(() => {
+  if (countdownTimer !== undefined) window.clearInterval(countdownTimer)
+})
+
 const validateConfirm: FormItemRule['validator'] = (_rule, value, callback) => {
   if (value !== form.password) callback(new Error('两次输入的密码不一致'))
   else callback()
+}
+
+const validateEmail: FormItemRule['validator'] = (_rule, value, callback) => {
+  if (emailVerificationEnabled.value && !String(value || '').trim()) {
+    callback(new Error('请输入邮箱'))
+    return
+  }
+  callback()
+}
+
+const validateEmailCode: FormItemRule['validator'] = (_rule, value, callback) => {
+  if (emailVerificationEnabled.value && !String(value || '').trim()) {
+    callback(new Error('请输入邮箱验证码'))
+    return
+  }
+  callback()
 }
 
 const rules: FormRules = {
@@ -55,7 +96,43 @@ const rules: FormRules = {
     { required: true, message: '请再次输入密码', trigger: 'blur' },
     { validator: validateConfirm, trigger: 'blur' },
   ],
-  email: [{ type: 'email', message: '邮箱格式不正确', trigger: 'blur' }],
+  email: [
+    { validator: validateEmail, trigger: 'blur' },
+    { type: 'email', message: '邮箱格式不正确', trigger: 'blur' },
+  ],
+  email_code: [{ validator: validateEmailCode, trigger: 'blur' }],
+}
+
+function startEmailCountdown(seconds = 60) {
+  emailCountdown.value = seconds
+  if (countdownTimer !== undefined) window.clearInterval(countdownTimer)
+  countdownTimer = window.setInterval(() => {
+    emailCountdown.value -= 1
+    if (emailCountdown.value <= 0 && countdownTimer !== undefined) {
+      window.clearInterval(countdownTimer)
+      countdownTimer = undefined
+    }
+  }, 1000)
+}
+
+async function sendEmailCode() {
+  if (!registrationEnabled.value) {
+    ElMessage.warning('系统已关闭用户注册')
+    return
+  }
+  if (!formRef.value || sendingEmailCode.value || emailCountdown.value > 0) return
+  const validEmail = await formRef.value.validateField('email').catch(() => false)
+  if (validEmail === false) return
+  sendingEmailCode.value = true
+  try {
+    await authApi.sendEmailVerificationCode({ email: form.email })
+    ElMessage.success('验证码已发送，请查看邮箱')
+    startEmailCountdown()
+  } catch (err) {
+    ElMessage.error(err instanceof ApiException ? err.message : '验证码发送失败')
+  } finally {
+    sendingEmailCode.value = false
+  }
 }
 
 async function submit() {
@@ -68,7 +145,13 @@ async function submit() {
   if (!valid) return
   loading.value = true
   try {
-    await auth.register(form.username, form.password, form.email || undefined, form.invite_code || undefined)
+    await auth.register(
+      form.username,
+      form.password,
+      form.email || undefined,
+      form.invite_code || undefined,
+      form.email_code || undefined,
+    )
     ElMessage.success('注册成功，请登录')
     router.replace({ name: 'login' })
   } catch (err) {
@@ -94,7 +177,26 @@ async function submit() {
         <el-input v-model="form.username" placeholder="用户名" :prefix-icon="'User'" />
       </el-form-item>
       <el-form-item prop="email">
-        <el-input v-model="form.email" placeholder="邮箱（可选）" :prefix-icon="'Message'" />
+        <el-input v-model="form.email" :placeholder="emailPlaceholder" :prefix-icon="'Message'" />
+      </el-form-item>
+      <el-form-item v-if="emailVerificationEnabled" prop="email_code">
+        <div class="flex w-full gap-2">
+          <el-input
+            v-model="form.email_code"
+            class="flex-1"
+            maxlength="6"
+            placeholder="邮箱验证码"
+            :prefix-icon="'Ticket'"
+          />
+          <el-button
+            class="shrink-0"
+            :loading="sendingEmailCode"
+            :disabled="emailCountdown > 0"
+            @click="sendEmailCode"
+          >
+            {{ emailCodeButtonText }}
+          </el-button>
+        </div>
       </el-form-item>
       <el-form-item prop="password">
         <el-input

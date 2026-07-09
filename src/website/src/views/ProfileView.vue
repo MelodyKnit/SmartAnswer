@@ -15,6 +15,7 @@ const auth = useAuthStore()
 const router = useRouter()
 
 const activeTab = ref('profile')
+const inviteCodeRefreshing = ref(false)
 
 const roleLabel = computed(() => {
   switch (auth.role) {
@@ -32,6 +33,17 @@ const inviteLink = computed(() => {
   if (!code) return ''
   return `${window.location.origin}/register?invite=${code}`
 })
+const inviteBonusPoints = computed(() => auth.billing?.invite_bonus_points ?? 0)
+const inviteBonusTitle = computed(() =>
+  inviteBonusPoints.value > 0
+    ? `邀请新成员加入：各得 ${inviteBonusPoints.value} 积分！`
+    : '邀请新成员加入'
+)
+const inviteBonusDescription = computed(() =>
+  inviteBonusPoints.value > 0
+    ? `分享您的专属邀请链接或邀请码给好友。当好友通过该邀请码成功注册账号后，系统将立即向您与好友各发放 ${inviteBonusPoints.value} 积分的查题额度作为推广福利。`
+    : '分享您的专属邀请链接或邀请码给好友。当好友通过该邀请码成功注册账号后，系统会记录您的邀请关系。'
+)
 
 /* 修改昵称 */
 const nameEditing = ref(false)
@@ -101,11 +113,29 @@ async function changePassword() {
 }
 
 async function copy(text: string) {
+  if (!text) {
+    ElMessage.warning('暂无可复制内容')
+    return
+  }
   try {
     await navigator.clipboard.writeText(text)
     ElMessage.success('已复制到剪贴板')
   } catch {
     ElMessage.warning('复制失败，请手动复制')
+  }
+}
+
+async function refreshInviteCode() {
+  inviteCodeRefreshing.value = true
+  try {
+    const res = await userApi.ensureInviteCode()
+    auth.user = res.user
+    await auth.refreshProfile()
+    ElMessage.success('邀请码已生成')
+  } catch (err) {
+    ElMessage.error(err instanceof ApiException ? err.message : '生成邀请码失败')
+  } finally {
+    inviteCodeRefreshing.value = false
   }
 }
 </script>
@@ -246,9 +276,9 @@ async function copy(text: string) {
 
               <!-- 福利卡片 -->
               <div class="mb-6 rounded-xl bg-brand-50 p-4 dark:bg-brand-100/10">
-                <h4 class="font-semibold text-brand-700 dark:text-brand-400">邀请新成员加入：各得 50 积分！</h4>
+                <h4 class="font-semibold text-brand-700 dark:text-brand-400">{{ inviteBonusTitle }}</h4>
                 <p class="mt-1 text-xs text-ink-soft leading-relaxed">
-                  分享您的专属邀请链接或邀请码给好友。当好友通过该邀请码成功注册账号后，系统将立即向您与好友各发放 50 积分的查题额度作为推广福利，无上限！
+                  {{ inviteBonusDescription }}
                 </p>
               </div>
 
@@ -260,7 +290,17 @@ async function copy(text: string) {
                     <code class="rounded-lg bg-canvas px-4 py-2.5 text-lg font-bold tracking-widest text-brand-600 border border-line">
                       {{ auth.user?.invite_code || '—' }}
                     </code>
-                    <el-button :icon="'CopyDocument'" type="primary" plain @click="copy(auth.user?.invite_code || '')">
+                    <el-button
+                      v-if="!auth.user?.invite_code"
+                      :icon="'Refresh'"
+                      type="primary"
+                      plain
+                      :loading="inviteCodeRefreshing"
+                      @click="refreshInviteCode"
+                    >
+                      生成邀请码
+                    </el-button>
+                    <el-button v-else :icon="'CopyDocument'" type="primary" plain @click="copy(auth.user?.invite_code || '')">
                       复制邀请码
                     </el-button>
                   </div>

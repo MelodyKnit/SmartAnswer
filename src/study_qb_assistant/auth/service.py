@@ -73,7 +73,15 @@ class AuthService:
             if email and self.repository.get_user_by_email(email) is not None:
                 raise AuthError("EMAIL_TAKEN", "该邮箱已被注册", http_status=409)
             role = "superadmin" if not self.repository.has_users() else "user"
-            inviter = self.repository.get_user_by_invite_code(invite_code)
+            normalized_invite_code = (invite_code or "").strip()
+            inviter = (
+                self.repository.get_user_by_invite_code(normalized_invite_code)
+                if normalized_invite_code
+                else None
+            )
+            if normalized_invite_code and inviter is None:
+                raise AuthError("INVALID_INVITE_CODE", "邀请码无效", http_status=400)
+            bonus_points = max(0, int(invite_bonus)) if inviter else 0
             salt = secrets.token_hex(SALT_BYTES)
             user = UserRecord(
                 user_id=secrets.token_hex(16),
@@ -83,13 +91,26 @@ class AuthService:
                 salt=salt,
                 password_hash=hash_password(password, salt),
                 email=email,
-                points=max(0, int(initial_points)) + max(0, int(invite_bonus)),
+                points=max(0, int(initial_points)) + bonus_points,
                 created_at=time.time(),
                 invite_code=self.generate_unique_invite_code(),
                 invited_by=inviter.username if inviter else "",
             )
             self.repository.save_user(user)
+            if inviter and bonus_points:
+                inviter.points = max(0, int(inviter.points) + bonus_points)
+                self.repository.save_user(inviter)
             return self.public_user_dict(user)
+
+    def assert_invite_code_valid(self, invite_code: str) -> None:
+        """校验邀请码是否存在，空邀请码视为未使用邀请。"""
+
+        normalized_invite_code = (invite_code or "").strip()
+        if (
+            normalized_invite_code
+            and self.repository.get_user_by_invite_code(normalized_invite_code) is None
+        ):
+            raise AuthError("INVALID_INVITE_CODE", "邀请码无效", http_status=400)
 
     def login(
         self, username: str, password: str, *, remember: bool = False, client_ip: str = ""
@@ -367,6 +388,33 @@ class AuthService:
             if self.repository.get_user_by_invite_code(code) is None:
                 return code
         return secrets.token_hex(8)
+
+    def ensure_user_invite_code(self, user: UserRecord | None) -> UserRecord | None:
+        """为历史空邀请码用户补齐邀请码。"""
+
+        if user is None or user.invite_code.strip():
+            return user
+        with self._lock:
+            latest = self.repository.get_user(user.username)
+            if latest is None:
+                return user
+            return self._ensure_user_invite_code_locked(latest)
+
+    def ensure_invite_code_for_user(self, username: str) -> dict | None:
+        """显式为指定用户生成缺失的邀请码，并返回公开用户信息。"""
+
+        user = self.repository.get_user((username or "").strip())
+        user = self.ensure_user_invite_code(user)
+        return self.public_user_dict(user) if user else None
+
+    def _ensure_user_invite_code_locked(self, user: UserRecord) -> UserRecord:
+        """在持锁上下文中为缺失邀请码的用户生成稳定邀请码。"""
+
+        if user.invite_code.strip():
+            return user
+        user.invite_code = self.generate_unique_invite_code()
+        self.repository.save_user(user)
+        return user
 
     def save_users(self) -> None:
         """兼容旧调用，无需额外操作。"""

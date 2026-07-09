@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from sqlalchemy import func, select
 
-from ..auth.records import UserRecord
+from ..auth.records import EmailVerificationCodeRecord, UserRecord
 from .database import get_session_factory
-from .orm import UserEntity
+from .orm import EmailVerificationCodeEntity, UserEntity
 
 
 class SqlAlchemyAuthRepository:
@@ -90,6 +90,126 @@ class SqlAlchemyAuthRepository:
             session.commit()
             return True
 
+    def save_email_verification_code(self, record: EmailVerificationCodeRecord) -> None:
+        """保存邮箱验证码记录。"""
+
+        with self.session_factory() as session:
+            entity = session.scalar(
+                select(EmailVerificationCodeEntity).where(
+                    EmailVerificationCodeEntity.code_id == record.code_id
+                )
+            )
+            if entity is None:
+                entity = EmailVerificationCodeEntity(code_id=record.code_id)
+                session.add(entity)
+            entity.email = record.email
+            entity.purpose = record.purpose
+            entity.code_hash = record.code_hash
+            entity.expires_at = record.expires_at
+            entity.attempts = record.attempts
+            entity.send_ip_hash = record.send_ip_hash
+            entity.created_at = record.created_at
+            entity.consumed_at = record.consumed_at
+            session.commit()
+
+    def latest_email_verification_code(
+        self, *, email: str, purpose: str
+    ) -> EmailVerificationCodeRecord | None:
+        """读取指定邮箱和用途下最近一条未消费验证码。"""
+
+        with self.session_factory() as session:
+            entity = session.scalar(
+                select(EmailVerificationCodeEntity)
+                .where(
+                    EmailVerificationCodeEntity.email == email,
+                    EmailVerificationCodeEntity.purpose == purpose,
+                    EmailVerificationCodeEntity.consumed_at <= 0,
+                )
+                .order_by(EmailVerificationCodeEntity.created_at.desc())
+                .limit(1)
+            )
+            return self._to_email_code_record(entity) if entity else None
+
+    def latest_email_verification_send(
+        self, *, email: str, purpose: str
+    ) -> EmailVerificationCodeRecord | None:
+        """读取指定邮箱和用途下最近一条验证码发送记录。"""
+
+        with self.session_factory() as session:
+            entity = session.scalar(
+                select(EmailVerificationCodeEntity)
+                .where(
+                    EmailVerificationCodeEntity.email == email,
+                    EmailVerificationCodeEntity.purpose == purpose,
+                )
+                .order_by(EmailVerificationCodeEntity.created_at.desc())
+                .limit(1)
+            )
+            return self._to_email_code_record(entity) if entity else None
+
+    def count_email_verification_sends(
+        self, *, email: str, purpose: str, since: float
+    ) -> int:
+        """统计指定邮箱在时间窗口内的验证码发送次数。"""
+
+        with self.session_factory() as session:
+            return int(
+                session.scalar(
+                    select(func.count(EmailVerificationCodeEntity.id)).where(
+                        EmailVerificationCodeEntity.email == email,
+                        EmailVerificationCodeEntity.purpose == purpose,
+                        EmailVerificationCodeEntity.created_at >= since,
+                    )
+                )
+                or 0
+            )
+
+    def count_email_verification_sends_by_ip(
+        self, *, send_ip_hash: str, purpose: str, since: float
+    ) -> int:
+        """统计指定 IP 哈希在时间窗口内的验证码发送次数。"""
+
+        with self.session_factory() as session:
+            return int(
+                session.scalar(
+                    select(func.count(EmailVerificationCodeEntity.id)).where(
+                        EmailVerificationCodeEntity.send_ip_hash == send_ip_hash,
+                        EmailVerificationCodeEntity.purpose == purpose,
+                        EmailVerificationCodeEntity.created_at >= since,
+                    )
+                )
+                or 0
+            )
+
+    def increment_email_verification_attempts(self, code_id: str) -> EmailVerificationCodeRecord:
+        """增加验证码校验尝试次数，并返回更新后的记录。"""
+
+        with self.session_factory() as session:
+            entity = session.scalar(
+                select(EmailVerificationCodeEntity).where(
+                    EmailVerificationCodeEntity.code_id == code_id
+                )
+            )
+            if entity is None:
+                raise ValueError("email verification code not found")
+            entity.attempts = int(entity.attempts or 0) + 1
+            session.commit()
+            return self._to_email_code_record(entity)
+
+    def consume_email_verification_code(self, code_id: str, consumed_at: float) -> None:
+        """标记验证码已消费。"""
+
+        with self.session_factory() as session:
+            entity = session.scalar(
+                select(EmailVerificationCodeEntity).where(
+                    EmailVerificationCodeEntity.code_id == code_id
+                )
+            )
+            if entity is None:
+                return
+            entity.consumed_at = consumed_at
+            session.commit()
+
     def _apply_record(self, entity: UserEntity, record: UserRecord) -> None:
         entity.user_id = record.user_id
         entity.username = record.username
@@ -120,4 +240,19 @@ class SqlAlchemyAuthRepository:
             invited_by=entity.invited_by or "",
             reset_token_hash=entity.reset_token_hash,
             reset_expires_at=entity.reset_expires_at,
+        )
+
+    def _to_email_code_record(
+        self, entity: EmailVerificationCodeEntity
+    ) -> EmailVerificationCodeRecord:
+        return EmailVerificationCodeRecord(
+            code_id=entity.code_id,
+            email=entity.email,
+            purpose=entity.purpose,
+            code_hash=entity.code_hash,
+            expires_at=entity.expires_at,
+            attempts=int(entity.attempts or 0),
+            send_ip_hash=entity.send_ip_hash,
+            created_at=entity.created_at,
+            consumed_at=float(entity.consumed_at or 0.0),
         )

@@ -27,6 +27,20 @@ const form = reactive({
   redeem_code_default_points: 50,
   answer_retry_times: 3,
   registration_enabled: 'true',
+  email_verification_enabled: 'false',
+  smtp_host: '',
+  smtp_port: 465,
+  smtp_security: 'ssl',
+  smtp_username: '',
+  smtp_password: '',
+  smtp_password_configured: false,
+  smtp_from_email: '',
+  smtp_from_name: 'AI题库',
+  email_code_ttl_minutes: 10,
+  email_code_cooldown_seconds: 60,
+  email_code_daily_limit: 5,
+  email_code_ip_hourly_limit: 20,
+  email_code_max_attempts: 5,
 })
 
 const billingForm = reactive({
@@ -59,6 +73,20 @@ async function load() {
     form.redeem_code_default_points = Number(res.config.redeem_code_default_points || 50)
     form.answer_retry_times = Number(res.config.answer_retry_times || 3)
     form.registration_enabled = (res.config.registration_enabled as string) || 'true'
+    form.email_verification_enabled = (res.config.email_verification_enabled as string) || 'false'
+    form.smtp_host = (res.config.smtp_host as string) || ''
+    form.smtp_port = Number(res.config.smtp_port || 465)
+    form.smtp_security = (res.config.smtp_security as string) || 'ssl'
+    form.smtp_username = (res.config.smtp_username as string) || ''
+    form.smtp_password = ''
+    form.smtp_password_configured = Boolean(res.config.smtp_password_configured)
+    form.smtp_from_email = (res.config.smtp_from_email as string) || ''
+    form.smtp_from_name = (res.config.smtp_from_name as string) || 'AI题库'
+    form.email_code_ttl_minutes = Number(res.config.email_code_ttl_minutes || 10)
+    form.email_code_cooldown_seconds = Number(res.config.email_code_cooldown_seconds || 60)
+    form.email_code_daily_limit = Number(res.config.email_code_daily_limit || 5)
+    form.email_code_ip_hourly_limit = Number(res.config.email_code_ip_hourly_limit || 20)
+    form.email_code_max_attempts = Number(res.config.email_code_max_attempts || 5)
     billingForm.local_hit = Number(billing.billing.local_hit || 0)
     billingForm.web_search = Number(billing.billing.web_search || 0)
     billingForm.llm_fallback = Number(billing.billing.llm_fallback || 0)
@@ -81,6 +109,21 @@ async function save() {
       redeem_code_default_points: String(form.redeem_code_default_points),
       answer_retry_times: String(form.answer_retry_times),
       registration_enabled: form.registration_enabled,
+      email_verification_enabled: form.email_verification_enabled,
+      smtp_host: form.smtp_host,
+      smtp_port: String(form.smtp_port),
+      smtp_security: form.smtp_security,
+      smtp_username: form.smtp_username,
+      smtp_from_email: form.smtp_from_email,
+      smtp_from_name: form.smtp_from_name,
+      email_code_ttl_minutes: String(form.email_code_ttl_minutes),
+      email_code_cooldown_seconds: String(form.email_code_cooldown_seconds),
+      email_code_daily_limit: String(form.email_code_daily_limit),
+      email_code_ip_hourly_limit: String(form.email_code_ip_hourly_limit),
+      email_code_max_attempts: String(form.email_code_max_attempts),
+    }
+    if (form.smtp_password.trim()) {
+      body.smtp_password = form.smtp_password
     }
 
     const updated = await systemConfigApi.update(body)
@@ -178,9 +221,71 @@ onMounted(load)
           <el-form-item label="允许用户注册">
             <el-switch v-model="form.registration_enabled" active-value="true" inactive-value="false" />
           </el-form-item>
+          <el-form-item label="启用邮箱验证码注册">
+            <el-switch
+              v-model="form.email_verification_enabled"
+              active-value="true"
+              inactive-value="false"
+            />
+          </el-form-item>
+          <el-form-item label="SMTP 服务器">
+            <el-input v-model="form.smtp_host" placeholder="smtp.example.com" />
+          </el-form-item>
+          <el-form-item label="SMTP 端口">
+            <el-input-number v-model="form.smtp_port" :min="1" :max="65535" class="w-full" />
+          </el-form-item>
+          <el-form-item label="SMTP 加密方式">
+            <el-select v-model="form.smtp_security" class="w-full">
+              <el-option value="ssl" label="SSL" />
+              <el-option value="starttls" label="STARTTLS" />
+              <el-option value="none" label="不加密" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="SMTP 用户名">
+            <el-input v-model="form.smtp_username" placeholder="通常为邮箱账号" />
+          </el-form-item>
+          <el-form-item :label="form.smtp_password_configured ? 'SMTP 密码（已配置）' : 'SMTP 密码'">
+            <el-input
+              v-model="form.smtp_password"
+              type="password"
+              show-password
+              placeholder="留空保持不变"
+            />
+          </el-form-item>
+          <el-form-item label="发件邮箱">
+            <el-input v-model="form.smtp_from_email" placeholder="noreply@example.com" />
+          </el-form-item>
+          <el-form-item label="发件人名称">
+            <el-input v-model="form.smtp_from_name" maxlength="40" placeholder="AI题库" />
+          </el-form-item>
+          <el-form-item label="验证码有效分钟">
+            <el-input-number v-model="form.email_code_ttl_minutes" :min="1" :max="60" class="w-full" />
+          </el-form-item>
+          <el-form-item label="发送冷却秒数">
+            <el-input-number
+              v-model="form.email_code_cooldown_seconds"
+              :min="0"
+              :max="3600"
+              class="w-full"
+            />
+          </el-form-item>
+          <el-form-item label="单邮箱每日上限">
+            <el-input-number v-model="form.email_code_daily_limit" :min="1" :max="100" class="w-full" />
+          </el-form-item>
+          <el-form-item label="单 IP 每小时上限">
+            <el-input-number
+              v-model="form.email_code_ip_hourly_limit"
+              :min="1"
+              :max="500"
+              class="w-full"
+            />
+          </el-form-item>
+          <el-form-item label="验证码最大错误次数">
+            <el-input-number v-model="form.email_code_max_attempts" :min="1" :max="20" class="w-full" />
+          </el-form-item>
         </el-form>
         <p class="text-xs text-ink-muted">
-          关闭注册后，已有用户仍可登录；空库部署时仍允许创建第一个超级管理员。
+          开启邮箱验证后，新用户注册必须通过白名单邮箱接收验证码；SMTP 密码留空不会覆盖已有配置。
         </p>
       </div>
 
