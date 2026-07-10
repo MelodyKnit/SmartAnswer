@@ -18,15 +18,39 @@ function normalizeLogoUrl(value?: string): string {
 export const useSiteStore = defineStore('site', () => {
   const siteTitle = ref(DEFAULT_SITE_TITLE)
   const siteLogoUrl = ref('')
+  const siteLogoUrls = ref({
+    original: '',
+    lg: '',
+    md: '',
+    sm: '',
+  })
   const currentRouteTitle = ref<string | undefined>()
   const initialized = ref(false)
 
   const title = computed(() => siteTitle.value)
   const logoUrl = computed(() => siteLogoUrl.value)
+  const logoUrls = computed(() => siteLogoUrls.value)
 
   function applyConfig(config: Partial<SiteConfig | SystemConfig>): void {
     siteTitle.value = normalizeTitle(config.site_title)
     siteLogoUrl.value = normalizeLogoUrl(config.site_logo_url)
+    const rawUrls = config.site_logo_urls
+    if (rawUrls && typeof rawUrls === 'object') {
+      siteLogoUrls.value = {
+        original: normalizeLogoUrl(rawUrls.original),
+        lg: normalizeLogoUrl(rawUrls.lg),
+        md: normalizeLogoUrl(rawUrls.md),
+        sm: normalizeLogoUrl(rawUrls.sm),
+      }
+    } else {
+      const defaultUrl = normalizeLogoUrl(config.site_logo_url)
+      siteLogoUrls.value = {
+        original: defaultUrl,
+        lg: defaultUrl,
+        md: defaultUrl,
+        sm: defaultUrl,
+      }
+    }
     applyBrowserBrand()
   }
 
@@ -43,7 +67,7 @@ export const useSiteStore = defineStore('site', () => {
       favicon.rel = 'icon'
       document.head.appendChild(favicon)
     }
-    favicon.href = siteLogoUrl.value || DEFAULT_FAVICON
+    favicon.href = siteLogoUrls.value.sm || siteLogoUrl.value || DEFAULT_FAVICON
   }
 
   async function load(): Promise<void> {
@@ -60,6 +84,7 @@ export const useSiteStore = defineStore('site', () => {
   return {
     title,
     logoUrl,
+    logoUrls,
     initialized,
     applyConfig,
     applyBrowserBrand,

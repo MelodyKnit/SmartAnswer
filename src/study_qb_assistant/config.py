@@ -189,6 +189,11 @@ class GlobalConfig(BaseModel):
         return self.data_dir / "images" / "ocs"
 
     @property
+    def brand_images_dir(self) -> Path:
+        """上传品牌Logo等资源的本地存储物理路径。"""
+        return self.data_dir / "images" / "brand"
+
+    @property
     def database_locator(self) -> str:
         """返回传给仓储层的数据库定位值。"""
         return self.database_url.strip() or str(self.database_path_resolved)
@@ -203,7 +208,9 @@ class GlobalConfig(BaseModel):
     @property
     def log_path_resolved(self) -> Path:
         """返回运行时日志 JSONL 文件路径。"""
-        return self.resolve_path(self.log_path, default=self.data_logs_dir / "service.jsonl")
+        return self.resolve_path(
+            self.log_path, default=self.data_logs_dir / "service.jsonl"
+        )
 
     @property
     def index_path_resolved(self) -> Path:

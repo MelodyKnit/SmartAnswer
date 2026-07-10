@@ -47,7 +47,7 @@ export const authApi = {
     invite_code?: string
   }) => api.post<{ ok: true; user: User }>('/auth/register', body),
   sendEmailVerificationCode: (body: { email: string; purpose?: 'register' }) =>
-    api.post<{ ok: true; message: string }>('/auth/email-verification-codes', {
+    api.post<{ ok: true; message: string; cooldown_seconds: number }>('/auth/email-verification-codes', {
       purpose: 'register',
       ...body,
     }),
@@ -313,6 +313,8 @@ export const walletApi = {
     points: number
     max_uses?: number
     expires_at?: number
+    code?: string
+    count?: number
   }) => api.post<{ ok: true; redeem_code: RedeemCode }>('/wallet/redeem-codes', body),
   redeem: (code: string) =>
     api.post<{ ok: true; order: WalletOrder; wallet: WalletSummary }>('/wallet/redeem', { code }),

@@ -19,6 +19,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./deploy-data:/app/data
+      - ./configs:/app/configs:ro
     healthcheck:
       test:
         - CMD

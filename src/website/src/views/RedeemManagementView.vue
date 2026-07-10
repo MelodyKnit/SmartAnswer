@@ -32,7 +32,10 @@ const codeForm = reactive<{
   points: number
   max_uses: number
   expires_at_ms: string | number
-}>({ points: pointsPolicy.redeemCode, max_uses: 1, expires_at_ms: '' })
+  mode: 'random' | 'manual'
+  code: string
+  count: number
+}>({ points: pointsPolicy.redeemCode, max_uses: 1, expires_at_ms: '', mode: 'random', code: '', count: 1 })
 
 const sourceOptions = [
   { value: 'manual_credit', label: '管理员发放' },
@@ -187,18 +190,29 @@ async function submitGrant() {
 async function submitCode() {
   const expiresAt = codeExpiryTimestamp()
   if (expiresAt === null) return
+
+  if (codeForm.mode === 'manual' && !codeForm.code.trim()) {
+    ElMessage.warning('请输入自定义兑换码')
+    return
+  }
+
   try {
     await walletApi.createRedeemCode({
       kind: 'points',
       points: codeForm.points,
       max_uses: codeForm.max_uses,
       expires_at: expiresAt,
+      code: codeForm.mode === 'manual' ? codeForm.code.trim() : undefined,
+      count: codeForm.mode === 'random' ? codeForm.count : 1,
     })
     ElMessage.success('兑换码已创建')
     codeVisible.value = false
     codeForm.points = pointsPolicy.redeemCode
     codeForm.max_uses = 1
     codeForm.expires_at_ms = ''
+    codeForm.code = ''
+    codeForm.count = 1
+    codeForm.mode = 'random'
     await loadCodes()
   } catch (error) {
     ElMessage.error(error instanceof ApiException ? error.message : '创建失败')
@@ -378,6 +392,20 @@ onMounted(load)
 
     <el-dialog v-model="codeVisible" title="创建积分兑换码" width="420px">
       <el-form label-position="top">
+        <el-form-item label="生成方式">
+          <el-radio-group v-model="codeForm.mode" class="w-full">
+            <el-radio-button value="random">随机创建</el-radio-button>
+            <el-radio-button value="manual">手动填写</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="codeForm.mode === 'manual'" label="兑换码名称">
+          <el-input v-model="codeForm.code" placeholder="输入自定义兑换码，如 VIP_WELCOME_2026" maxlength="64" show-word-limit />
+          <div class="mt-1 text-xs text-ink-muted">只支持字母、数字、下划线及连字符。</div>
+        </el-form-item>
+        <el-form-item v-if="codeForm.mode === 'random'" label="创建数量">
+          <el-input-number v-model="codeForm.count" :min="1" :max="1000" class="w-full" />
+          <div class="mt-1 text-xs text-ink-muted">设置本次批量随机生成的兑换码个数。</div>
+        </el-form-item>
         <el-form-item label="积分数量">
           <el-input-number v-model="codeForm.points" :min="1" class="w-full" />
         </el-form-item>

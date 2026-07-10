@@ -104,8 +104,13 @@ const rules: FormRules = {
 }
 
 function startEmailCountdown(seconds = 60) {
-  emailCountdown.value = seconds
+  const normalizedSeconds = Math.max(0, Math.floor(seconds))
+  emailCountdown.value = normalizedSeconds
   if (countdownTimer !== undefined) window.clearInterval(countdownTimer)
+  if (normalizedSeconds <= 0) {
+    countdownTimer = undefined
+    return
+  }
   countdownTimer = window.setInterval(() => {
     emailCountdown.value -= 1
     if (emailCountdown.value <= 0 && countdownTimer !== undefined) {
@@ -123,11 +128,31 @@ async function sendEmailCode() {
   if (!formRef.value || sendingEmailCode.value || emailCountdown.value > 0) return
   const validEmail = await formRef.value.validateField('email').catch(() => false)
   if (validEmail === false) return
+
+  // 前端防御：限制同一个邮箱在前端本地被频繁连续发送（即使刷新页面仍然以冷却定时器为准）
+  const storageKey = `email_cooldown_${form.email.trim().toLowerCase()}`
+  const now = Date.now()
+  const val = sessionStorage.getItem(storageKey)
+  if (val) {
+    const expireTime = Number(val)
+    if (now < expireTime) {
+      const waitSec = Math.ceil((expireTime - now) / 1000)
+      ElMessage.warning(`该邮箱发送频率过快，请等待 ${waitSec} 秒后重试`)
+      return
+    }
+  }
+
   sendingEmailCode.value = true
   try {
-    await authApi.sendEmailVerificationCode({ email: form.email })
+    const res = await authApi.sendEmailVerificationCode({ email: form.email })
     ElMessage.success('验证码已发送，请查看邮箱')
-    startEmailCountdown()
+    const cooldownSeconds = Math.max(0, Math.floor(res.cooldown_seconds ?? 60))
+    if (cooldownSeconds > 0) {
+      sessionStorage.setItem(storageKey, String(Date.now() + cooldownSeconds * 1000))
+    } else {
+      sessionStorage.removeItem(storageKey)
+    }
+    startEmailCountdown(cooldownSeconds)
   } catch (err) {
     ElMessage.error(err instanceof ApiException ? err.message : '验证码发送失败')
   } finally {

@@ -9,11 +9,36 @@ import { ApiException } from '@/api/http'
 import PageHeader from '@/components/PageHeader.vue'
 import SiteLogo from '@/components/SiteLogo.vue'
 import { useSiteStore } from '@/stores/site'
+import { getToken } from '@/api/http'
 
 const loading = ref(false)
 const saving = ref(false)
 const route = useRoute()
 const site = useSiteStore()
+
+const uploadHeaders = computed(() => {
+  const token = getToken()
+  return token ? { Authorization: `Bearer ${token}` } : {}
+})
+
+function handleLogoUploadSuccess(res: any) {
+  if (res.ok && res.urls?.lg) {
+    // 保存返回的大尺寸对应 logo URL 到表单
+    form.site_logo_url = res.urls.lg
+    ElMessage.success('Logo 上传并裁切成功！')
+  } else {
+    ElMessage.error(res.error?.message || '上传 Logo 失败')
+  }
+}
+
+function handleLogoUploadError(err: any) {
+  try {
+    const parsed = JSON.parse(err.message)
+    ElMessage.error(parsed.error?.message || '上传异常')
+  } catch {
+    ElMessage.error('上传 Logo 接口连接失败')
+  }
+}
 
 /* 表单：明文字段直接编辑；密钥字段为“新值”，留空表示保持不变。 */
 const form = reactive({
@@ -96,6 +121,23 @@ async function load() {
 }
 
 async function save() {
+  // 当开启邮箱验证码注册时，在前端预先进行强校验提示，防止什么都不填就直接开启提交
+  if (form.email_verification_enabled === 'true') {
+    const hasHost = !!form.smtp_host.trim()
+    const hasUser = !!form.smtp_username.trim()
+    const hasFrom = !!form.smtp_from_email.trim()
+    const hasPassword = !!form.smtp_password.trim() || form.smtp_password_configured
+
+    if (!hasHost || !hasUser || !hasFrom) {
+      ElMessage.warning('启用“邮箱验证码注册”必须完整填写 SMTP 服务核心配置（SMTP 服务器、用户名及发件邮箱）！')
+      return
+    }
+    if (!hasPassword) {
+      ElMessage.warning('启用“邮箱验证码注册”必须配置 SMTP 密码！')
+      return
+    }
+  }
+
   saving.value = true
   try {
     const body: Record<string, string> = {
@@ -163,8 +205,22 @@ onMounted(load)
             <el-form-item label="网站标题">
               <el-input v-model="form.site_title" maxlength="40" show-word-limit placeholder="AI题库" />
             </el-form-item>
-            <el-form-item label="Logo 地址">
-              <el-input v-model="form.site_logo_url" placeholder="/favicon.svg 或 https://example.com/logo.png" />
+            <el-form-item label="网站 Logo">
+              <div class="flex flex-col gap-2">
+                <el-upload
+                  action="/api/system/logo/upload"
+                  :headers="uploadHeaders"
+                  accept="image/png, image/jpeg, image/jpg, image/webp"
+                  :show-file-list="false"
+                  :on-success="handleLogoUploadSuccess"
+                  :on-error="handleLogoUploadError"
+                >
+                  <el-button type="primary">上传图片修改 Logo</el-button>
+                </el-upload>
+                <div class="text-xs text-ink-muted">
+                  支持 png、jpg、jpeg、webp 格式，文件大小不超过 5MB，将自动裁剪为多分辨率正方形尺寸。
+                </div>
+              </div>
             </el-form-item>
           </el-form>
           <div class="rounded-xl border border-line bg-card-soft p-4">
@@ -173,7 +229,7 @@ onMounted(load)
               <SiteLogo :title="form.site_title" :logo-url="previewLogoUrl" />
               <div class="min-w-0">
                 <div class="truncate text-base font-semibold text-ink">{{ form.site_title || 'AI题库' }}</div>
-                <div class="truncate text-xs text-ink-muted">{{ form.site_logo_url || '使用默认图标' }}</div>
+                <div class="truncate text-xs text-ink-muted">{{ form.site_logo_url ? '已配置自定义 Logo' : '使用默认图标' }}</div>
               </div>
             </div>
           </div>

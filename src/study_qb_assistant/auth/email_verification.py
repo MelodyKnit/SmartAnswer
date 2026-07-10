@@ -83,7 +83,9 @@ class SmtpEmailSender:
         security = settings.security.lower()
         if security == "ssl":
             context = ssl.create_default_context()
-            with smtplib.SMTP_SSL(settings.host, settings.port, context=context, timeout=15) as smtp:
+            with smtplib.SMTP_SSL(
+                settings.host, settings.port, context=context, timeout=15
+            ) as smtp:
                 self._login_if_needed(smtp, settings)
                 smtp.send_message(message)
             return
@@ -103,7 +105,9 @@ class EmailDomainWhitelist:
     """按 mtime 缓存的邮箱域名白名单。"""
 
     def __init__(self, path: Path | None = None) -> None:
-        self.path = path or get_global_config().config_dir / "email-domain-whitelist.json"
+        self.path = (
+            path or get_global_config().config_dir / "email-domain-whitelist.json"
+        )
         self._mtime: float | None = None
         self._domains: set[str] = set()
 
@@ -114,7 +118,9 @@ class EmailDomainWhitelist:
             stat = self.path.stat()
         except FileNotFoundError as exc:
             log_event("email_domain_whitelist_error", {"error": "file_not_found"})
-            raise AuthError("EMAIL_DOMAIN_NOT_ALLOWED", "邮箱域名白名单不可用", http_status=400) from exc
+            raise AuthError(
+                "EMAIL_DOMAIN_NOT_ALLOWED", "邮箱域名白名单不可用", http_status=400
+            ) from exc
         if self._mtime == stat.st_mtime:
             return set(self._domains)
         try:
@@ -129,10 +135,14 @@ class EmailDomainWhitelist:
             }
         except Exception as exc:
             log_event("email_domain_whitelist_error", {"error": str(exc)})
-            raise AuthError("EMAIL_DOMAIN_NOT_ALLOWED", "邮箱域名白名单格式错误", http_status=400) from exc
+            raise AuthError(
+                "EMAIL_DOMAIN_NOT_ALLOWED", "邮箱域名白名单格式错误", http_status=400
+            ) from exc
         if not parsed:
             log_event("email_domain_whitelist_error", {"error": "empty_domains"})
-            raise AuthError("EMAIL_DOMAIN_NOT_ALLOWED", "邮箱域名白名单为空", http_status=400)
+            raise AuthError(
+                "EMAIL_DOMAIN_NOT_ALLOWED", "邮箱域名白名单为空", http_status=400
+            )
         self._mtime = stat.st_mtime
         self._domains = parsed
         return set(parsed)
@@ -142,7 +152,9 @@ class EmailDomainWhitelist:
 
         domain = email_domain(email)
         if not domain or domain not in self.domains():
-            raise AuthError("EMAIL_DOMAIN_NOT_ALLOWED", "该邮箱域名暂不允许注册", http_status=400)
+            raise AuthError(
+                "EMAIL_DOMAIN_NOT_ALLOWED", "该邮箱域名暂不允许注册", http_status=400
+            )
 
 
 class EmailVerificationService:
@@ -161,19 +173,29 @@ class EmailVerificationService:
         self.sender = sender or SmtpEmailSender()
         self.whitelist = whitelist or EmailDomainWhitelist()
 
-    def send_code(self, *, email: str, purpose: str, client_ip: str) -> None:
+    def send_code(self, *, email: str, purpose: str, client_ip: str) -> int:
         """发送验证码，包含域名白名单与限流校验。"""
 
-        if not config_bool(self.config.get("email_verification_enabled"), default=False):
-            raise AuthError("EMAIL_VERIFICATION_DISABLED", "邮箱验证未开启", http_status=400)
+        if not config_bool(
+            self.config.get("email_verification_enabled"), default=False
+        ):
+            raise AuthError(
+                "EMAIL_VERIFICATION_DISABLED", "邮箱验证未开启", http_status=400
+            )
         normalized_email = normalize_email(email)
         normalized_purpose = normalize_purpose(purpose)
         self.whitelist.assert_allowed(normalized_email)
         now = time.time()
         ip_hash = hash_client_ip(client_ip)
-        ttl_minutes = config_int(self.config, "email_code_ttl_minutes", 10, minimum=1, maximum=60)
-        cooldown = config_int(self.config, "email_code_cooldown_seconds", 60, minimum=0, maximum=3600)
-        daily_limit = config_int(self.config, "email_code_daily_limit", 5, minimum=1, maximum=100)
+        ttl_minutes = config_int(
+            self.config, "email_code_ttl_minutes", 10, minimum=1, maximum=60
+        )
+        cooldown = config_int(
+            self.config, "email_code_cooldown_seconds", 60, minimum=0, maximum=3600
+        )
+        daily_limit = config_int(
+            self.config, "email_code_daily_limit", 5, minimum=1, maximum=100
+        )
         ip_hourly_limit = config_int(
             self.config, "email_code_ip_hourly_limit", 20, minimum=1, maximum=500
         )
@@ -183,7 +205,11 @@ class EmailVerificationService:
             purpose=normalized_purpose,
         )
         if latest_send and now - latest_send.created_at < cooldown:
-            raise AuthError("EMAIL_CODE_RATE_LIMITED", "验证码发送过于频繁，请稍后再试", http_status=429)
+            raise AuthError(
+                "EMAIL_CODE_RATE_LIMITED",
+                "验证码发送过于频繁，请稍后再试",
+                http_status=429,
+            )
         if (
             self.repository.count_email_verification_sends(
                 email=normalized_email,
@@ -192,7 +218,11 @@ class EmailVerificationService:
             )
             >= daily_limit
         ):
-            raise AuthError("EMAIL_CODE_RATE_LIMITED", "该邮箱今日验证码发送次数已达上限", http_status=429)
+            raise AuthError(
+                "EMAIL_CODE_RATE_LIMITED",
+                "该邮箱今日验证码发送次数已达上限",
+                http_status=429,
+            )
         if (
             self.repository.count_email_verification_sends_by_ip(
                 send_ip_hash=ip_hash,
@@ -201,7 +231,9 @@ class EmailVerificationService:
             )
             >= ip_hourly_limit
         ):
-            raise AuthError("EMAIL_CODE_RATE_LIMITED", "当前网络验证码发送过于频繁", http_status=429)
+            raise AuthError(
+                "EMAIL_CODE_RATE_LIMITED", "当前网络验证码发送过于频繁", http_status=429
+            )
 
         settings = smtp_settings_from_config(self.config)
         code = generate_code()
@@ -213,11 +245,25 @@ class EmailVerificationService:
                 ttl_minutes=ttl_minutes,
             )
         except Exception as exc:
+            failed_record = EmailVerificationCodeRecord(
+                code_id=secrets.token_hex(12),
+                email=normalized_email,
+                purpose=normalized_purpose,
+                code_hash=hash_token("failed:" + secrets.token_urlsafe(32)),
+                expires_at=now,
+                attempts=0,
+                send_ip_hash=ip_hash,
+                created_at=now,
+                consumed_at=now,
+            )
+            self.repository.save_email_verification_code(failed_record)
             log_event(
                 "email_verification_send_failed",
                 {"email_domain": email_domain(normalized_email), "error": str(exc)},
             )
-            raise AuthError("EMAIL_SEND_FAILED", "验证码发送失败，请稍后再试", http_status=502) from exc
+            raise AuthError(
+                "EMAIL_SEND_FAILED", "验证码发送失败，请稍后再试", http_status=502
+            ) from exc
 
         record = EmailVerificationCodeRecord(
             code_id=secrets.token_hex(12),
@@ -230,11 +276,16 @@ class EmailVerificationService:
             created_at=now,
         )
         self.repository.save_email_verification_code(record)
+        return cooldown
 
-    def verify(self, *, email: str, purpose: str, code: str) -> EmailVerificationCodeRecord | None:
+    def verify(
+        self, *, email: str, purpose: str, code: str
+    ) -> EmailVerificationCodeRecord | None:
         """校验验证码；成功时返回记录，由调用方在业务成功后消费。"""
 
-        if not config_bool(self.config.get("email_verification_enabled"), default=False):
+        if not config_bool(
+            self.config.get("email_verification_enabled"), default=False
+        ):
             return None
         normalized_email = normalize_email(email)
         normalized_purpose = normalize_purpose(purpose)
@@ -248,15 +299,23 @@ class EmailVerificationService:
             raise AuthError("EMAIL_CODE_INVALID", "验证码无效或已过期", http_status=400)
 
         now = time.time()
-        max_attempts = config_int(self.config, "email_code_max_attempts", 5, minimum=1, maximum=20)
+        max_attempts = config_int(
+            self.config, "email_code_max_attempts", 5, minimum=1, maximum=20
+        )
         if record.expires_at < now:
             self.repository.consume_email_verification_code(record.code_id, now)
-            raise AuthError("EMAIL_CODE_EXPIRED", "验证码已过期，请重新获取", http_status=400)
+            raise AuthError(
+                "EMAIL_CODE_EXPIRED", "验证码已过期，请重新获取", http_status=400
+            )
         if record.attempts >= max_attempts:
             self.repository.consume_email_verification_code(record.code_id, now)
-            raise AuthError("EMAIL_CODE_INVALID", "验证码错误次数过多，请重新获取", http_status=400)
+            raise AuthError(
+                "EMAIL_CODE_INVALID", "验证码错误次数过多，请重新获取", http_status=400
+            )
         if not secrets.compare_digest(record.code_hash, hash_token(normalized_code)):
-            updated = self.repository.increment_email_verification_attempts(record.code_id)
+            updated = self.repository.increment_email_verification_attempts(
+                record.code_id
+            )
             if updated.attempts >= max_attempts:
                 self.repository.consume_email_verification_code(record.code_id, now)
             raise AuthError("EMAIL_CODE_INVALID", "验证码不正确", http_status=400)
@@ -360,12 +419,20 @@ def smtp_settings_from_config(config: dict) -> SmtpSettings:
     try:
         port = int(str(config.get("smtp_port") or "465").strip())
     except ValueError as exc:
-        raise AuthError("INVALID_INPUT", "SMTP 端口必须为有效整数", http_status=400) from exc
+        raise AuthError(
+            "INVALID_INPUT", "SMTP 端口必须为有效整数", http_status=400
+        ) from exc
     if port < 1 or port > 65535:
-        raise AuthError("INVALID_INPUT", "SMTP 端口必须在 1 到 65535 之间", http_status=400)
+        raise AuthError(
+            "INVALID_INPUT", "SMTP 端口必须在 1 到 65535 之间", http_status=400
+        )
     security = str(config.get("smtp_security") or "ssl").strip().lower()
     if security not in {"ssl", "starttls", "none"}:
-        raise AuthError("INVALID_INPUT", "SMTP 加密方式必须为 ssl、starttls 或 none", http_status=400)
+        raise AuthError(
+            "INVALID_INPUT",
+            "SMTP 加密方式必须为 ssl、starttls 或 none",
+            http_status=400,
+        )
     normalize_email(from_email)
     from_name = str(config.get("smtp_from_name") or "AI题库").strip() or "AI题库"
     if any(ch in from_name for ch in "\r\n"):

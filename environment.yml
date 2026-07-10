@@ -22,3 +22,5 @@ dependencies:
       - playwright
       - psycopg[binary]
       - rapidocr-onnxruntime
+      - python-multipart
+      - pillow

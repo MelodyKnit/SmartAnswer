@@ -43,7 +43,9 @@ def build_auth_router() -> APIRouter:
         platform = get_platform_service(request)
         if auth.has_users() and not platform.is_registration_enabled():
             return auth_error_response(
-                AuthError("REGISTRATION_DISABLED", "系统已关闭用户注册", http_status=403)
+                AuthError(
+                    "REGISTRATION_DISABLED", "系统已关闭用户注册", http_status=403
+                )
             )
         try:
             email_code_record = None
@@ -67,7 +69,9 @@ def build_auth_router() -> APIRouter:
                 payload.password,
                 payload.email,
                 invite_code=payload.invite_code,
-                invite_bonus=platform.get_invite_bonus() if payload.invite_code.strip() else 0,
+                invite_bonus=platform.get_invite_bonus()
+                if payload.invite_code.strip()
+                else 0,
                 initial_points=platform.get_default_user_points(),
             )
             if verification is not None and email_code_record is not None:
@@ -84,17 +88,25 @@ def build_auth_router() -> APIRouter:
         platform = get_platform_service(request)
         if auth.has_users() and not platform.is_registration_enabled():
             return auth_error_response(
-                AuthError("REGISTRATION_DISABLED", "系统已关闭用户注册", http_status=403)
+                AuthError(
+                    "REGISTRATION_DISABLED", "系统已关闭用户注册", http_status=403
+                )
             )
         try:
-            email_verification_service(request).send_code(
+            cooldown_seconds = email_verification_service(request).send_code(
                 email=payload.email,
                 purpose=payload.purpose,
                 client_ip=request.client.host if request.client else "",
             )
         except AuthError as exc:
             return auth_error_response(exc)
-        return JSONResponse({"ok": True, "message": "验证码已发送，请查看邮箱"})
+        return JSONResponse(
+            {
+                "ok": True,
+                "message": "验证码已发送，请查看邮箱",
+                "cooldown_seconds": cooldown_seconds,
+            }
+        )
 
     @router.get("/auth/register-status")
     def register_status(request: Request) -> JSONResponse:
@@ -125,7 +137,9 @@ def build_auth_router() -> APIRouter:
             )
         except AuthError as exc:
             return auth_error_response(exc)
-        response = JSONResponse({"ok": True, "user": user, "token": token, "expires_in": ttl})
+        response = JSONResponse(
+            {"ok": True, "user": user, "token": token, "expires_in": ttl}
+        )
         response.set_cookie(
             SESSION_COOKIE,
             token,
@@ -145,7 +159,9 @@ def build_auth_router() -> APIRouter:
         return response
 
     @router.post("/auth/reset-request")
-    def reset_request(request: Request, payload: ResetRequestPayload) -> dict[str, str | bool]:
+    def reset_request(
+        request: Request, payload: ResetRequestPayload
+    ) -> dict[str, str | bool]:
         auth = get_auth_service(request)
         token = auth.create_reset_token(payload.username)
         if token is not None:

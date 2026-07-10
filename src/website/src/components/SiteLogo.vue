@@ -19,7 +19,16 @@ const props = withDefaults(
 const site = useSiteStore()
 const imageFailed = ref(false)
 const displayTitle = computed(() => (props.title || site.title).trim() || site.title)
-const displayLogoUrl = computed(() => (props.logoUrl ?? site.logoUrl).trim())
+
+const displayLogoUrl = computed(() => {
+  if (props.logoUrl) {
+    return props.logoUrl.trim()
+  }
+  // 根据 size 加载对应尺寸的 Logo 地址，如果没能解析出则回退到 site.logoUrl
+  const sizeKey = props.size === 'sm' ? 'sm' : props.size === 'lg' ? 'lg' : 'md'
+  const url = site.logoUrls?.[sizeKey] || site.logoUrl
+  return (url || '').trim()
+})
 
 watch(
   displayLogoUrl,

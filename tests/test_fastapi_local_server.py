@@ -59,6 +59,15 @@ class FakeEmailSender:
         )
 
 
+class FailingEmailSender:
+    """测试用失败邮件发送器，用于验证失败发送也会参与限流。"""
+
+    def send_verification_code(
+        self, *, settings, to_email: str, code: str, ttl_minutes: int
+    ) -> None:
+        raise RuntimeError("smtp unavailable")
+
+
 class LowConfidenceProvider:
     """用于接口测试的低置信度模型提供者。"""
 
@@ -1087,10 +1096,54 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
 
         self.assertEqual(first.status_code, 200)
+        self.assertEqual(first.json()["cooldown_seconds"], 60)
         self.assertEqual(cooldown.status_code, 429)
         self.assertEqual(cooldown.json()["error"]["code"], "EMAIL_CODE_RATE_LIMITED")
         self.assertEqual(ip_limited.status_code, 429)
         self.assertEqual(ip_limited.json()["error"]["code"], "EMAIL_CODE_RATE_LIMITED")
+
+    def test_email_verification_failed_send_is_rate_limited(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformService(database_path)
+            platform.set_system_config(
+                {
+                    "email_verification_enabled": "true",
+                    "smtp_host": "smtp.example.com",
+                    "smtp_port": "465",
+                    "smtp_security": "ssl",
+                    "smtp_username": "noreply@example.com",
+                    "smtp_password": "secret-password",
+                    "smtp_from_email": "noreply@example.com",
+                    "email_code_cooldown_seconds": "60",
+                    "email_code_ip_hourly_limit": "20",
+                }
+            )
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                )
+            )
+            client.app.state.email_sender = FailingEmailSender()
+
+            first = client.post(
+                "/auth/email-verification-codes",
+                json={"email": "smtpdown@qq.com", "purpose": "register"},
+            )
+            second = client.post(
+                "/auth/email-verification-codes",
+                json={"email": "smtpdown@qq.com", "purpose": "register"},
+            )
+            latest_usable_code = auth.repository.latest_email_verification_code(
+                email="smtpdown@qq.com", purpose="register"
+            )
+
+        self.assertEqual(first.status_code, 502)
+        self.assertEqual(first.json()["error"]["code"], "EMAIL_SEND_FAILED")
+        self.assertEqual(second.status_code, 429)
+        self.assertEqual(second.json()["error"]["code"], "EMAIL_CODE_RATE_LIMITED")
+        self.assertIsNone(latest_usable_code)
 
     def test_email_verification_cooldown_counts_consumed_codes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

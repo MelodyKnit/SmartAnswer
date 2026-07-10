@@ -32,9 +32,11 @@ RUN pip install --no-cache-dir --upgrade pip -i https://pypi.tuna.tsinghua.edu.c
         fastapi \
         httpx \
         jinja2 \
+        pillow \
         playwright \
         psycopg[binary] \
         python-dotenv \
+        python-multipart \
         rapidocr-onnxruntime \
         rapidfuzz \
         redis \

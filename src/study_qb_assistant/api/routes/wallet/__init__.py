@@ -54,9 +54,14 @@ def build_wallet_router() -> APIRouter:
         limit = max(1, min(int(limit), 500))
         offset = (page - 1) * limit
         orders = platform.list_wallet_orders(
-            username=str(user["username"]), source=source.strip(), limit=limit, offset=offset
+            username=str(user["username"]),
+            source=source.strip(),
+            limit=limit,
+            offset=offset,
         )
-        total = platform.count_wallet_orders(username=str(user["username"]), source=source.strip())
+        total = platform.count_wallet_orders(
+            username=str(user["username"]), source=source.strip()
+        )
         return JSONResponse(
             {"ok": True, "orders": orders, "total": total, "page": page, "limit": limit}
         )
@@ -111,7 +116,10 @@ def build_wallet_router() -> APIRouter:
             return unauthorized_response("请先登录")
         if target is None:
             return JSONResponse(
-                {"ok": False, "error": {"code": "USER_NOT_FOUND", "message": "用户不存在"}},
+                {
+                    "ok": False,
+                    "error": {"code": "USER_NOT_FOUND", "message": "用户不存在"},
+                },
                 status_code=404,
             )
         if actor["role"] == "admin" and target["role"] != "user":
@@ -141,7 +149,9 @@ def build_wallet_router() -> APIRouter:
         return JSONResponse({"ok": True, "redeem_codes": platform.list_redeem_codes()})
 
     @router.post("/wallet/redeem-codes")
-    def wallet_redeem_codes_create(request: Request, payload: RedeemCodePayload) -> JSONResponse:
+    def wallet_redeem_codes_create(
+        request: Request, payload: RedeemCodePayload
+    ) -> JSONResponse:
         denied = require_roles(request, {"admin", "superadmin"})
         if denied:
             return denied
@@ -159,6 +169,8 @@ def build_wallet_router() -> APIRouter:
                 points=payload.points,
                 max_uses=payload.max_uses,
                 expires_at=payload.expires_at,
+                code=payload.code,
+                count=payload.count,
             )
         except AuthError as exc:
             return auth_error_response(exc)
@@ -219,7 +231,11 @@ def build_wallet_router() -> APIRouter:
         if denied:
             return denied
         platform = get_platform_service(request)
-        values = {key: value for key, value in payload.model_dump().items() if value is not None}
+        values = {
+            key: value
+            for key, value in payload.model_dump().items()
+            if value is not None
+        }
         try:
             billing = platform.set_billing(values)
         except AuthError as exc:

@@ -507,7 +507,7 @@ class PlatformService:
                 usage_record = None
         question_title = usage_record.title if usage_record else ""
         answer_snapshot = usage_record.answer if usage_record else None
-        context = {
+        context: dict[str, object] = {
             "usage_log_id": usage_log_id or "",
             "submitted_title": title.strip(),
             "submitted_content": content.strip(),
@@ -515,17 +515,17 @@ class PlatformService:
         if usage_record:
             context.update(
                 {
-                    "username": usage_record.username,
-                    "question_title": usage_record.title,
-                    "question_type": usage_record.question_type,
-                    "answer_snapshot": usage_record.answer or "",
-                    "resolution_mode": usage_record.resolution_mode,
-                    "confidence": usage_record.confidence,
-                    "request_id": usage_record.request_id,
-                    "source_name": usage_record.source_name,
-                    "source_type": usage_record.source_type,
-                    "source_id": usage_record.source_id,
-                    "source_url": usage_record.source_url,
+                    "username": str(usage_record.username),
+                    "question_title": str(usage_record.title),
+                    "question_type": str(usage_record.question_type),
+                    "answer_snapshot": str(usage_record.answer or ""),
+                    "resolution_mode": str(usage_record.resolution_mode),
+                    "confidence": float(usage_record.confidence or 0.0),
+                    "request_id": str(usage_record.request_id),
+                    "source_name": str(usage_record.source_name),
+                    "source_type": str(usage_record.source_type),
+                    "source_id": str(usage_record.source_id),
+                    "source_url": str(usage_record.source_url),
                 }
             )
         record = FeedbackRecord(
@@ -1089,11 +1089,18 @@ class PlatformService:
         points: int = 0,
         max_uses: int = 1,
         expires_at: float = 0.0,
+        code: str | None = None,
+        count: int = 1,
     ) -> dict:
         """创建积分兑换码。"""
 
         if kind != "points":
             raise AuthError("INVALID_INPUT", "兑换码类型仅支持 points", http_status=400)
+        if count < 1 or count > 1000:
+            raise AuthError("INVALID_INPUT", "批量创建兑换码的数量必须在 1 到 1000 之间", http_status=400)
+        if code and count > 1:
+            raise AuthError("INVALID_INPUT", "批量创建不支持指定特定兑换码文字", http_status=400)
+
         now = time.time()
         expires_at_value = float(expires_at or 0.0)
         if not math.isfinite(expires_at_value):
@@ -1102,21 +1109,43 @@ class PlatformService:
             raise AuthError("INVALID_INPUT", "兑换码有效期不能为负数", http_status=400)
         if expires_at_value and expires_at_value <= now:
             raise AuthError("INVALID_INPUT", "兑换码有效期必须晚于当前时间", http_status=400)
-        record = RedeemCodeRecord(
-            code_id=secrets.token_hex(12),
-            code="rc_" + secrets.token_urlsafe(10),
-            kind="points",
-            points=max(0, int(points)),
-            max_uses=max(1, int(max_uses)),
-            used_uses=0,
-            status="active",
-            created_by=created_by,
-            created_at=now,
-            expires_at=expires_at_value,
-        )
+
+        if code:
+            code = code.strip()
+            if len(code) < 3 or len(code) > 64:
+                raise AuthError("INVALID_INPUT", "自定义兑换码长度必须在 3 到 64 之间", http_status=400)
+            import re
+            if not re.match(r"^[a-zA-Z0-9_\-]+$", code):
+                raise AuthError("INVALID_INPUT", "自定义兑换码只能包含字母、数字、下划线和连字符", http_status=400)
+
+        created_records = []
         with self._lock:
-            self.repository.save_redeem_code(record)
-        return record.to_dict()
+            if code:
+                if self.repository.find_redeem_code_by_code(code):
+                    raise AuthError("INVALID_INPUT", f"兑换码 {code} 已存在", http_status=400)
+
+            for _ in range(count):
+                actual_code = code if code else "rc_" + secrets.token_urlsafe(10)
+                if not code:
+                    while self.repository.find_redeem_code_by_code(actual_code):
+                        actual_code = "rc_" + secrets.token_urlsafe(10)
+
+                record = RedeemCodeRecord(
+                    code_id=secrets.token_hex(12),
+                    code=actual_code,
+                    kind="points",
+                    points=max(0, int(points)),
+                    max_uses=max(1, int(max_uses)),
+                    used_uses=0,
+                    status="active",
+                    created_by=created_by,
+                    created_at=now,
+                    expires_at=expires_at_value,
+                )
+                self.repository.save_redeem_code(record)
+                created_records.append(record)
+
+        return created_records[-1].to_dict()
 
     def list_redeem_codes(self) -> list[dict]:
         """列出全部兑换码。"""
@@ -1940,9 +1969,25 @@ class PlatformService:
             logo_url = normalize_site_logo_url(raw_logo_url)
         except AuthError:
             logo_url = ""
+
+        site_logo_urls = {}
+        if logo_url.startswith("/media/brand/"):
+            import re
+
+            match = re.match(r"^/media/brand/logo_([a-z]+)\.png(\?t=\d+)?$", logo_url)
+            if match:
+                t_suffix = match.group(2) or ""
+                for size_key in ("original", "lg", "md", "sm"):
+                    site_logo_urls[size_key] = f"/media/brand/logo_{size_key}.png{t_suffix}"
+
+        if not site_logo_urls:
+            for size_key in ("original", "lg", "md", "sm"):
+                site_logo_urls[size_key] = logo_url
+
         return {
             "site_title": title or SYSTEM_CONFIG_DEFAULTS["site_title"],
             "site_logo_url": logo_url,
+            "site_logo_urls": site_logo_urls,
         }
 
     def get_llm_runtime_config(self, *, reveal_secret: bool = False) -> dict:
@@ -2049,6 +2094,18 @@ class PlatformService:
             current.update(self.repository.get_settings("system_config", keys=set(SYSTEM_CONFIG_KEYS)))
             candidate = {**current, **normalized}
             if str(candidate.get("email_verification_enabled") or "").lower() == "true":
+                host = str(candidate.get("smtp_host") or "").strip()
+                from_email = str(candidate.get("smtp_from_email") or "").strip()
+                username = str(candidate.get("smtp_username") or "").strip()
+                password = str(candidate.get("smtp_password") or "").strip()
+
+                if not host or not from_email or not username:
+                    raise AuthError("INVALID_INPUT", "启用的邮箱验证码注册前，请先完整配置 SMTP 服务（宿主机、用户名与发件邮箱）", http_status=400)
+
+                is_pwd_configured = bool(current.get("smtp_password_configured")) or bool(current.get("smtp_password"))
+                if not password and not is_pwd_configured:
+                    raise AuthError("INVALID_INPUT", "启用的邮箱验证码注册前，请先输入 SMTP 密码", http_status=400)
+
                 smtp_settings_from_config(candidate)
             self.repository.set_settings("system_config", normalized)
         return self.get_system_config()
@@ -2074,6 +2131,8 @@ def normalize_site_logo_url(value: str) -> str:
     if len(text) > 2048:
         raise AuthError("INVALID_INPUT", "Logo 地址不能超过 2048 个字符", http_status=400)
     if text.startswith("/"):
+        if text.startswith("/media/brand/"):
+            return text
         if text.startswith("//") or any(ch.isspace() for ch in text):
             raise AuthError("INVALID_INPUT", "Logo 地址格式不正确", http_status=400)
         return text

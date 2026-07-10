@@ -44,7 +44,7 @@
 ## 发布与同步
 
 - 任何“同步到服务器”“打包上传”“部署镜像”“在服务器执行 `docker compose up -d --build`”一类动作，都视为一次发布动作
-- 每次发布动作开始前，必须先更新 [pyproject.toml](D:/Nakamoto/Documents/Codes/AIProject/StudyQuestionBankAssistant/pyproject.toml) 中的 `project.version`
+- 每次发布动作开始前，必须先更新 [pyproject.toml](pyproject.toml) 中的 `project.version`
 - 如果本次变更会同步到服务器，但 `pyproject.toml` 版本号没有变化，应先补版本号，再继续后续同步
 - 版本号更新应与本次发布内容保持对应，不允许服务器上出现“代码已更新但版本号未变化”的状态
 - 每次发布提交后必须创建对应的 Git tag，格式为 `vX.Y.Z`，且 tag 版本必须与 `pyproject.toml` 中的 `project.version` 一致

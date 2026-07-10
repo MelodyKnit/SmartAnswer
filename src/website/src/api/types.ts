@@ -304,6 +304,12 @@ export interface UsageAudit {
 export interface SystemConfig {
   site_title?: string
   site_logo_url?: string
+  site_logo_urls?: {
+    original: string
+    lg: string
+    md: string
+    sm: string
+  }
   smart_proto_enabled?: string
   custom_proto_header?: string
   default_user_points?: string
@@ -325,12 +331,18 @@ export interface SystemConfig {
   email_code_daily_limit?: string
   email_code_ip_hourly_limit?: string
   email_code_max_attempts?: string
-  [key: string]: string | boolean | undefined
+  [key: string]: any
 }
 
 export interface SiteConfig {
   site_title: string
   site_logo_url: string
+  site_logo_urls?: {
+    original: string
+    lg: string
+    md: string
+    sm: string
+  }
 }
 
 export interface LlmRuntimeConfig {

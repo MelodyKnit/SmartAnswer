@@ -252,6 +252,8 @@ class RedeemCodePayload(BaseModel):
     points: int = 0
     max_uses: int = 1
     expires_at: float = 0.0
+    code: str | None = None
+    count: int = 1
 
     @field_validator("kind")
     @classmethod

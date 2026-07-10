@@ -291,7 +291,8 @@
 ```json
 {
   "ok": true,
-  "message": "验证码已发送，请查看邮箱"
+  "message": "验证码已发送，请查看邮箱",
+  "cooldown_seconds": 60
 }
 ```
 
@@ -536,6 +537,7 @@
 - `PATCH /system-config` 中 `smtp_password=""` 表示保持原密码不变。
 - 开启 `email_verification_enabled=true` 时必须先完整配置 SMTP 主机、端口、加密方式、用户名、密码和发件邮箱。
 - 邮箱域名白名单存储在 `configs/email-domain-whitelist.json`，按文件修改时间轻量缓存，修改后无需重启。
+- Docker 部署会把宿主机 `configs` 目录只读挂载到容器 `/app/configs`，因此生产环境应在宿主机仓库目录维护白名单文件。
 
 大模型推理、联网搜索和 LLM 学习缓存配置统一通过 `/llm-runtime-config` 维护，系统配置页不再展示这些字段。
 

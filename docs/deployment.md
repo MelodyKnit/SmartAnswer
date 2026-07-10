@@ -77,6 +77,9 @@ docker compose up -d --build
 Docker creates `deploy-data/` automatically on first boot. The service uses
 `STQB_DATA_DIR=/app/data` in the container, so database, logs, and optional normalized
 question-bank files and OCS question images all live under the mounted server directory.
+The production Compose file also mounts `./configs` to `/app/configs:ro`; update
+`configs/email-domain-whitelist.json` on the host when changing allowed registration
+email domains.
 
 On a brand-new runtime database, the first registered user becomes `superadmin`.
 
