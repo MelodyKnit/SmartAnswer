@@ -82,14 +82,14 @@ Start the FastAPI service:
 Development mode with reload:
 
 ```powershell
-.\scripts\run-dev.ps1
+.\scripts\run.ps1 --dev
 ```
 
 Bash equivalents are also available:
 
 ```bash
 ./scripts/run.sh
-./scripts/run-dev.sh
+./scripts/run.sh --dev
 ```
 
 Enable an OpenAI-compatible model provider in `.env`:

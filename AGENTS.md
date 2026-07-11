@@ -39,7 +39,7 @@
 - Python 依赖和运行默认使用 Conda
 - 建议环境名称前缀为 `ai-`
 - 当前推荐环境名称为 `ai-study-qb`
-- 本地启动入口以 `scripts/run.ps1`、`scripts/run.sh`、`scripts/run-dev.ps1`、`scripts/run-dev.sh` 为准
+- 本地启动入口以 `scripts/run.ps1`、`scripts/run.sh` 为准（可附加 `-Dev` / `--dev` 开启开发模式热重载）
 
 ## 发布与同步
 
