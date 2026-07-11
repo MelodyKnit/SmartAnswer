@@ -116,15 +116,16 @@ npm install
 npm run build
 ```
 
-Docker one-command deployment:
+Docker deployment uses the immutable image reference recorded in `.env.release`:
 
 ```bash
-docker compose up -d --build
+cp .env.release.example .env.release
+docker compose --env-file .env.release up -d --no-build
 ```
 
 Before any server sync or deployment, bump the version in `pyproject.toml` first
 and create the matching Git tag, for example `v0.1.6`.
-Treat code upload, image rebuild, and `docker compose up -d --build` on the server as a release step,
+Treat code upload, image publication, and `docker compose up -d --no-build` on the server as a release step,
 not as ordinary local debugging.
 
 Recommended release order:
@@ -138,6 +139,9 @@ Recommended release order:
 The Docker image builds the frontend and backend together. Runtime data is written to
 `deploy-data/` on the server and starts empty by default; local `data/` files are not
 required and are not copied into the image.
+Tagged releases publish a private GHCR image and `release-manifest.json`. After the first
+manual deployment, install the host updater from `deploy/updater/` to enable update checks
+and superadmin-confirmed updates without exposing Docker or GitHub credentials to the app.
 For production vision-question support, set `STQB_PUBLIC_BASE_URL` to the public HTTPS
 origin of the service. OCS question images are stored under `deploy-data/images/ocs/`
 and exposed as `/media/ocs/images/<sha256>.<ext>` for vision models.

@@ -105,9 +105,15 @@ class EmailDomainWhitelist:
     """按 mtime 缓存的邮箱域名白名单。"""
 
     def __init__(self, path: Path | None = None) -> None:
-        self.path = (
-            path or get_global_config().config_dir / "email-domain-whitelist.json"
-        )
+        if path is not None:
+            self.path = path
+        else:
+            config = get_global_config()
+            self.path = config.email_domain_whitelist_path_resolved
+            seed_runtime_whitelist(
+                source=config.config_dir / "email-domain-whitelist.json",
+                target=self.path,
+            )
         self._mtime: float | None = None
         self._domains: set[str] = set()
 
@@ -155,6 +161,28 @@ class EmailDomainWhitelist:
             raise AuthError(
                 "EMAIL_DOMAIN_NOT_ALLOWED", "该邮箱域名暂不允许注册", http_status=400
             )
+
+
+def seed_runtime_whitelist(*, source: Path, target: Path) -> None:
+    """首次启动时把内置白名单复制到运行数据目录。
+
+    使用独占创建保证并发启动不会覆盖管理员已经修改的运行时文件。
+    """
+
+    if target.exists():
+        return
+    try:
+        content = source.read_bytes()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with target.open("xb") as handle:
+            handle.write(content)
+    except FileExistsError:
+        return
+    except OSError as exc:
+        log_event(
+            "email_domain_whitelist_seed_failed",
+            {"error": str(exc), "target": str(target)},
+        )
 
 
 class EmailVerificationService:

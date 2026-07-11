@@ -1,9 +1,7 @@
 services:
   study-qb-assistant:
     container_name: study-qb-assistant
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ${STQB_IMAGE_REF:-ghcr.io/melodyknit/smartanswer:stable}
     restart: unless-stopped
     ports:
       - "3003:8765"
@@ -15,11 +13,11 @@ services:
       STQB_PORT: 8765
       STQB_DATA_DIR: /app/data
       STQB_REQUIRE_AUTH: "true"
+      STQB_UPDATE_ENABLED: ${STQB_UPDATE_ENABLED:-false}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./deploy-data:/app/data
-      - ./configs:/app/configs:ro
     healthcheck:
       test:
         - CMD

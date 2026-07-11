@@ -17,6 +17,8 @@ from ..platform import PlatformService
 from ..search import LocalQuestionIndex
 from ..storage.question_repository import SqlAlchemyQuestionRepository
 from ..llm.tracing import set_trace_sink
+from ..updates import ProjectUpdateService
+from ..version import BUILD_INFO
 from .context import bool_env, cors_headers
 from .query_parser import build_query_from_mapping, split_options
 from .route_support import (
@@ -39,6 +41,7 @@ def create_app(
     *,
     auth_service: AuthService | None = None,
     platform_service: PlatformService | None = None,
+    project_update_service: ProjectUpdateService | None = None,
     require_auth: bool | None = None,
 ) -> FastAPI:
     """构建本地 FastAPI 应用。"""
@@ -50,6 +53,12 @@ def create_app(
     )
     auth = auth_service or AuthService(database_locator)
     platform = platform_service or PlatformService(database_locator)
+    config = get_global_config()
+    project_updates = project_update_service or ProjectUpdateService(
+        config.update_dir,
+        enabled=config.update_enabled,
+        build_info=BUILD_INFO,
+    )
     question_repository = SqlAlchemyQuestionRepository(database_locator)
     auth_required = bool_env("STQB_REQUIRE_AUTH") if require_auth is None else require_auth
     lookup_index = lookup.index if isinstance(lookup, AnswerService) else lookup
@@ -78,6 +87,7 @@ def create_app(
     app.state.auth = auth
     app.state.platform = platform
     app.state.question_repository = question_repository
+    app.state.project_updates = project_updates
     app.state.require_auth = auth_required
     set_trace_sink(platform.save_llm_call_trace)
 

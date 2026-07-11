@@ -1,0 +1,12 @@
+[Unit]
+Description=Periodically check SmartAnswer updates
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=6h
+RandomizedDelaySec=10min
+Persistent=true
+Unit=stqb-updater-check.service
+
+[Install]
+WantedBy=timers.target

@@ -942,11 +942,26 @@
 推荐端点：
 
 - `GET /healthz`
+- `GET /version`：公开返回当前镜像的版本、构建提交与构建类型，供部署健康验证使用。
 - `GET /status`
 - `GET /query?title=...&options=...&type=...`
 - `POST /query`
 - `GET /ocs/query?title=...&options=...&type=...`
 - `POST /ocs/query`
+
+## 6.1 项目更新
+
+项目更新接口只负责向宿主机更新器提交异步命令，不直接访问 GitHub 或 Docker。
+所有接口均要求 `superadmin` 角色与 `system:write` 权限。
+
+- `GET /project-update/status`：返回当前版本、最新正式 Release、更新可用性和当前任务状态。
+- `POST /project-update/check`：提交版本检查，返回 `202` 与 `operation_id`。
+- `POST /project-update/apply`：请求体为 `{ "expected_version": "X.Y.Z" }`；主机执行前会再次确认该版本仍是最新稳定版。
+- `GET /project-update/operations/{operation_id}`：返回异步任务状态。
+
+任务状态包括 `queued`、`checking`、`downloading`、`backing_up`、`deploying`、
+`verifying`、`rolling_back`、`succeeded`、`failed`、`rolled_back` 和
+`rollback_failed`。接口不会返回 GitHub、GHCR 凭据、Docker 配置或数据库备份路径。
 
 ## 7. 版本 1 验证规则
 

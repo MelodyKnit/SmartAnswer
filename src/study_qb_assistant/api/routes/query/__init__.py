@@ -6,6 +6,7 @@ from fastapi import APIRouter, Body, Query, Request
 from starlette.responses import JSONResponse
 
 from ....adapters import build_ocs_config
+from ....version import BUILD_INFO
 from ...context import (
     get_auth_service,
     get_lookup_service,
@@ -36,6 +37,12 @@ def build_query_router() -> APIRouter:
     @router.get("/healthz")
     def healthz() -> dict[str, bool]:
         return {"ok": True}
+
+    @router.get("/version")
+    def version() -> dict[str, object]:
+        """返回不含敏感信息的当前构建版本。"""
+
+        return {"ok": True, **BUILD_INFO.to_dict()}
 
     @router.get("/status")
     def status(request: Request) -> JSONResponse:

@@ -8,6 +8,8 @@ This project is deployed on Linux with Docker because the runtime requires Pytho
 - `docker-compose.yaml`: one-command production service definition
 - `.env.server`: server-local environment file, intentionally not committed
 - `.env.server.example`: server-local environment template
+- `.env.release`: updater-owned immutable image reference and release version
+- `deploy/updater/`: root-only host updater and systemd units
 
 The image only contains code, generated frontend static assets, and committed configs.
 It does **not** carry local `data/` contents into production.
@@ -66,22 +68,44 @@ so a host-side OpenAI-compatible gateway remains reachable from the container.
 The server template also defaults `STQB_WEB_SEARCH_PROVIDER` to `bing`, which is the safer
 choice when DuckDuckGo direct access is unstable in the deployment environment.
 
-## First start
+## First release start
 
-Start the service:
+Create `.env.release` from the template, then replace the image reference with the digest
+published in the GitHub Release manifest:
 
 ```bash
-docker compose up -d --build
+cp .env.release.example .env.release
+chmod 600 .env.release
+docker login ghcr.io -u YOUR_GITHUB_USERNAME
+docker pull ghcr.io/melodyknit/smartanswer@sha256:RELEASE_DIGEST
+docker compose --env-file .env.release up -d --no-build
 ```
 
 Docker creates `deploy-data/` automatically on first boot. The service uses
 `STQB_DATA_DIR=/app/data` in the container, so database, logs, and optional normalized
 question-bank files and OCS question images all live under the mounted server directory.
-The production Compose file also mounts `./configs` to `/app/configs:ro`; update
-`configs/email-domain-whitelist.json` on the host when changing allowed registration
-email domains.
+The image contains versioned prompts and default configs. On first use, the email-domain
+whitelist is copied to `deploy-data/configs/email-domain-whitelist.json`; edit that runtime
+copy when changing allowed registration domains. It is not overwritten by later images.
 
 On a brand-new runtime database, the first registered user becomes `superadmin`.
+
+## Private GitHub online updates
+
+The application never receives GitHub tokens and never mounts the Docker socket. Install
+the root-only host updater once after the first release deployment:
+
+```bash
+sudo ./deploy/updater/install.sh
+sudoedit /etc/stqb-updater.env
+sudo systemctl start stqb-updater-check.service
+```
+
+Use a fine-grained repository read token for Release metadata and a separate classic PAT
+with only `read:packages` for private GHCR pulls. Both values stay in
+`/etc/stqb-updater.env` with mode `0600`. The timer checks every six hours; only a
+`superadmin` with `system:write` can confirm installation from the system configuration
+page. See `deploy/updater/README.md` for checks, logs, and rollback behavior.
 
 ## Importing question-bank data
 

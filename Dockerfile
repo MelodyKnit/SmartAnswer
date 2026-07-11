@@ -11,10 +11,19 @@ RUN cd src/website && npm run build
 
 FROM python:3.13-slim
 
+ARG APP_VERSION=dev
+ARG BUILD_SHA=unknown
+
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app/src
 ENV STQB_DATA_DIR=/app/data
+ENV STQB_APP_VERSION=${APP_VERSION}
+ENV STQB_BUILD_SHA=${BUILD_SHA}
+
+LABEL org.opencontainers.image.source="https://github.com/MelodyKnit/SmartAnswer"
+LABEL org.opencontainers.image.version="${APP_VERSION}"
+LABEL org.opencontainers.image.revision="${BUILD_SHA}"
 
 WORKDIR /app
 

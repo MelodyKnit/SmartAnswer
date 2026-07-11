@@ -1515,29 +1515,6 @@ class PlatformService:
 
         return self.llm_service.call_stats()
 
-    def project_update_status(self, *, refresh_remote: bool = False) -> dict:
-        """返回项目更新状态。
-
-        为避免在 Web 请求里执行不透明的远程 Git 操作，当前只提供安全状态占位。
-        """
-
-        return {
-            "available": False,
-            "refresh_remote": bool(refresh_remote),
-            "current_version": "local",
-            "latest_version": "local",
-            "message": "当前部署未配置在线更新源，请通过代码仓库和部署流程更新。",
-        }
-
-    def apply_project_update(self) -> dict:
-        """拒绝在运行时直接执行项目更新。"""
-
-        raise AuthError(
-            "PROJECT_UPDATE_UNCONFIGURED",
-            "当前部署未配置安全的在线更新流程",
-            http_status=400,
-        )
-
     def list_role_permissions(self) -> list[dict]:
         """列出角色权限矩阵。"""
         with self._lock:

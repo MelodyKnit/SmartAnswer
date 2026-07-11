@@ -5,8 +5,9 @@
 
 from .answering import AnswerService
 from .models import CanonicalQuestionRecord
+from .version import BUILD_INFO
 
-__version__ = "0.1.19"
+__version__ = BUILD_INFO.version
 
 # 导出对外公开的类，供外部调用
 __all__ = ["AnswerService", "CanonicalQuestionRecord", "__version__"]

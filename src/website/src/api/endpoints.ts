@@ -19,6 +19,8 @@ import type {
   NotificationCenterSource,
   OcsConfig,
   PointsPolicy,
+  ProjectUpdateOperation,
+  ProjectUpdateStatus,
   QueryResultPayload,
   QuestionRecord,
   RankingItem,
@@ -283,6 +285,21 @@ export const systemConfigApi = {
   get: () => api.get<{ ok: true; config: SystemConfig }>('/system-config'),
   update: (body: Record<string, string>) =>
     api.patch<{ ok: true; config: SystemConfig; reload_required: boolean }>('/system-config', body),
+}
+
+export const projectUpdateApi = {
+  status: () =>
+    api.get<{ ok: true; update: ProjectUpdateStatus }>('/project-update/status'),
+  check: () =>
+    api.post<{ ok: true; operation: ProjectUpdateOperation }>('/project-update/check'),
+  apply: (expectedVersion: string) =>
+    api.post<{ ok: true; operation: ProjectUpdateOperation }>('/project-update/apply', {
+      expected_version: expectedVersion,
+    }),
+  operation: (operationId: string) =>
+    api.get<{ ok: true; operation: ProjectUpdateOperation }>(
+      `/project-update/operations/${encodeURIComponent(operationId)}`,
+    ),
 }
 
 export const siteConfigApi = {

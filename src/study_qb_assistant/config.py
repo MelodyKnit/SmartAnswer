@@ -59,12 +59,9 @@ ENV_BAIDU_SEARCH_API_KEY = "STQB_BAIDU_SEARCH_API_KEY"
 ENV_LLM_CACHE_ENABLED = "STQB_LLM_CACHE_ENABLED"
 ENV_LLM_CACHE_MIN_CONFIDENCE = "STQB_LLM_CACHE_MIN_CONFIDENCE"
 ENV_LLM_CACHE_MIN_CONFIRMATIONS = "STQB_LLM_CACHE_MIN_CONFIRMATIONS"
-ENV_GIT_UPDATE_ENABLED = "STQB_GIT_UPDATE_ENABLED"
-ENV_GIT_REPO_DIR = "STQB_GIT_REPO_DIR"
-ENV_GIT_REMOTE = "STQB_GIT_REMOTE"
-ENV_GIT_REMOTE_URL = "STQB_GIT_REMOTE_URL"
-ENV_GIT_BRANCH = "STQB_GIT_BRANCH"
-ENV_GIT_UPDATE_AUTO_RESTART = "STQB_GIT_UPDATE_AUTO_RESTART"
+ENV_UPDATE_ENABLED = "STQB_UPDATE_ENABLED"
+ENV_UPDATE_DIR = "STQB_UPDATE_DIR"
+ENV_EMAIL_DOMAIN_WHITELIST_PATH = "STQB_EMAIL_DOMAIN_WHITELIST_PATH"
 
 
 class GlobalConfig(BaseModel):
@@ -130,13 +127,10 @@ class GlobalConfig(BaseModel):
     llm_cache_min_confidence: float = 0.95
     llm_cache_min_confirmations: int = 2
 
-    # Git 更新检测：只属于部署/运维级配置，不进入数据库系统设置表。
-    git_update_enabled: bool = True
-    git_repo_dir: str = ""
-    git_remote: str = "origin"
-    git_remote_url: str = ""
-    git_branch: str = ""
-    git_update_auto_restart: bool = False
+    # 在线更新只提交命令到运行数据目录；Docker 与 GitHub 权限由主机更新器持有。
+    update_enabled: bool = False
+    update_dir_path: str = ""
+    email_domain_whitelist_path: str = ""
 
     @property
     def project_root(self) -> Path:
@@ -261,11 +255,22 @@ class GlobalConfig(BaseModel):
         return self.resolve_optional_path(self.search_browser_path)
 
     @property
-    def git_repo_dir_resolved(self) -> Path:
-        """返回项目更新检测使用的仓库目录。"""
-        if not self.git_repo_dir.strip():
-            return self.project_root
-        return self.resolve_path(self.git_repo_dir, default=self.project_root)
+    def update_dir(self) -> Path:
+        """返回应用与主机更新器共享的命令和状态目录。"""
+
+        return self.resolve_path(
+            self.update_dir_path,
+            default=self.data_dir / "update",
+        )
+
+    @property
+    def email_domain_whitelist_path_resolved(self) -> Path:
+        """返回可持久化修改的邮箱域名白名单路径。"""
+
+        return self.resolve_path(
+            self.email_domain_whitelist_path,
+            default=self.data_dir / "configs" / "email-domain-whitelist.json",
+        )
 
     def resolve_path(self, value: str | Path | None, *, default: str | Path) -> Path:
         """把相对路径统一解析到项目根目录下。"""
@@ -329,12 +334,9 @@ def load_global_config() -> GlobalConfig:
         llm_cache_enabled=env_bool(ENV_LLM_CACHE_ENABLED, True),
         llm_cache_min_confidence=env_float(ENV_LLM_CACHE_MIN_CONFIDENCE, 0.95),
         llm_cache_min_confirmations=env_int(ENV_LLM_CACHE_MIN_CONFIRMATIONS, 2),
-        git_update_enabled=env_bool(ENV_GIT_UPDATE_ENABLED, True),
-        git_repo_dir=env_text(ENV_GIT_REPO_DIR),
-        git_remote=env_text(ENV_GIT_REMOTE, "origin"),
-        git_remote_url=env_text(ENV_GIT_REMOTE_URL),
-        git_branch=env_text(ENV_GIT_BRANCH),
-        git_update_auto_restart=env_bool(ENV_GIT_UPDATE_AUTO_RESTART, False),
+        update_enabled=env_bool(ENV_UPDATE_ENABLED, False),
+        update_dir_path=env_text(ENV_UPDATE_DIR),
+        email_domain_whitelist_path=env_text(ENV_EMAIL_DOMAIN_WHITELIST_PATH),
     )
 
 
