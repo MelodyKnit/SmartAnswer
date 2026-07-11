@@ -7,6 +7,8 @@ import re
 from .models import QuestionQuery
 
 COMPLETION_TYPES = {"completion", "blank", "fill", "填空", "填空题"}
+JUDGEMENT_TYPES = {"judgement", "judge", "truefalse", "判断", "判断题"}
+MULTIPLE_TYPES = {"multiple", "multi", "多选", "多选题"}
 
 
 def is_completion_query(query: QuestionQuery | None) -> bool:
@@ -22,10 +24,24 @@ def is_completion_query(query: QuestionQuery | None) -> bool:
 def has_blank_marker(title: str) -> bool:
     """识别 OCS/超星常见空位标记，避免把真正填空题误判为开放文本题。"""
 
+    return blank_count_hint(title) > 0
+
+
+def blank_count_hint(title: str) -> int:
+    """估算题干中的可回填空位数量。
+
+    OCS 页面经常把填空题传成 `【1】____`、`____` 或空括号 `（）（）`。
+    这里仅统计明确空位标记，避免把普通括号说明误判成多空题。
+    """
+
     normalized = title.strip()
-    if "___" in normalized or "＿＿" in normalized:
-        return True
-    return re.search(r"[【\[]\s*\d+\s*[】\]]\s*[_＿]*", normalized) is not None
+    numbered = re.findall(r"[【\[]\s*\d+\s*[】\]]\s*[_＿]*", normalized)
+    if numbered:
+        return len(numbered)
+    empty_parentheses = re.findall(r"(?:\(\s*\)|（\s*）)", normalized)
+    if empty_parentheses:
+        return len(empty_parentheses)
+    return len(re.findall(r"(?:_{2,}|＿{2,})", normalized))
 
 
 def is_open_text_completion(query: QuestionQuery | None) -> bool:

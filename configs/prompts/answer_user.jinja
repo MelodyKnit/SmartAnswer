@@ -4,6 +4,10 @@ Question: {{ title }}
 Options:
 {{ options_block }}
 {% endif %}
+{% if format_instructions %}
+Output format for this question:
+{{ format_instructions }}
+{% endif %}
 {% if evidence_block %}
 Web evidence:
 {{ evidence_block }}

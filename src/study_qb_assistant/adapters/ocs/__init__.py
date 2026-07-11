@@ -10,7 +10,8 @@ import re
 
 from ...logger import log_event
 from ...models import QueryResult
-from ...question_types import is_completion_query, is_open_text_completion
+from ...option_labels import canonicalize_label_answer
+from ...question_types import blank_count_hint, is_completion_query, is_open_text_completion
 from .config import build_ocs_config
 
 _JUDGEMENT_TRUE_LABELS = {"A"}
@@ -120,6 +121,9 @@ def _non_judgement_ocs_answer(result: QueryResult) -> tuple[str | None, dict[str
     """处理选择题和填空题在 OCS 中需要的答案形态。"""
 
     if not is_completion_query(result.query):
+        labels = canonicalize_label_answer(result.query, result.candidate_answer)
+        if labels:
+            return labels, {"ocs_answer_shape": "option_labels"}
         return result.candidate_answer or result.answer_text, {}
     if (
         is_open_text_completion(result.query)
@@ -129,10 +133,11 @@ def _non_judgement_ocs_answer(result: QueryResult) -> tuple[str | None, dict[str
         return result.answer_text, {"ocs_answer_shape": "text"}
 
     answer = result.candidate_answer or result.answer_text
-    parts = _completion_answer_parts(answer, blank_count_hint=_blank_count_hint(result.query.title))
+    blanks = blank_count_hint(result.query.title)
+    parts = _completion_answer_parts(answer, blank_count_hint=blanks)
     diagnostics: dict[str, object] = {
         "answer_parts_count": len(parts),
-        "blank_count_hint": _blank_count_hint(result.query.title),
+        "blank_count_hint": blanks,
         "ocs_answer_shape": "text",
     }
     if len(parts) > 1:
@@ -186,6 +191,10 @@ def _completion_answer_parts(value: str | None, *, blank_count_hint: int = 0) ->
     parsed_parts = _json_array_parts(text)
     if parsed_parts:
         return parsed_parts
+    if blank_count_hint > 1:
+        bracketed_parts = _bracketed_completion_parts(text, blank_count_hint=blank_count_hint)
+        if bracketed_parts:
+            return bracketed_parts
     for separator in ("###", "===", "---", "#", "|", "；", ";"):
         if separator in text:
             parts = [part.strip() for part in text.split(separator) if part.strip()]
@@ -194,7 +203,7 @@ def _completion_answer_parts(value: str | None, *, blank_count_hint: int = 0) ->
     if blank_count_hint > 1:
         words = [part.strip() for part in re.split(r"\s+", text) if part.strip()]
         if len(words) == blank_count_hint and all(len(word) <= 40 for word in words):
-            return words
+            return [_strip_answer_wrapper(word) for word in words]
     return [text]
 
 
@@ -208,8 +217,15 @@ def _json_array_parts(value: str) -> list[str]:
     return [str(item).strip() for item in parsed if str(item).strip()]
 
 
-def _blank_count_hint(title: str) -> int:
-    numbered = re.findall(r"[【\[]\s*\d+\s*[】\]]\s*[_＿]*", title or "")
-    if numbered:
-        return len(numbered)
-    return len(re.findall(r"(?:_{2,}|＿{2,})", title or ""))
+def _bracketed_completion_parts(value: str, *, blank_count_hint: int) -> list[str]:
+    groups = re.findall(r"\(([^()]*)\)|（([^（）]*)）", value)
+    parts = [part.strip() for group in groups for part in group if part.strip()]
+    return parts if len(parts) == blank_count_hint else []
+
+
+def _strip_answer_wrapper(value: str) -> str:
+    text = value.strip()
+    matched = re.fullmatch(r"\(([^()]*)\)|（([^（）]*)）", text)
+    if not matched:
+        return text
+    return next(part.strip() for part in matched.groups() if part is not None)

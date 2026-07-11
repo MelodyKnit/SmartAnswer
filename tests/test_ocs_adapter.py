@@ -98,6 +98,29 @@ class OcsAdapterTests(unittest.TestCase):
         self.assertEqual(payload["data"]["answer"], "错")
         self.assertEqual(payload["data"]["answer_raw"], "B")
 
+    def test_multiple_response_sorts_labels_for_ocs_plain_answer_parser(self) -> None:
+        """测试旧缓存乱序多选标签在 OCS 边界也会转成升序。"""
+        result = QueryResult(
+            ok=True,
+            query=QuestionQuery(
+                title="多选题(1分)示例多选。",
+                options=("甲", "乙", "丙", "丁"),
+                question_type="multiple",
+            ),
+            candidate_answer="D#B#A",
+            answer_text="丁；乙；甲",
+            explanation="示例解析",
+            confidence=0.96,
+            resolution_mode="ai_cache",
+            review_required=False,
+        )
+
+        payload = to_ocs_response(result)
+
+        self.assertEqual(payload["data"]["answer"], "A#B#D")
+        self.assertEqual(payload["data"]["answer_raw"], "D#B#A")
+        self.assertEqual(payload["data"]["ai"]["ocs_answer_shape"], "option_labels")
+
     def test_completion_response_falls_back_to_answer_text(self) -> None:
         """测试填空题没有 candidate_answer 时，OCS 仍能拿到 answer_text。"""
         result = QueryResult(
@@ -194,6 +217,31 @@ class OcsAdapterTests(unittest.TestCase):
 
         self.assertEqual(json.loads(payload["data"]["answer"]), ["access", "benefit"])
         self.assertEqual(payload["data"]["ai"]["answer_parts_count"], 2)
+
+    def test_empty_parentheses_completion_response_converts_grouped_answers(self) -> None:
+        """测试空括号多空题会按 OCS 多空契约返回 JSON 数组字符串。"""
+        result = QueryResult(
+            ok=True,
+            query=QuestionQuery(
+                title="图片所示为4个立体被打乱的三视图，请写在括号内。（）（）（）（）",
+                question_type="completion",
+            ),
+            candidate_answer="(1-5-11) (2-6-12) (3-7-9) (4-8-10)",
+            answer_text="(1-5-11) (2-6-12) (3-7-9) (4-8-10)",
+            explanation="示例解析",
+            confidence=1.0,
+            resolution_mode="ai_cache",
+            review_required=False,
+        )
+
+        payload = to_ocs_response(result)
+
+        self.assertEqual(
+            json.loads(payload["data"]["answer"]),
+            ["1-5-11", "2-6-12", "3-7-9", "4-8-10"],
+        )
+        self.assertEqual(payload["data"]["ai"]["blank_count_hint"], 4)
+        self.assertEqual(payload["data"]["ai"]["ocs_answer_shape"], "json_array")
 
     def test_open_text_completion_response_prefers_full_answer_text(self) -> None:
         """测试开放写作类 completion 题优先把完整正文返回给 OCS。"""

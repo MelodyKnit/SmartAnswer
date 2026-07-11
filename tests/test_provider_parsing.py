@@ -200,6 +200,24 @@ class ProviderParsingTests(unittest.TestCase):
         self.assertEqual(answer.question_form, "objective_choice")
         self.assertEqual(answer.reuse_confidence, 0.99)
 
+    def test_multiple_letter_array_answers_are_sorted_for_ocs(self) -> None:
+        """测试模型返回多选字母数组时仍按 OCS 需要的顺序输出。"""
+        provider = OpenAICompatibleProvider(base_url="http://example.test/v1", model="mock")
+        query = QuestionQuery(
+            title="多选题(1分)数组顺序测试",
+            options=("甲", "乙", "丙", "丁"),
+            question_type="multiple",
+        )
+
+        answer = provider._parse_model_answer(
+            '{"candidate_answer":["C","A","D"],"answer_text":["丙","甲","丁"],'
+            '"explanation":"应选 C、A、D。","confidence":0.97}',
+            query,
+        )
+
+        self.assertEqual(answer.candidate_answer, "A#C#D")
+        self.assertEqual(answer.answer_text, "甲；丙；丁")
+
     def test_plain_text_multiple_letters_are_normalized(self) -> None:
         """测试模型直接输出 ACDB 文本时，多选标签仍会被标准化。"""
         provider = OpenAICompatibleProvider(base_url="http://example.test/v1", model="mock")
@@ -243,6 +261,27 @@ class ProviderParsingTests(unittest.TestCase):
         self.assertEqual(answer.candidate_answer, '["第一空答案", "第二空答案"]')
         self.assertEqual(answer.answer_text, "第一空答案；第二空答案")
 
+    def test_parenthesized_multi_blank_answer_is_encoded_for_ocs(self) -> None:
+        """测试括号分组的空间题答案会转成多空 JSON 数组字符串。"""
+        provider = OpenAICompatibleProvider(base_url="http://example.test/v1", model="mock")
+        query = QuestionQuery(
+            title="图片所示为4个立体被打乱的三视图，请写在括号内。（）（）（）（）",
+            options=(),
+            question_type="completion",
+        )
+
+        answer = provider._parse_model_answer(
+            '{"candidate_answer":"(1-5-11) (2-6-12) (3-7-9) (4-8-10)",'
+            '"answer_text":"(1-5-11) (2-6-12) (3-7-9) (4-8-10)",'
+            '"explanation":"四组匹配。","confidence":0.99}',
+            query,
+        )
+
+        self.assertEqual(
+            answer.candidate_answer,
+            '["1-5-11", "2-6-12", "3-7-9", "4-8-10"]',
+        )
+
     def test_open_text_completion_uses_full_answer_text_as_candidate(self) -> None:
         """测试无空位的 completion 开放题使用正文作为可回填答案。"""
         provider = OpenAICompatibleProvider(base_url="http://example.test/v1", model="mock")
@@ -262,6 +301,38 @@ class ProviderParsingTests(unittest.TestCase):
 
         self.assertEqual(answer.candidate_answer, long_answer)
         self.assertEqual(answer.answer_text, long_answer)
+
+    def test_judgement_answer_is_normalized_to_internal_labels(self) -> None:
+        """测试无选项判断题会统一成内部 A/B，便于 OCS 边界转对错。"""
+        provider = OpenAICompatibleProvider(base_url="http://example.test/v1", model="mock")
+        query = QuestionQuery(title="判断题(1分)示例。", options=(), question_type="judgement")
+
+        answer = provider._parse_model_answer(
+            '{"candidate_answer":"正确","answer_text":"正确","explanation":"判断为真。","confidence":0.96}',
+            query,
+        )
+
+        self.assertEqual(answer.candidate_answer, "A")
+        self.assertEqual(answer.answer_text, "对")
+
+    def test_invalid_choice_candidate_is_cleared(self) -> None:
+        """测试选择题无法映射到选项时不会保留自由文本答案。"""
+        provider = OpenAICompatibleProvider(base_url="http://example.test/v1", model="mock")
+        query = QuestionQuery(
+            title="单选题(1分)示例。",
+            options=("甲", "乙"),
+            question_type="single",
+        )
+
+        answer = provider._parse_model_answer(
+            '{"candidate_answer":"无法确定","answer_text":"无法确定",'
+            '"explanation":"缺少选项信息。","confidence":0.99}',
+            query,
+        )
+
+        self.assertIsNone(answer.candidate_answer)
+        self.assertIsNone(answer.answer_text)
+        self.assertLessEqual(answer.confidence, 0.2)
 
     def test_render_question_uses_public_option_label_helper_without_name_error(self) -> None:
         """测试渲染带选项题目时不会因为旧私有函数名残留而抛出异常。"""

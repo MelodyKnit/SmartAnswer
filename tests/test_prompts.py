@@ -32,6 +32,7 @@ class PromptTemplateTests(unittest.TestCase):
             question_type="single",
             title="测试题干",
             options_block="A. 正确\nB. 错误",
+            format_instructions="Return candidate_answer as exactly one option letter.",
             evidence_block="[1] 来源：证据",
             previous_answer_block="candidate_answer: A",
         )
@@ -39,6 +40,7 @@ class PromptTemplateTests(unittest.TestCase):
         self.assertIn("Question type: single", prompt)
         self.assertIn("Question: 测试题干", prompt)
         self.assertIn("Options:", prompt)
+        self.assertIn("Output format for this question:", prompt)
         self.assertIn("Web evidence:", prompt)
         self.assertIn("Previous answer:", prompt)
 
@@ -97,6 +99,7 @@ class PromptTemplateTests(unittest.TestCase):
         self.assertIn("Return only JSON", system_prompt)
         self.assertIn("Question: 模板测试题", user_prompt)
         self.assertIn("A. 正确项", user_prompt)
+        self.assertIn("Return candidate_answer as exactly one option letter", user_prompt)
 
     def test_openai_provider_sends_mixed_image_refs_in_payload(self) -> None:
         """多模态 payload 应同时保留 data URL 和公开图片 URL。"""

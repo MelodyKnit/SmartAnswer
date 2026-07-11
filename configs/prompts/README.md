@@ -5,7 +5,7 @@
 ## 文件说明
 
 - `answer_system.jinja`：通用答题 System Prompt。
-- `answer_user.jinja`：题目、选项、联网证据和上一轮答案的 User Prompt。
+- `answer_user.jinja`：题目、选项、题型输出格式、联网证据和上一轮答案的 User Prompt。
 - `answer_with_evidence_system_append.jinja`：有联网证据时追加的 System Prompt。
 - `answer_verification_system_append.jinja`：复核已有答案时追加的 System Prompt。
 - `llm_connection_test_user.jinja`：大模型配置页测试连接使用的题目。

@@ -17,7 +17,13 @@ from ...input_anomalies import normalize_image_data_urls, normalize_image_urls
 from ...media.image_anomalies import model_answer_indicates_unreadable_image
 from ...models import ModelAnswer, QuestionQuery
 from ...logger import log_event
-from ...question_types import is_open_text_completion
+from ...question_types import (
+    JUDGEMENT_TYPES,
+    MULTIPLE_TYPES,
+    blank_count_hint,
+    is_completion_query,
+    is_open_text_completion,
+)
 from ..prompts import render_prompt
 from ..tracing import record_trace
 from .openai_answer_parser import (
@@ -478,7 +484,9 @@ class OpenAICompatibleProvider:
                 answer_text
                 if answer_text and is_open_text_completion(query)
                 else completion_answer_field(
-                    payload.get("candidate_answer"), payload.get("answer_text")
+                    payload.get("candidate_answer"),
+                    payload.get("answer_text"),
+                    blanks=blank_count_hint(query.title or ""),
                 )
             )
         answer = ModelAnswer(
@@ -568,6 +576,7 @@ class OpenAICompatibleProvider:
             question_type=query.question_type,
             title=query.title,
             options_block=options_block,
+            format_instructions=answer_format_instructions(query),
             evidence_block=evidence_block,
             previous_answer_block=previous_answer_block,
         )
@@ -596,3 +605,29 @@ class OpenAICompatibleProvider:
 
 # 为兼容现有测试与局部旧调用，保留最薄私有别名层。
 _decode_chat_response = decode_chat_response
+
+
+def answer_format_instructions(query: QuestionQuery) -> str:
+    """根据当前题型生成给模型的 OCS 可消费答案格式提示。"""
+
+    question_type = (query.question_type or "").strip().lower()
+    blanks = blank_count_hint(query.title or "")
+    if question_type in JUDGEMENT_TYPES or (query.title or "").strip().startswith("判断题"):
+        return "Return candidate_answer as A for 对/正确 or B for 错/错误; answer_text must be 对 or 错."
+    if query.options:
+        if question_type in MULTIPLE_TYPES:
+            return "Return candidate_answer as option letters joined by # in page order, for example A#C#D."
+        return "Return candidate_answer as exactly one option letter, for example A. Do not return option text."
+    if is_completion_query(query):
+        if blanks > 1:
+            return (
+                f"This is a {blanks}-blank question. Return candidate_answer and answer_text "
+                'as JSON arrays in blank order, for example ["第一空","第二空"].'
+            )
+        if is_open_text_completion(query):
+            return (
+                "This is an open writing completion. Put the full response in answer_text "
+                "and set reuse_policy to non_reusable_open_text."
+            )
+        return "Return only the fillable blank answer text, without brackets or phrases like 答案是."
+    return "Return candidate_answer as the shortest directly fillable answer."
