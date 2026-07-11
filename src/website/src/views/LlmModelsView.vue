@@ -22,6 +22,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import LlmCallStatsTable from '@/components/llm/LlmCallStatsTable.vue'
 import LlmTraceDetailDrawer from '@/components/llm/LlmTraceDetailDrawer.vue'
 import LlmTraceTable from '@/components/llm/LlmTraceTable.vue'
+import LlmTraceFlow from '@/components/llm/LlmTraceFlow.vue'
 import { DEFAULT_PAGE_SIZE, SYSTEM_DEFAULTS } from '@/config/constants'
 
 // === 1. 概览状态 ===
@@ -552,6 +553,7 @@ async function loadStats() {
 /* ---------------- 调用追溯 ---------------- */
 const tracesLoading = ref(false)
 const traces = ref<LlmCallTrace[]>([])
+const traceViewMode = ref<'table' | 'flow'>('table')
 const traceFilters = reactive({
   request_id: '',
   model_id: '',
@@ -598,6 +600,7 @@ function onTracePageChange(next: number) {
 
 function filterByRequest(requestId: string) {
   traceFilters.request_id = requestId
+  traceViewMode.value = 'flow'
   searchTraces()
 }
 
@@ -924,14 +927,30 @@ onMounted(async () => {
           <el-button v-if="traceFilters.request_id" @click="() => { traceFilters.request_id = ''; searchTraces() }">
             清除关联
           </el-button>
+          
+          <div class="ml-auto">
+            <el-radio-group v-model="traceViewMode" size="small">
+              <el-radio-button value="table">表格视图</el-radio-button>
+              <el-radio-button value="flow">链路拓扑</el-radio-button>
+            </el-radio-group>
+          </div>
         </div>
 
         <div class="app-card p-1">
           <LlmTraceTable
+            v-if="traceViewMode === 'table'"
             :loading="tracesLoading"
             :traces="traces"
             @detail="openTraceDetail"
             @filter-request="filterByRequest"
+          />
+          <LlmTraceFlow
+            v-else
+            :loading="tracesLoading"
+            :traces="traces"
+            :request-id-filter="traceFilters.request_id"
+            @detail="openTraceDetail"
+            @clear-filter="() => { traceFilters.request_id = ''; traceViewMode = 'table'; searchTraces() }"
           />
         </div>
 
