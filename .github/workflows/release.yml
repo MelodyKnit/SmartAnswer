@@ -61,11 +61,6 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e . pytest ruff httpx dulwich "psycopg[binary]"
 
-      - name: Validate backend
-        run: |
-          ruff check src tests deploy/updater/stqb_updater.py
-          pytest -q
-
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -78,6 +73,11 @@ jobs:
         run: |
           npm ci
           npm run build
+
+      - name: Validate backend
+        run: |
+          ruff check src tests deploy/updater/stqb_updater.py
+          pytest -q
 
       - name: Set image name
         id: image

@@ -28,6 +28,13 @@ from study_qb_assistant.ingestion import (  # noqa: E402
 from study_qb_assistant.ingestion.catalog import iter_source_records  # noqa: E402
 
 
+def require_optional_fixture(path: Path) -> None:
+    """在未安装可选上游数据集时跳过对应集成测试。"""
+
+    if not path.is_file():
+        raise unittest.SkipTest(f"optional dataset fixture is unavailable: {path.name}")
+
+
 class IngestionReaderTests(unittest.TestCase):
     """测试不同数据集解析读取器的单元测试类。"""
 
@@ -40,6 +47,7 @@ class IngestionReaderTests(unittest.TestCase):
         source_path = (
             PROJECT_ROOT / "data" / "raw" / "cmmlu-upstream" / "data" / "dev" / "anatomy.csv"
         )
+        require_optional_fixture(source_path)
 
         # 迭代获取第一条记录
         record = next(iter_cmmlu_records(source_path))
@@ -67,6 +75,7 @@ class IngestionReaderTests(unittest.TestCase):
             / "dev"
             / "Advanced Mathematics-Natural Sciences-College.jsonl"
         )
+        require_optional_fixture(source_path)
 
         record = next(iter_m3ke_records(source_path))
 
@@ -93,6 +102,7 @@ class IngestionReaderTests(unittest.TestCase):
             / "v1_1"
             / "gaokao-physics.jsonl"
         )
+        require_optional_fixture(source_path)
 
         record = next(iter_agieval_records(source_path))
 
@@ -107,6 +117,15 @@ class IngestionReaderTests(unittest.TestCase):
 
     def test_agieval_mcq_catalog_filters_records_without_answers(self) -> None:
         """测试 AGIEval 目录索引加载器，验证是否自动过滤了无答案的无效记录。"""
+        require_optional_fixture(
+            PROJECT_ROOT
+            / "data"
+            / "raw"
+            / "agieval-upstream"
+            / "data"
+            / "v1_1"
+            / "gaokao-physics.jsonl"
+        )
         records = list(iter_source_records(PROJECT_ROOT, "agieval-mcq"))
 
         # 确保加载出了有效的记录条数，并全部为单选题且拥有非空原始答案

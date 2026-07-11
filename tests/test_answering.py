@@ -277,6 +277,7 @@ class AnswerServiceTests(unittest.TestCase):
         source_path = (
             PROJECT_ROOT / "data" / "raw" / "cmmlu-upstream" / "data" / "dev" / "anatomy.csv"
         )
+        require_optional_fixture(source_path)
         # 实例化一个没有 model_provider 的服务
         service = AnswerService(LocalQuestionIndex(tuple(iter_cmmlu_records(source_path))))
 
@@ -860,6 +861,7 @@ def _service_with_cmmlu(
         tuple[AnswerService, FakeModelProvider]: 构造的服务与模拟大模型实例。
     """
     source_path = PROJECT_ROOT / "data" / "raw" / "cmmlu-upstream" / "data" / "dev" / "anatomy.csv"
+    require_optional_fixture(source_path)
     index = LocalQuestionIndex(tuple(iter_cmmlu_records(source_path)))
     provider = FakeModelProvider()
     service = AnswerService(
@@ -869,6 +871,13 @@ def _service_with_cmmlu(
         explain_local_matches=explain_local_matches,
     )
     return service, provider
+
+
+def require_optional_fixture(path: Path) -> None:
+    """在未安装可选上游数据集时跳过对应集成测试。"""
+
+    if not path.is_file():
+        raise unittest.SkipTest(f"optional dataset fixture is unavailable: {path.name}")
 
 
 def _service_with_cache(provider: SequenceModelProvider, cache_path: Path) -> AnswerService:

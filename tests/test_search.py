@@ -27,6 +27,13 @@ from study_qb_assistant.models import CanonicalQuestionRecord, QuestionQuery  # 
 from study_qb_assistant.search import LocalQuestionIndex  # noqa: E402
 
 
+def require_optional_fixture(path: Path) -> None:
+    """在未安装可选上游数据集时跳过对应集成测试。"""
+
+    if not path.is_file():
+        raise unittest.SkipTest(f"optional dataset fixture is unavailable: {path.name}")
+
+
 class LocalQuestionIndexTests(unittest.TestCase):
     """测试本地题库内存检索索引的测试类。"""
 
@@ -35,6 +42,7 @@ class LocalQuestionIndexTests(unittest.TestCase):
         source_path = (
             PROJECT_ROOT / "data" / "raw" / "cmmlu-upstream" / "data" / "dev" / "anatomy.csv"
         )
+        require_optional_fixture(source_path)
         records = tuple(iter_cmmlu_records(source_path))
         index = LocalQuestionIndex(records)
 
@@ -66,6 +74,7 @@ class LocalQuestionIndexTests(unittest.TestCase):
         source_path = (
             PROJECT_ROOT / "data" / "raw" / "cmmlu-upstream" / "data" / "dev" / "anatomy.csv"
         )
+        require_optional_fixture(source_path)
         records = tuple(iter_cmmlu_records(source_path))
 
         # 将记录写入临时的 JSONL 文件，并基于该文件载入索引
@@ -231,6 +240,7 @@ class LocalQuestionIndexTests(unittest.TestCase):
         source_path = (
             PROJECT_ROOT / "data" / "raw" / "cmmlu-upstream" / "data" / "dev" / "anatomy.csv"
         )
+        require_optional_fixture(source_path)
         records = tuple(iter_cmmlu_records(source_path))
         index = LocalQuestionIndex(records, source_path="sample.jsonl")
 

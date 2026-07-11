@@ -273,6 +273,8 @@ def _cmmlu_index() -> LocalQuestionIndex:
         LocalQuestionIndex: 包含解剖学分类数据的本地内存索引对象。
     """
     source_path = PROJECT_ROOT / "data" / "raw" / "cmmlu-upstream" / "data" / "dev" / "anatomy.csv"
+    if not source_path.is_file():
+        raise unittest.SkipTest("optional CMMLU fixture is unavailable")
     return LocalQuestionIndex(tuple(iter_cmmlu_records(source_path)))
 
 
