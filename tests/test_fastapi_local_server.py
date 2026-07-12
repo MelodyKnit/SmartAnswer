@@ -391,6 +391,15 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertGreaterEqual(read_all.json()["count"], 1)
         self.assertEqual(after_read_all.json()["items"], [])
 
+    def test_legacy_project_update_routes_are_not_exposed(self) -> None:
+        """部署动作改由 GitHub Actions 执行，应用不再提供更新命令接口。"""
+
+        client = TestClient(create_app(_sample_index(), require_auth=False))
+
+        self.assertEqual(client.get("/version").status_code, 200)
+        self.assertEqual(client.get("/project-update/status").status_code, 404)
+        self.assertEqual(client.post("/project-update/check").status_code, 405)
+
     def test_query_and_ocs_routes_keep_existing_wire_shape(self) -> None:
         import os
 

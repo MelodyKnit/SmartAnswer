@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
@@ -50,13 +51,16 @@ def normalize_image_urls(*groups: object) -> tuple[str, ...]:
 
     urls: list[str] = []
     for group in groups:
+        candidates: Iterable[object]
         if isinstance(group, str):
             candidates = (
                 *re.split(r"[\s,，]+", group),
                 *EMBEDDED_IMAGE_URL_PATTERN.findall(group),
             )
+        elif isinstance(group, Iterable):
+            candidates = group
         else:
-            candidates = list(group or ())
+            candidates = ()
         for candidate in candidates:
             text = str(candidate or "").strip()
             for value in (text, *EMBEDDED_IMAGE_URL_PATTERN.findall(text)):
@@ -79,10 +83,13 @@ def normalize_image_data_urls(*groups: object) -> tuple[str, ...]:
 
     urls: list[str] = []
     for group in groups:
+        candidates: Iterable[object]
         if isinstance(group, str):
             candidates = (group,)
+        elif isinstance(group, Iterable):
+            candidates = group
         else:
-            candidates = list(group or ())
+            candidates = ()
         for candidate in candidates:
             text = str(candidate or "").strip()
             if is_image_data_url(text) and text not in urls:

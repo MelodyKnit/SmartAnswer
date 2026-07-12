@@ -479,7 +479,7 @@ class OpenAICompatibleProvider:
         candidate_answer = answer_field(payload.get("candidate_answer"))
         answer_text = text_field(payload.get("answer_text"))
         reuse_confidence = optional_float(payload.get("reuse_confidence"))
-        if is_completion_without_options(query):
+        if query is not None and is_completion_without_options(query):
             candidate_answer = (
                 answer_text
                 if answer_text and is_open_text_completion(query)

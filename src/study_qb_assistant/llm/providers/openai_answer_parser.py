@@ -72,9 +72,9 @@ def completion_answer_field(
             if normalized:
                 return json.dumps(normalized, ensure_ascii=False)
     for value in (candidate_value, answer_text_value):
-        parts = grouped_completion_parts(value, blanks=blanks)
-        if parts:
-            return json.dumps(parts, ensure_ascii=False)
+        grouped_parts = grouped_completion_parts(value, blanks=blanks)
+        if grouped_parts:
+            return json.dumps(grouped_parts, ensure_ascii=False)
     answer = answer_field(candidate_value) or text_field(answer_text_value)
     if answer and blanks <= 1:
         return strip_single_blank_wrapper(answer)

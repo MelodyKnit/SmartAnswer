@@ -10,6 +10,7 @@ import socket
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 import httpx
@@ -340,9 +341,9 @@ def ocr_image_bytes(image: bytes) -> str:
 
     try:
         try:
-            from rapidocr_onnxruntime import RapidOCR
+            from rapidocr_onnxruntime import RapidOCR  # type: ignore[import-untyped]
         except ImportError:
-            from rapidocr import RapidOCR
+            from rapidocr import RapidOCR  # type: ignore[import-not-found]
     except ImportError:
         return ""
     with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as handle:
@@ -429,11 +430,13 @@ def fetch_image_via_playwright(
             reason="playwright_not_installed",
         )
         return None, None
+    browser_path = None
     try:
         from ..llm.providers.web_search import resolve_browser_path
+
+        browser_path = resolve_browser_path()
     except Exception:
-        resolve_browser_path = None
-    browser_path = resolve_browser_path() if callable(resolve_browser_path) else None
+        pass
 
     manager = None
     browser = None
@@ -441,7 +444,7 @@ def fetch_image_via_playwright(
     page = None
     try:
         manager = sync_playwright().start()
-        launch_options = {"headless": True}
+        launch_options: dict[str, Any] = {"headless": True}
         if browser_path:
             launch_options["executable_path"] = browser_path
         browser = manager.chromium.launch(**launch_options)

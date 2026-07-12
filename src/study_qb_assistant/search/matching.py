@@ -12,13 +12,17 @@ import difflib
 import re
 import string
 import unicodedata
+from typing import Any
 
 from ..models import CanonicalQuestionRecord, QuestionQuery
 from ..normalization import normalize_options
 from .support import is_ai_record, record_options_match
 
+fuzz: Any
 try:  # RapidFuzz 是项目依赖；保留降级让开发环境未更新时仍可运行测试。
-    from rapidfuzz import fuzz  # type: ignore[import-not-found]
+    from rapidfuzz import fuzz as rapidfuzz_fuzz  # type: ignore[import-not-found]
+
+    fuzz = rapidfuzz_fuzz
 except ImportError:  # pragma: no cover - 仅用于未安装依赖的本地兜底。
     fuzz = None
 

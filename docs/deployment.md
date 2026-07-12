@@ -8,8 +8,8 @@ This project is deployed on Linux with Docker because the runtime requires Pytho
 - `docker-compose.yaml`: one-command production service definition
 - `.env.server`: server-local environment file, intentionally not committed
 - `.env.server.example`: server-local environment template
-- `.env.release`: updater-owned immutable image reference and release version
-- `deploy/updater/`: root-only host updater and systemd units
+- `.env.release`: current immutable image reference and release version
+- `deploy/remote-release.sh`: a short-lived deployment script invoked by GitHub Actions
 
 The image only contains code, generated frontend static assets, and committed configs.
 It does **not** carry local `data/` contents into production.
@@ -90,22 +90,46 @@ copy when changing allowed registration domains. It is not overwritten by later 
 
 On a brand-new runtime database, the first registered user becomes `superadmin`.
 
-## Private GitHub online updates
+## Private GitHub automatic updates
 
-The application never receives GitHub tokens and never mounts the Docker socket. Install
-the root-only host updater once after the first release deployment:
+After the initial Docker deployment, no additional updater process needs to be installed on
+the server. Creating a matching `vX.Y.Z` tag runs `.github/workflows/release.yml`: it tests,
+builds and publishes the immutable GHCR image, creates the GitHub Release, then deploys that
+exact image digest through one SSH session.
+
+The first server setup still needs Docker, Docker Compose and an SSH account that can run
+`docker compose`. The project directory must already contain `docker-compose.yaml`,
+`.env.release` and the persistent `deploy-data/` directory. Configure the following values in
+the GitHub repository, not in application configuration or server `.env` files:
+
+| GitHub repository setting | Required value |
+| --- | --- |
+| Variable `DEPLOY_ENABLED` | `true` to enable automatic deployment; omit or set `false` to publish only |
+| Variable `DEPLOY_HOST` | server host name or IP address |
+| Variable `DEPLOY_PORT` | SSH port, default `22` |
+| Variable `DEPLOY_USER` | server deployment user |
+| Variable `DEPLOY_PATH` | absolute project directory on the server |
+| Variable `DEPLOY_HEALTH_URL` | optional local health base URL, default `http://127.0.0.1:3003` |
+| Secret `DEPLOY_SSH_PRIVATE_KEY` | private key whose public key is authorized for `DEPLOY_USER` |
+| Secret `DEPLOY_KNOWN_HOSTS` | pinned `known_hosts` entry for the deployment host |
+| Secret `GHCR_READ_TOKEN` | classic PAT with only `read:packages` for this private image |
+
+The workflow passes the GHCR token over SSH standard input only. The remote script uses a
+temporary Docker credential directory, pulls the immutable digest, creates a SQLite online
+backup, replaces `.env.release` atomically and verifies `/healthz` plus `/version`. A failed
+start or health check restores the prior image reference and database snapshot. The server
+does not keep the GitHub or GHCR token, and the business container never receives Docker
+access.
+
+To obtain the pinned host key without trusting interactive SSH prompts, run this from a trusted
+administrator machine and save the resulting line as `DEPLOY_KNOWN_HOSTS`:
 
 ```bash
-sudo ./deploy/updater/install.sh
-sudoedit /etc/stqb-updater.env
-sudo systemctl start stqb-updater-check.service
+ssh-keyscan -H your-server.example.com
 ```
 
-Use a fine-grained repository read token for Release metadata and a separate classic PAT
-with only `read:packages` for private GHCR pulls. Both values stay in
-`/etc/stqb-updater.env` with mode `0600`. The timer checks every six hours; only a
-`superadmin` with `system:write` can confirm installation from the system configuration
-page. See `deploy/updater/README.md` for checks, logs, and rollback behavior.
+Use a dedicated deployment SSH key when possible. The public half belongs in the server user's
+`~/.ssh/authorized_keys`; the private half belongs only in the GitHub Actions secret.
 
 ## Importing question-bank data
 

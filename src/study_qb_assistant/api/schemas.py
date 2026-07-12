@@ -186,14 +186,6 @@ class SystemConfigPayload(BaseModel):
     email_code_max_attempts: str | None = None
 
 
-class ProjectUpdateApplyPayload(BaseModel):
-    """确认应用已检查到的稳定版本。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    expected_version: str
-
-
 class LlmRuntimeConfigPayload(BaseModel):
     """LLM 答题运行时配置更新参数。"""
 

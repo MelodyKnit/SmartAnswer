@@ -13,7 +13,6 @@ from ..auth import AuthError, AuthService
 from ..platform import PlatformService
 from ..search import LocalQuestionIndex
 from ..storage.question_repository import IndexQuestionRepository, SqlAlchemyQuestionRepository
-from ..updates import ProjectUpdateService
 
 SESSION_COOKIE = "stqb_session"
 PROTECTED_PATHS = {"/query", "/ocs/query", "/status", "/debug/recent", "/debug/usage-audit"}
@@ -32,12 +31,6 @@ def get_auth_service(request: Request) -> AuthService:
 def get_platform_service(request: Request) -> PlatformService:
     """读取当前应用挂载的平台服务。"""
     return request.app.state.platform
-
-
-def get_project_update_service(request: Request) -> ProjectUpdateService:
-    """读取在线更新命令服务。"""
-
-    return request.app.state.project_updates
 
 
 def get_question_repository(

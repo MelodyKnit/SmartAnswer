@@ -142,7 +142,7 @@ def _non_judgement_ocs_answer(result: QueryResult) -> tuple[str | None, dict[str
     }
     if len(parts) > 1:
         diagnostics["ocs_answer_shape"] = "json_array"
-        blank_count = int(diagnostics["blank_count_hint"])
+        blank_count = blanks
         if blank_count and blank_count != len(parts):
             log_event(
                 "ocs_completion_answer_count_mismatch",

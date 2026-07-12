@@ -13,10 +13,20 @@ if str(SRC_ROOT) not in sys.path:
 
 from study_qb_assistant.api.query_parser import build_query_from_payload  # noqa: E402
 from study_qb_assistant.api.schemas import QueryPayload  # noqa: E402
+from study_qb_assistant.input_anomalies import (  # noqa: E402
+    normalize_image_data_urls,
+    normalize_image_urls,
+)
 
 
 class QueryParserTests(unittest.TestCase):
     """验证图片上下文不会污染题干与抓图状态字段。"""
+
+    def test_non_iterable_image_fields_are_ignored(self) -> None:
+        """异常标量输入不应导致图片上下文规范化流程崩溃。"""
+
+        self.assertEqual(normalize_image_urls(123, object()), ())
+        self.assertEqual(normalize_image_data_urls(123, object()), ())
 
     def test_embedded_image_url_is_removed_from_title_when_image_context_exists(self) -> None:
         payload = QueryPayload(

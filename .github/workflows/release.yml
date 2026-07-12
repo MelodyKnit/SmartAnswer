@@ -16,6 +16,11 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      image: ${{ steps.image.outputs.name }}
+      image_digest: ${{ steps.build.outputs.digest }}
+      build_sha: ${{ github.sha }}
     steps:
       - name: Checkout tagged source
         uses: actions/checkout@v4
@@ -76,7 +81,8 @@ jobs:
 
       - name: Validate backend
         run: |
-          ruff check src tests deploy/updater/stqb_updater.py
+          bash -n deploy/remote-release.sh
+          ruff check src tests
           pytest -q
 
       - name: Set image name
@@ -153,3 +159,68 @@ jobs:
               --generate-notes \
               --title "${GITHUB_REF_NAME}"
           fi
+
+  deploy:
+    name: Deploy release to configured server
+    needs: release
+    if: ${{ vars.DEPLOY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: study-qb-production-deploy
+      cancel-in-progress: false
+    env:
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+      DEPLOY_HEALTH_URL: ${{ vars.DEPLOY_HEALTH_URL || 'http://127.0.0.1:3003' }}
+      DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+      DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+      GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+      IMAGE_REF: ${{ needs.release.outputs.image }}@${{ needs.release.outputs.image_digest }}
+      VERSION: ${{ needs.release.outputs.version }}
+      BUILD_SHA: ${{ needs.release.outputs.build_sha }}
+    steps:
+      - name: Checkout deployment assets
+        uses: actions/checkout@v4
+
+      - name: Validate deployment configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${DEPLOY_HOST}" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "Invalid DEPLOY_HOST" >&2; exit 1; }
+          [[ "${DEPLOY_PORT}" =~ ^[1-9][0-9]{0,4}$ ]] || { echo "Invalid DEPLOY_PORT" >&2; exit 1; }
+          (( 10#${DEPLOY_PORT} <= 65535 )) || { echo "Invalid DEPLOY_PORT" >&2; exit 1; }
+          [[ "${DEPLOY_USER}" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] || { echo "Invalid DEPLOY_USER" >&2; exit 1; }
+          [[ "${DEPLOY_PATH}" =~ ^/[A-Za-z0-9._/-]+$ ]] || { echo "Invalid DEPLOY_PATH" >&2; exit 1; }
+          [[ "${DEPLOY_HEALTH_URL}" =~ ^https?://127\.0\.0\.1:[1-9][0-9]{0,4}$ ]] || { echo "Invalid DEPLOY_HEALTH_URL" >&2; exit 1; }
+          [[ "${IMAGE_REF}" =~ ^ghcr\.io/melodyknit/smartanswer@sha256:[a-f0-9]{64}$ ]] || { echo "Invalid image digest" >&2; exit 1; }
+          [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid release version" >&2; exit 1; }
+          [[ "${BUILD_SHA}" =~ ^[a-f0-9]{40}$ ]] || { echo "Invalid release revision" >&2; exit 1; }
+          [[ -n "${DEPLOY_SSH_PRIVATE_KEY}" ]] || { echo "DEPLOY_SSH_PRIVATE_KEY is not configured" >&2; exit 1; }
+          [[ -n "${DEPLOY_KNOWN_HOSTS}" ]] || { echo "DEPLOY_KNOWN_HOSTS is not configured" >&2; exit 1; }
+          [[ -n "${GHCR_READ_TOKEN}" ]] || { echo "GHCR_READ_TOKEN is not configured" >&2; exit 1; }
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
+
+      - name: Apply immutable release image
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh_args=(-p "$DEPLOY_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes)
+          scp_args=(-P "$DEPLOY_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes)
+          remote_target="${DEPLOY_USER}@${DEPLOY_HOST}"
+          remote_deploy_dir="${DEPLOY_PATH}/deploy"
+          ssh "${ssh_args[@]}" "$remote_target" "mkdir -p '$remote_deploy_dir'"
+          scp "${scp_args[@]}" docker-compose.yaml "$remote_target:$remote_deploy_dir/docker-compose.release.yaml"
+          scp "${scp_args[@]}" deploy/remote-release.sh "$remote_target:$remote_deploy_dir/remote-release.sh"
+          ssh "${ssh_args[@]}" "$remote_target" "chmod 700 '$remote_deploy_dir/remote-release.sh'"
+          printf '%s\n' "$GHCR_READ_TOKEN" | ssh "${ssh_args[@]}" "$remote_target" \
+            "bash '$remote_deploy_dir/remote-release.sh' '$DEPLOY_PATH' '$IMAGE_REF' '$VERSION' '$BUILD_SHA' '$DEPLOY_HEALTH_URL'"

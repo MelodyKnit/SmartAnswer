@@ -761,40 +761,40 @@ class PlatformService:
         normalized_source = (source or "").strip()
         with self._lock:
             if normalized_source == "announcement":
-                record = self.repository.get_announcement(item_id)
+                announcement_record = self.repository.get_announcement(item_id)
                 now = time.time()
-                if record is None or not self.announcement_visible_for_role(
-                    record, role=role, now=now
+                if announcement_record is None or not self.announcement_visible_for_role(
+                    announcement_record, role=role, now=now
                 ):
                     raise AuthError("ANNOUNCEMENT_NOT_FOUND", "公告不存在", http_status=404)
                 self.repository.save_notification_read_receipt(
                     NotificationReadReceiptRecord(
                         user_id=user_id,
                         source="announcement",
-                        item_id=record.announcement_id,
-                        item_updated_at=record.updated_at,
+                        item_id=announcement_record.announcement_id,
+                        item_updated_at=announcement_record.updated_at,
                         read_at=now,
                     )
                 )
             elif normalized_source == "notification":
-                record = self.repository.get_notification(item_id)
-                if record is None:
+                notification_record = self.repository.get_notification(item_id)
+                if notification_record is None:
                     raise AuthError("NOTIFICATION_NOT_FOUND", "消息不存在", http_status=404)
-                if record.user_id not in {None, user_id}:
+                if notification_record.user_id not in {None, user_id}:
                     raise AuthError("NOTIFICATION_FORBIDDEN", "无权操作该消息", http_status=403)
-                if record.user_id is None:
+                if notification_record.user_id is None:
                     self.repository.save_notification_read_receipt(
                         NotificationReadReceiptRecord(
                             user_id=user_id,
                             source="notification",
-                            item_id=record.notification_id,
-                            item_updated_at=record.created_at,
+                            item_id=notification_record.notification_id,
+                            item_updated_at=notification_record.created_at,
                             read_at=time.time(),
                         )
                     )
                 else:
-                    record.read = True
-                    self.repository.save_notification(record)
+                    notification_record.read = True
+                    self.repository.save_notification(notification_record)
             else:
                 raise AuthError("INVALID_SOURCE", "通知来源无效", http_status=400)
 
@@ -875,20 +875,20 @@ class PlatformService:
             keys=tuple(keys),
         )
 
-        for record in notification_records:
-            item_updated_at = float(record.created_at or 0.0)
-            receipt = receipts.get(("notification", record.notification_id))
-            read = bool(record.read) if record.user_id else self.receipt_covers(
+        for notification_record in notification_records:
+            item_updated_at = float(notification_record.created_at or 0.0)
+            receipt = receipts.get(("notification", notification_record.notification_id))
+            read = bool(notification_record.read) if notification_record.user_id else self.receipt_covers(
                 receipt, item_updated_at
             )
             items.append(
                 {
-                    "item_id": record.notification_id,
+                    "item_id": notification_record.notification_id,
                     "source": "notification",
-                    "level": record.level,
-                    "category": record.category,
-                    "title": record.title,
-                    "content": record.content,
+                    "level": notification_record.level,
+                    "category": notification_record.category,
+                    "title": notification_record.title,
+                    "content": notification_record.content,
                     "read": read,
                     "pinned": False,
                     "created_at": item_updated_at,
@@ -897,23 +897,27 @@ class PlatformService:
                 }
             )
 
-        for record in announcement_records:
-            item_updated_at = float(record.updated_at or 0.0)
-            receipt = receipts.get(("announcement", record.announcement_id))
-            created_at = float(record.published_at or record.updated_at or record.created_at)
+        for announcement_record in announcement_records:
+            item_updated_at = float(announcement_record.updated_at or 0.0)
+            receipt = receipts.get(("announcement", announcement_record.announcement_id))
+            created_at = float(
+                announcement_record.published_at
+                or announcement_record.updated_at
+                or announcement_record.created_at
+            )
             items.append(
                 {
-                    "item_id": record.announcement_id,
+                    "item_id": announcement_record.announcement_id,
                     "source": "announcement",
-                    "level": record.level,
+                    "level": announcement_record.level,
                     "category": "announcement",
-                    "title": record.title,
-                    "content": record.content,
+                    "title": announcement_record.title,
+                    "content": announcement_record.content,
                     "read": self.receipt_covers(receipt, item_updated_at),
-                    "pinned": bool(record.pinned),
+                    "pinned": bool(announcement_record.pinned),
                     "created_at": created_at,
                     "updated_at": item_updated_at,
-                    "expires_at": float(record.ends_at or 0.0),
+                    "expires_at": float(announcement_record.ends_at or 0.0),
                 }
             )
 
@@ -1936,7 +1940,7 @@ class PlatformService:
                     payload[key] = value
             return payload
 
-    def get_site_config(self) -> dict[str, str]:
+    def get_site_config(self) -> dict[str, object]:
         """读取可公开暴露给登录页和前端初始化使用的站点品牌配置。"""
 
         config = self.get_system_config()
@@ -1947,7 +1951,7 @@ class PlatformService:
         except AuthError:
             logo_url = ""
 
-        site_logo_urls = {}
+        site_logo_urls: dict[str, str] = {}
         if logo_url.startswith("/media/brand/"):
             import re
 

@@ -139,9 +139,11 @@ Recommended release order:
 The Docker image builds the frontend and backend together. Runtime data is written to
 `deploy-data/` on the server and starts empty by default; local `data/` files are not
 required and are not copied into the image.
-Tagged releases publish a private GHCR image and `release-manifest.json`. After the first
-manual deployment, install the host updater from `deploy/updater/` to enable update checks
-and superadmin-confirmed updates without exposing Docker or GitHub credentials to the app.
+Tagged releases publish a private GHCR image and `release-manifest.json`. When the GitHub
+deployment variables and secrets are configured, the same tag workflow updates the existing
+Docker deployment over SSH. No updater service, Docker socket, or GitHub credential is added
+to the application container; see [docs/deployment.md](docs/deployment.md) for the one-time
+GitHub repository setup.
 For production vision-question support, set `STQB_PUBLIC_BASE_URL` to the public HTTPS
 origin of the service. OCS question images are stored under `deploy-data/images/ocs/`
 and exposed as `/media/ocs/images/<sha256>.<ext>` for vision models.

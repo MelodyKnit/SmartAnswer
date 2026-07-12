@@ -8,7 +8,6 @@ import { billingApi, systemConfigApi } from '@/api/endpoints'
 import { ApiException } from '@/api/http'
 import PageHeader from '@/components/PageHeader.vue'
 import SiteLogo from '@/components/SiteLogo.vue'
-import ProjectUpdateCard from '@/components/system/ProjectUpdateCard.vue'
 import { useSiteStore } from '@/stores/site'
 import { getToken } from '@/api/http'
 
@@ -198,8 +197,6 @@ onMounted(load)
     </PageHeader>
 
     <div class="space-y-4">
-      <ProjectUpdateCard />
-
       <!-- 站点外观 -->
       <div class="app-card p-6">
         <h3 class="mb-4 text-base font-semibold text-ink">站点外观</h3>

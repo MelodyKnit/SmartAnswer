@@ -59,8 +59,6 @@ ENV_BAIDU_SEARCH_API_KEY = "STQB_BAIDU_SEARCH_API_KEY"
 ENV_LLM_CACHE_ENABLED = "STQB_LLM_CACHE_ENABLED"
 ENV_LLM_CACHE_MIN_CONFIDENCE = "STQB_LLM_CACHE_MIN_CONFIDENCE"
 ENV_LLM_CACHE_MIN_CONFIRMATIONS = "STQB_LLM_CACHE_MIN_CONFIRMATIONS"
-ENV_UPDATE_ENABLED = "STQB_UPDATE_ENABLED"
-ENV_UPDATE_DIR = "STQB_UPDATE_DIR"
 ENV_EMAIL_DOMAIN_WHITELIST_PATH = "STQB_EMAIL_DOMAIN_WHITELIST_PATH"
 
 
@@ -127,9 +125,6 @@ class GlobalConfig(BaseModel):
     llm_cache_min_confidence: float = 0.95
     llm_cache_min_confirmations: int = 2
 
-    # 在线更新只提交命令到运行数据目录；Docker 与 GitHub 权限由主机更新器持有。
-    update_enabled: bool = False
-    update_dir_path: str = ""
     email_domain_whitelist_path: str = ""
 
     @property
@@ -255,15 +250,6 @@ class GlobalConfig(BaseModel):
         return self.resolve_optional_path(self.search_browser_path)
 
     @property
-    def update_dir(self) -> Path:
-        """返回应用与主机更新器共享的命令和状态目录。"""
-
-        return self.resolve_path(
-            self.update_dir_path,
-            default=self.data_dir / "update",
-        )
-
-    @property
     def email_domain_whitelist_path_resolved(self) -> Path:
         """返回可持久化修改的邮箱域名白名单路径。"""
 
@@ -334,8 +320,6 @@ def load_global_config() -> GlobalConfig:
         llm_cache_enabled=env_bool(ENV_LLM_CACHE_ENABLED, True),
         llm_cache_min_confidence=env_float(ENV_LLM_CACHE_MIN_CONFIDENCE, 0.95),
         llm_cache_min_confirmations=env_int(ENV_LLM_CACHE_MIN_CONFIRMATIONS, 2),
-        update_enabled=env_bool(ENV_UPDATE_ENABLED, False),
-        update_dir_path=env_text(ENV_UPDATE_DIR),
         email_domain_whitelist_path=env_text(ENV_EMAIL_DOMAIN_WHITELIST_PATH),
     )
 

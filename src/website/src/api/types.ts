@@ -345,61 +345,6 @@ export interface SiteConfig {
   }
 }
 
-export type ProjectUpdateState =
-  | 'idle'
-  | 'disabled'
-  | 'unconfigured'
-  | 'queued'
-  | 'checking'
-  | 'downloading'
-  | 'backing_up'
-  | 'deploying'
-  | 'verifying'
-  | 'rolling_back'
-  | 'succeeded'
-  | 'failed'
-  | 'rolled_back'
-  | 'rollback_failed'
-
-export interface ProjectUpdateRelease {
-  name: string
-  body: string
-  published_at: string
-  html_url: string
-}
-
-export interface ProjectUpdateStatus {
-  configured: boolean
-  available: boolean
-  current_version: string
-  build_sha: string
-  build_type: 'source' | 'release'
-  latest_version: string
-  has_update: boolean
-  state: ProjectUpdateState
-  operation_id: string
-  action: 'check' | 'apply'
-  expected_version: string
-  created_at: number
-  checked_at: number
-  updated_at: number
-  last_success_at: number
-  release: ProjectUpdateRelease | null
-  message: string
-  error: string
-}
-
-export interface ProjectUpdateOperation {
-  operation_id: string
-  action: 'check' | 'apply'
-  state: ProjectUpdateState
-  expected_version: string
-  created_at: number
-  updated_at: number
-  message: string
-  error: string
-}
-
 export interface LlmRuntimeConfig {
   llm_fallback?: string
   llm_explain?: string

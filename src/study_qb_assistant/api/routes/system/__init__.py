@@ -9,18 +9,15 @@ from ....answering import AnswerService
 from ....auth import AuthError
 from ....config import get_global_config
 from ....media.brand_images import BrandLogoError, process_and_save_brand_logo
-from ....updates import ProjectUpdateError
 from ...context import (
     auth_error_response,
-    current_user,
     get_lookup_service,
     get_platform_service,
-    get_project_update_service,
     require_permissions,
     require_roles,
 )
 from ...route_support import apply_system_config_to_process
-from ...schemas import ProjectUpdateApplyPayload, SystemConfigPayload
+from ...schemas import SystemConfigPayload
 
 
 def build_system_router() -> APIRouter:
@@ -154,82 +151,4 @@ def build_system_router() -> APIRouter:
                 status_code=500,
             )
 
-    @router.get("/project-update/status")
-    def project_update_status(request: Request) -> JSONResponse:
-        denied = require_roles(request, {"superadmin"})
-        if denied:
-            return denied
-        denied = require_permissions(request, {"system:write"})
-        if denied:
-            return denied
-        payload = get_project_update_service(request).status()
-        return JSONResponse({"ok": True, "update": payload})
-
-    @router.post("/project-update/check")
-    def project_update_check(request: Request) -> JSONResponse:
-        denied = require_roles(request, {"superadmin"})
-        if denied:
-            return denied
-        denied = require_permissions(request, {"system:write"})
-        if denied:
-            return denied
-        try:
-            user = current_user(request) or {}
-            operation = get_project_update_service(request).enqueue_check(
-                requested_by=str(user.get("username") or "superadmin")
-            )
-        except ProjectUpdateError as exc:
-            return project_update_error_response(exc)
-        return JSONResponse(
-            {"ok": True, "operation": operation.to_dict()},
-            status_code=202,
-        )
-
-    @router.post("/project-update/apply")
-    def project_update_apply(
-        request: Request,
-        payload: ProjectUpdateApplyPayload,
-    ) -> JSONResponse:
-        denied = require_roles(request, {"superadmin"})
-        if denied:
-            return denied
-        denied = require_permissions(request, {"system:write"})
-        if denied:
-            return denied
-        try:
-            user = current_user(request) or {}
-            operation = get_project_update_service(request).enqueue_apply(
-                expected_version=payload.expected_version,
-                requested_by=str(user.get("username") or "superadmin"),
-            )
-        except ProjectUpdateError as exc:
-            return project_update_error_response(exc)
-        return JSONResponse(
-            {"ok": True, "operation": operation.to_dict()},
-            status_code=202,
-        )
-
-    @router.get("/project-update/operations/{operation_id}")
-    def project_update_operation(request: Request, operation_id: str) -> JSONResponse:
-        denied = require_roles(request, {"superadmin"})
-        if denied:
-            return denied
-        denied = require_permissions(request, {"system:write"})
-        if denied:
-            return denied
-        try:
-            operation = get_project_update_service(request).operation(operation_id)
-        except ProjectUpdateError as exc:
-            return project_update_error_response(exc)
-        return JSONResponse({"ok": True, "operation": operation.to_dict()})
-
     return router
-
-
-def project_update_error_response(exc: ProjectUpdateError) -> JSONResponse:
-    """把在线更新错误映射成统一 API 错误结构。"""
-
-    return JSONResponse(
-        {"ok": False, "error": {"code": exc.code, "message": exc.message}},
-        status_code=exc.http_status,
-    )

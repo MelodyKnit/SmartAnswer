@@ -13,7 +13,6 @@ services:
       STQB_PORT: 8765
       STQB_DATA_DIR: /app/data
       STQB_REQUIRE_AUTH: "true"
-      STQB_UPDATE_ENABLED: ${STQB_UPDATE_ENABLED:-false}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
