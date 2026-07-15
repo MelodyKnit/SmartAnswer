@@ -11,13 +11,13 @@ import os
 import time
 from dataclasses import dataclass
 
-from ...http_client import HttpClientError, normalize_container_loopback_url, request_text
-from ...image_ocr import build_ocr_query
-from ...input_anomalies import normalize_image_data_urls, normalize_image_urls
+from study_qb_assistant.llm.http_client import HttpClientError, normalize_container_loopback_url, request_text
+from study_qb_assistant.media.question_context import build_ocr_query
+from study_qb_assistant.media.inputs import normalize_image_data_urls, normalize_image_urls
 from ...media.image_anomalies import model_answer_indicates_unreadable_image
-from ...models import ModelAnswer, QuestionQuery
+from study_qb_assistant.questions.models import ModelAnswer, QuestionQuery
 from ...logger import log_event
-from ...question_types import (
+from study_qb_assistant.questions.types import (
     JUDGEMENT_TYPES,
     MULTIPLE_TYPES,
     blank_count_hint,
@@ -26,6 +26,7 @@ from ...question_types import (
 )
 from ..prompts import render_prompt
 from ..tracing import record_trace
+from ..contracts.providers import BaseModelProvider
 from .openai_answer_parser import (
     answer_field,
     bool_from_env,
@@ -40,7 +41,7 @@ from .openai_answer_parser import (
     strip_option_label,
     text_field,
 )
-from .web_search import WebSearchResult
+from ..tools.web_search import WebSearchResult
 from ..orchestration.search_augmented import render_search_evidence
 
 
@@ -48,7 +49,7 @@ TOKEN_LIMIT_PARAMETER_KEYS = ("max_completion_tokens", "max_tokens", "max_output
 
 
 @dataclass(slots=True)
-class OpenAICompatibleProvider:
+class OpenAICompatibleProvider(BaseModelProvider):
     """调用与 OpenAI 兼容的 `/chat/completions` 接口的模型服务提供类。
 
     该类通过发送特定的系统提示词和用户提示词，促使大模型返回包含候选答案、详细说明及置信度的结构化 JSON 响应。

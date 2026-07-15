@@ -28,7 +28,7 @@ http://127.0.0.1:8765/ocs/query
 本地服务运行时，相同的源配置也会在以下地址提供：
 
 ```text
-http://127.0.0.1:8765/configs/ocs-local-study-bank.json
+http://127.0.0.1:8765/api/v1/configs/ocs-local-study-bank.json
 ```
 
 为自定义主机或端口生成配置：
@@ -43,7 +43,7 @@ http://127.0.0.1:8765/configs/ocs-local-study-bank.json
 [
   {
     "name": "Local Study Question Bank",
-    "homepage": "http://127.0.0.1:8765/healthz",
+    "homepage": "http://127.0.0.1:8765/api/v1/healthz",
     "url": "http://127.0.0.1:8765/ocs/query",
     "method": "get",
     "type": "GM_xmlhttpRequest",

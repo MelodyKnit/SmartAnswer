@@ -25,9 +25,9 @@ from study_qb_assistant.llm.providers.openai_compatible import (  # noqa: E402
     OpenAICompatibleProvider,
     _decode_chat_response,
 )
-from study_qb_assistant.http_client import normalize_container_loopback_url  # noqa: E402
-from study_qb_assistant.models import ModelAnswer, QuestionQuery  # noqa: E402
-from study_qb_assistant.api.query_parser import split_options  # noqa: E402
+from study_qb_assistant.llm.http_client import normalize_container_loopback_url  # noqa: E402
+from study_qb_assistant.questions.models import ModelAnswer, QuestionQuery  # noqa: E402
+from study_qb_assistant.questions.parsing import split_options  # noqa: E402
 
 
 class ProviderParsingTests(unittest.TestCase):
@@ -82,7 +82,7 @@ class ProviderParsingTests(unittest.TestCase):
         """测试容器内 loopback 模型地址会自动改写为宿主机别名。"""
 
         with patch(
-            "study_qb_assistant.http_client.is_running_in_container", return_value=True
+            "study_qb_assistant.llm.http_client.is_running_in_container", return_value=True
         ):
             provider = OpenAICompatibleProvider(
                 base_url="http://127.0.0.1:3000/v1", model="demo"
@@ -94,7 +94,7 @@ class ProviderParsingTests(unittest.TestCase):
         """测试外部模型地址不会被错误改写。"""
 
         with patch(
-            "study_qb_assistant.http_client.is_running_in_container", return_value=True
+            "study_qb_assistant.llm.http_client.is_running_in_container", return_value=True
         ):
             provider = OpenAICompatibleProvider(
                 base_url="https://api.example.com/v1", model="demo"
@@ -106,7 +106,7 @@ class ProviderParsingTests(unittest.TestCase):
         """测试 loopback 地址改写时保留端口与鉴权凭据。"""
 
         with patch(
-            "study_qb_assistant.http_client.is_running_in_container", return_value=True
+            "study_qb_assistant.llm.http_client.is_running_in_container", return_value=True
         ):
             rewritten = normalize_container_loopback_url(
                 "http://user:pass@localhost:7890/proxy"

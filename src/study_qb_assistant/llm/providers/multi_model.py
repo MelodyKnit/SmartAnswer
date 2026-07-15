@@ -12,14 +12,15 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from ..tracing import record_trace
-from ...models import ModelAnswer, QuestionQuery
+from study_qb_assistant.questions.models import ModelAnswer, QuestionQuery
 from ...logger import log_event
 from .openai_compatible import OpenAICompatibleProvider
-from .web_search import WebSearchResult
+from ..tools.web_search import WebSearchResult
+from ..contracts.providers import BaseModelProvider
 
 
 @dataclass(slots=True)
-class MultiModelProvider:
+class MultiModelProvider(BaseModelProvider):
     """按优先级编排多个 OpenAI 兼容模型，提供主备自动降级。"""
 
     members: tuple[OpenAICompatibleProvider, ...]

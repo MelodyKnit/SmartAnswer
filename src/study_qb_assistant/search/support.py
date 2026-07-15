@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..models import CanonicalQuestionRecord, QuestionQuery
-from ..normalization import normalize_options
+from study_qb_assistant.questions.models import CanonicalQuestionRecord, QuestionQuery
+from study_qb_assistant.questions.normalization import normalize_options
 
 
 def read_jsonl_records(path: Path) -> list[CanonicalQuestionRecord]:

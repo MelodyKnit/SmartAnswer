@@ -22,20 +22,20 @@ if str(SRC_ROOT) not in sys.path:
 
 from study_qb_assistant.answering import AnswerService  # noqa: E402
 from study_qb_assistant import __version__  # noqa: E402
-from study_qb_assistant.api.local_server import create_app  # noqa: E402
+from study_qb_assistant.api.app import create_app  # noqa: E402
 from study_qb_assistant.auth import AuthService  # noqa: E402
 from study_qb_assistant.logger import log_path  # noqa: E402
-from study_qb_assistant.models import (  # noqa: E402
+from study_qb_assistant.questions.models import (  # noqa: E402
     CanonicalQuestionRecord,
     ModelAnswer,
     QuestionQuery,
 )  # noqa: E402
-from study_qb_assistant.platform import PlatformService  # noqa: E402
-from study_qb_assistant.http_client import HttpClientError  # noqa: E402
+from study_qb_assistant.platform.container import PlatformServices  # noqa: E402
+from study_qb_assistant.llm.http_client import HttpClientError  # noqa: E402
 from study_qb_assistant.llm.providers import OpenAICompatibleProvider  # noqa: E402
 from study_qb_assistant.search import LocalQuestionIndex  # noqa: E402
 from study_qb_assistant.storage import database as database_module  # noqa: E402
-from study_qb_assistant.storage.question_repository import (  # noqa: E402
+from study_qb_assistant.storage.repositories.questions import (  # noqa: E402
     SqlAlchemyQuestionRepository,
 )  # noqa: E402
 
@@ -167,12 +167,12 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             client = TestClient(
                 create_app(
                     _sample_index(),
                     auth_service=auth,
-                    platform_service=platform,
+                    platform_services=platform,
                     require_auth=True,
                 )
             )
@@ -261,12 +261,12 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             client = TestClient(
                 create_app(
                     _sample_index(),
                     auth_service=auth,
-                    platform_service=platform,
+                    platform_services=platform,
                     require_auth=True,
                 )
             )
@@ -319,14 +319,14 @@ class FastAPILocalServerTests(unittest.TestCase):
                 },
                 headers=owner_headers,
             )
-            global_notice = platform.create_notification(
+            global_notice = platform.notifications.create_notification(
                 user_id=None,
                 level="info",
                 category="system",
                 title="全局消息",
                 content="所有用户可见。",
             )
-            platform.create_notification(
+            platform.notifications.create_notification(
                 user_id=str(student_user["user_id"]),
                 level="success",
                 category="wallet",
@@ -408,12 +408,14 @@ class FastAPILocalServerTests(unittest.TestCase):
             client = TestClient(create_app(_sample_index(), require_auth=False))
             key_headers = {"Authorization": "Bearer wire-shape-key"}
 
-            health = client.get("/healthz")
+            health = client.get("/api/v1/healthz")
             query_get = client.get(
-                "/query", params={"title": "示例题", "type": "single"}, headers=key_headers
+                "/api/v1/query",
+                params={"title": "示例题", "type": "single"},
+                headers=key_headers,
             )
             query_post = client.post(
-                "/query",
+                "/api/v1/query",
                 json={
                     "title": "示例题",
                     "options": ["正确项", "干扰项"],
@@ -425,13 +427,27 @@ class FastAPILocalServerTests(unittest.TestCase):
             ocs_get = client.get(
                 "/ocs/query", params={"title": "示例题", "type": "single"}, headers=key_headers
             )
-            config = client.get("/configs/ocs-local-study-bank.json")
-            openapi = client.get("/openapi.json")
+            config = client.get("/api/v1/configs/ocs-local-study-bank.json")
+            browser_health = client.get(
+                "/api/v1/healthz",
+                headers={"Accept": "text/html"},
+            )
+            legacy_health = client.get("/healthz")
+            openapi = client.get("/api/v1/openapi.json")
         finally:
             os.environ.pop("STQB_OCS_API_KEYS", None)
 
         self.assertEqual(health.json(), {"ok": True})
+        self.assertEqual(browser_health.json(), {"ok": True})
         self.assertEqual(openapi.json()["info"]["version"], __version__)
+        self.assertEqual(legacy_health.headers["Deprecation"], "true")
+        self.assertIn("/api/v1/healthz", legacy_health.headers["Link"])
+        self.assertTrue(
+            all(
+                path == "/ocs/query" or path.startswith("/api/v1/")
+                for path in openapi.json()["paths"]
+            )
+        )
         self.assertEqual(query_get.json()["result"]["candidate_answer"], "A")
         self.assertEqual(query_post.json()["request_id"], "route-test")
         self.assertEqual(ocs_get.json()["code"], 0)
@@ -469,10 +485,10 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             client = TestClient(
                 create_app(
-                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
 
@@ -607,13 +623,13 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
-            platform.set_system_config({"invite_bonus_points": "50"})
+            platform = PlatformServices(database_path)
+            platform.settings.set_system_config({"invite_bonus_points": "50"})
             client = TestClient(
                 create_app(
                     _sample_index(),
                     auth_service=auth,
-                    platform_service=platform,
+                    platform_services=platform,
                     require_auth=True,
                 )
             )
@@ -727,10 +743,10 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             client = TestClient(
                 create_app(
-                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
 
@@ -767,10 +783,10 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             client = TestClient(
                 create_app(
-                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
 
@@ -809,10 +825,10 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             client = TestClient(
                 create_app(
-                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
 
@@ -834,11 +850,11 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
-            platform.set_system_config({"registration_enabled": "false"})
+            platform = PlatformServices(database_path)
+            platform.settings.set_system_config({"registration_enabled": "false"})
             client = TestClient(
                 create_app(
-                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
 
@@ -865,10 +881,10 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             client = TestClient(
                 create_app(
-                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
 
@@ -902,7 +918,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 json={"smtp_password": "", "smtp_from_name": "AI题库运营"},
                 headers=headers,
             )
-            raw_password_after_blank_patch = platform.get_system_config(reveal_secret=True)[
+            raw_password_after_blank_patch = platform.settings.get_system_config(reveal_secret=True)[
                 "smtp_password"
             ]
 
@@ -919,8 +935,8 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
-            platform.set_system_config(
+            platform = PlatformServices(database_path)
+            platform.settings.set_system_config(
                 {
                     "email_verification_enabled": "true",
                     "smtp_host": "smtp.example.com",
@@ -935,7 +951,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
             client = TestClient(
                 create_app(
-                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
             sender = FakeEmailSender()
@@ -1013,8 +1029,8 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
-            platform.set_system_config(
+            platform = PlatformServices(database_path)
+            platform.settings.set_system_config(
                 {
                     "email_verification_enabled": "true",
                     "smtp_host": "smtp.example.com",
@@ -1028,7 +1044,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
             client = TestClient(
                 create_app(
-                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
             sender = FakeEmailSender()
@@ -1069,8 +1085,8 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
-            platform.set_system_config(
+            platform = PlatformServices(database_path)
+            platform.settings.set_system_config(
                 {
                     "email_verification_enabled": "true",
                     "smtp_host": "smtp.example.com",
@@ -1086,7 +1102,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
             client = TestClient(
                 create_app(
-                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
             client.app.state.email_sender = FakeEmailSender()
@@ -1115,8 +1131,8 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
-            platform.set_system_config(
+            platform = PlatformServices(database_path)
+            platform.settings.set_system_config(
                 {
                     "email_verification_enabled": "true",
                     "smtp_host": "smtp.example.com",
@@ -1131,7 +1147,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
             client = TestClient(
                 create_app(
-                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
             client.app.state.email_sender = FailingEmailSender()
@@ -1158,8 +1174,8 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
-            platform.set_system_config(
+            platform = PlatformServices(database_path)
+            platform.settings.set_system_config(
                 {
                     "email_verification_enabled": "true",
                     "smtp_host": "smtp.example.com",
@@ -1174,7 +1190,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
             client = TestClient(
                 create_app(
-                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
             client.app.state.email_sender = FakeEmailSender()
@@ -1220,10 +1236,10 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             client = TestClient(
                 create_app(
-                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
 
@@ -1378,7 +1394,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             test_response = client.post(f"/llm-models/{model_id_for_test}/test", headers=headers)
             self.assertIn("ok", test_response.json())
 
-            platform.save_llm_call_trace(
+            platform.llm.save_call_trace(
                 {
                     "request_id": "req-evidence",
                     "phase": "web_search",
@@ -1517,10 +1533,10 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             client = TestClient(
                 create_app(
-                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
 
@@ -1551,10 +1567,10 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             client = TestClient(
                 create_app(
-                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
 
@@ -1626,10 +1642,10 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             client = TestClient(
                 create_app(
-                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
             client.post("/auth/register", json={"username": "boss", "password": "password123"})
@@ -1711,7 +1727,7 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
 
             record = CanonicalQuestionRecord(
                 question_id="http_q_1",
@@ -1732,7 +1748,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             index = LocalQuestionIndex((record,))
 
             client = TestClient(
-                create_app(index, auth_service=auth, platform_service=platform, require_auth=True)
+                create_app(index, auth_service=auth, platform_services=platform, require_auth=True)
             )
 
             client.post("/auth/register", json={"username": "boss", "password": "password123"})
@@ -1804,7 +1820,7 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             july_first = CanonicalQuestionRecord(
                 question_id="updated_q_1",
                 title_raw="7月1日修改题目",
@@ -1839,7 +1855,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
             index = LocalQuestionIndex((july_first, july_second))
             client = TestClient(
-                create_app(index, auth_service=auth, platform_service=platform, require_auth=True)
+                create_app(index, auth_service=auth, platform_services=platform, require_auth=True)
             )
             client.post("/auth/register", json={"username": "boss", "password": "password123"})
             headers = {
@@ -1957,10 +1973,10 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             client = TestClient(
                 create_app(
-                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
 
@@ -1996,10 +2012,10 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             client = TestClient(
                 create_app(
-                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
 
@@ -2026,7 +2042,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
             response_config = json.loads(update.json()["config"]["web_search_configs"])
             raw_config = json.loads(
-                platform.get_llm_runtime_config(reveal_secret=True)["web_search_configs"]
+                platform.settings.get_llm_runtime_config(reveal_secret=True)["web_search_configs"]
             )
             edit_without_secret = [
                 {
@@ -2046,7 +2062,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 headers=headers,
             )
             preserved_raw_config = json.loads(
-                platform.get_llm_runtime_config(reveal_secret=True)["web_search_configs"]
+                platform.settings.get_llm_runtime_config(reveal_secret=True)["web_search_configs"]
             )
 
         self.assertTrue(update.json()["ok"])
@@ -2062,10 +2078,10 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             client = TestClient(
                 create_app(
-                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
 
@@ -2078,7 +2094,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 "/tokens", json={"description": "工作台接入"}, headers=headers
             )
             token_id = token_create.json()["token_info"]["token_id"]
-            notify = platform.create_notification(
+            notify = platform.notifications.create_notification(
                 user_id=None,
                 level="info",
                 category="system",
@@ -2192,10 +2208,10 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             client = TestClient(
                 create_app(
-                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
 
@@ -2219,10 +2235,10 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             client = TestClient(
                 create_app(
-                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
 
@@ -2232,7 +2248,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'alice', 'password': 'password123'}).json()['token']}"
             }
             alice_user_id = auth.get_user("alice")["user_id"]
-            platform.record_usage(
+            platform.usage.record_usage(
                 user_id=alice_user_id,
                 username="alice",
                 token_id=None,
@@ -2245,7 +2261,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 points_cost=1,
                 elapsed_ms=1000.0,
             )
-            platform.record_usage(
+            platform.usage.record_usage(
                 user_id=alice_user_id,
                 username="alice",
                 token_id=None,
@@ -2270,10 +2286,10 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             client = TestClient(
                 create_app(
-                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
 
@@ -2286,7 +2302,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             next_day = "2026-06-28"
             end_of_day = datetime(2026, 6, 27, 23, 59, 59, 999000, tzinfo=ZoneInfo("Asia/Shanghai"))
             next_day_start = datetime(2026, 6, 28, 0, 0, 0, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
-            platform.record_usage(
+            platform.usage.record_usage(
                 user_id=user["user_id"],
                 username="alice",
                 token_id=None,
@@ -2299,7 +2315,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 points_cost=0,
                 elapsed_ms=120.0,
             )
-            platform.record_usage(
+            platform.usage.record_usage(
                 user_id=user["user_id"],
                 username="alice",
                 token_id=None,
@@ -2312,7 +2328,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 points_cost=0,
                 elapsed_ms=160.0,
             )
-            with platform.repository.session_factory() as session:
+            with platform.usage.repository.session_factory() as session:
                 first_log = session.execute(
                     text(
                         """
@@ -2372,10 +2388,10 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             client = TestClient(
                 create_app(
-                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
 
@@ -2385,11 +2401,11 @@ class FastAPILocalServerTests(unittest.TestCase):
             ).json()["token"]
             headers = {"Authorization": f"Bearer {token}"}
             user = auth.get_user("alice")
-            _raw_token, token_info = platform.create_token(
+            _raw_token, token_info = platform.tokens.create_token(
                 user_id=user["user_id"],
                 description="临时令牌",
             )
-            platform.record_usage(
+            platform.usage.record_usage(
                 user_id=user["user_id"],
                 username="alice",
                 token_id=token_info["token_id"],
@@ -2401,7 +2417,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 provider="local",
                 points_cost=0,
             )
-            platform.delete_token(user_id=user["user_id"], token_id=token_info["token_id"])
+            platform.tokens.delete_token(user_id=user["user_id"], token_id=token_info["token_id"])
 
             response = client.get("/usage-logs", headers=headers)
 
@@ -2424,12 +2440,12 @@ class FastAPILocalServerTests(unittest.TestCase):
                 clear=False,
             ):
                 auth = AuthService(database_path)
-                platform = PlatformService(database_path)
+                platform = PlatformServices(database_path)
                 client = TestClient(
                     create_app(
                         _sample_index(),
                         auth_service=auth,
-                        platform_service=platform,
+                        platform_services=platform,
                         require_auth=True,
                     )
                 )
@@ -2472,17 +2488,17 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             user = auth.register("alice", "password123")
             auth.set_points("alice", 25)
 
             with mock.patch.object(
-                platform.repository,
+                platform.usage.repository,
                 "commit_usage_transaction",
                 side_effect=RuntimeError("write failed"),
             ):
                 with self.assertRaises(RuntimeError):
-                    platform.record_usage(
+                    platform.usage.record_usage(
                         user_id=user["user_id"],
                         username="alice",
                         token_id=None,
@@ -2497,7 +2513,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                     )
 
             current_user = auth.get_user("alice")
-            logs = platform.list_usage_logs(username="alice")
+            logs = platform.usage.list_usage_logs(username="alice")
 
         self.assertEqual(current_user["points"], 25)
         self.assertEqual(len(logs), 0)
@@ -2506,10 +2522,10 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             client = TestClient(
                 create_app(
-                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
 
@@ -2539,10 +2555,10 @@ class FastAPILocalServerTests(unittest.TestCase):
             points_after_second = auth.get_user("alice")["points"]
             token_after = next(
                 item
-                for item in platform.list_tokens(user_id=auth.get_user("alice")["user_id"])
+                for item in platform.tokens.list_tokens(user_id=auth.get_user("alice")["user_id"])
                 if item["token_id"] == token_id
             )
-            logs = platform.list_usage_logs(username="alice")
+            logs = platform.usage.list_usage_logs(username="alice")
 
         self.assertEqual(first.status_code, 200)
         self.assertEqual(second.status_code, 401)
@@ -2609,10 +2625,10 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             client = TestClient(
                 create_app(
-                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
 
@@ -2663,10 +2679,10 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             client = TestClient(
                 create_app(
-                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
 
@@ -2718,10 +2734,10 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             client = TestClient(
                 create_app(
-                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
 
@@ -2754,10 +2770,10 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             client = TestClient(
                 create_app(
-                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
 
@@ -2851,10 +2867,10 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             client = TestClient(
                 create_app(
-                    _sample_index(), auth_service=auth, platform_service=platform, require_auth=True
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
 
@@ -2900,14 +2916,14 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             lookup = AnswerService(
                 LocalQuestionIndex(()),
                 model_provider=ImageFetch403Provider(),
                 allow_model_fallback=True,
             )
             client = TestClient(
-                create_app(lookup, auth_service=auth, platform_service=platform, require_auth=True)
+                create_app(lookup, auth_service=auth, platform_services=platform, require_auth=True)
             )
 
             client.post("/auth/register", json={"username": "boss", "password": "password123"})
@@ -2942,7 +2958,7 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             repository = SqlAlchemyQuestionRepository(database_path)
             repository.save_question_record(
                 CanonicalQuestionRecord(
@@ -2966,7 +2982,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 create_app(
                     LocalQuestionIndex(()),
                     auth_service=auth,
-                    platform_service=platform,
+                    platform_services=platform,
                     require_auth=False,
                 )
             )
@@ -2988,7 +3004,7 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             record = CanonicalQuestionRecord(
                 question_id="jsonl:deleted",
                 title_raw="单选题(1分)已删除题不应重启复活。",
@@ -3013,7 +3029,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 create_app(
                     LocalQuestionIndex((record,)),
                     auth_service=auth,
-                    platform_service=platform,
+                    platform_services=platform,
                     require_auth=False,
                 )
             )
@@ -3038,7 +3054,7 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             repository = SqlAlchemyQuestionRepository(database_path)
             repository.save_question_record(
                 CanonicalQuestionRecord(
@@ -3087,7 +3103,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 create_app(
                     ai_seed,
                     auth_service=auth,
-                    platform_service=platform,
+                    platform_services=platform,
                     require_auth=False,
                 )
             )
@@ -3109,14 +3125,14 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             lookup = AnswerService(
                 LocalQuestionIndex(()),
                 model_provider=LowConfidenceProvider(),
                 allow_model_fallback=True,
             )
             client = TestClient(
-                create_app(lookup, auth_service=auth, platform_service=platform, require_auth=True)
+                create_app(lookup, auth_service=auth, platform_services=platform, require_auth=True)
             )
 
             client.post("/auth/register", json={"username": "owner", "password": "password123"})
@@ -3162,7 +3178,7 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             provider = OpenAICompatibleProvider(
                 base_url="http://example.test/v1",
                 model="mock-model",
@@ -3177,7 +3193,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 answer_retry_times=1,
             )
             client = TestClient(
-                create_app(lookup, auth_service=auth, platform_service=platform, require_auth=True)
+                create_app(lookup, auth_service=auth, platform_services=platform, require_auth=True)
             )
             _headers, raw_api_token = self._register_owner_and_create_token(client)
 
@@ -3216,8 +3232,8 @@ class FastAPILocalServerTests(unittest.TestCase):
                     },
                     headers={"Authorization": f"Bearer {raw_api_token}"},
                 )
-            usage_logs = platform.list_usage_logs(username="owner")
-            traces = platform.list_llm_call_traces(request_id=usage_logs[0]["request_id"])
+            usage_logs = platform.usage.list_usage_logs(username="owner")
+            traces = platform.llm.list_call_traces(request_id=usage_logs[0]["request_id"])
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["code"], 0)
@@ -3241,7 +3257,7 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             provider = OpenAICompatibleProvider(
                 base_url="http://example.test/v1",
                 model="mock-model",
@@ -3256,7 +3272,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 answer_retry_times=0,
             )
             client = TestClient(
-                create_app(lookup, auth_service=auth, platform_service=platform, require_auth=True)
+                create_app(lookup, auth_service=auth, platform_services=platform, require_auth=True)
             )
             _headers, raw_api_token = self._register_owner_and_create_token(client)
 
@@ -3269,8 +3285,8 @@ class FastAPILocalServerTests(unittest.TestCase):
                     params={"title": "单选题(1分)空流式响应", "type": "single"},
                     headers={"Authorization": f"Bearer {raw_api_token}"},
                 )
-            usage_logs = platform.list_usage_logs(username="owner")
-            traces = platform.list_llm_call_traces(request_id=usage_logs[0]["request_id"])
+            usage_logs = platform.usage.list_usage_logs(username="owner")
+            traces = platform.llm.list_call_traces(request_id=usage_logs[0]["request_id"])
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["code"], 1)
@@ -3286,7 +3302,7 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             provider = OpenAICompatibleProvider(
                 base_url="http://example.test/v1",
                 model="mock-model",
@@ -3301,7 +3317,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 answer_retry_times=0,
             )
             client = TestClient(
-                create_app(lookup, auth_service=auth, platform_service=platform, require_auth=True)
+                create_app(lookup, auth_service=auth, platform_services=platform, require_auth=True)
             )
             _headers, raw_api_token = self._register_owner_and_create_token(client)
 
@@ -3332,8 +3348,8 @@ class FastAPILocalServerTests(unittest.TestCase):
                     },
                     headers={"Authorization": f"Bearer {raw_api_token}"},
                 )
-            usage_logs = platform.list_usage_logs(username="owner")
-            traces = platform.list_llm_call_traces(request_id=usage_logs[0]["request_id"])
+            usage_logs = platform.usage.list_usage_logs(username="owner")
+            traces = platform.llm.list_call_traces(request_id=usage_logs[0]["request_id"])
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["code"], 1)
@@ -3347,7 +3363,7 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             flaky_provider = FlakyProvider(2, answer_text="重试后的正确答案")
             lookup = AnswerService(
                 LocalQuestionIndex(()),
@@ -3356,7 +3372,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 answer_retry_times=3,
             )
             client = TestClient(
-                create_app(lookup, auth_service=auth, platform_service=platform, require_auth=True)
+                create_app(lookup, auth_service=auth, platform_services=platform, require_auth=True)
             )
 
             client.post("/auth/register", json={"username": "owner", "password": "password123"})
@@ -3375,10 +3391,10 @@ class FastAPILocalServerTests(unittest.TestCase):
                 },
                 headers={"Authorization": f"Bearer {raw_api_token}"},
             )
-            usage_logs = platform.list_usage_logs(username="owner")
+            usage_logs = platform.usage.list_usage_logs(username="owner")
             token_info = next(
                 item
-                for item in platform.list_tokens(user_id=auth.get_user("owner")["user_id"])
+                for item in platform.tokens.list_tokens(user_id=auth.get_user("owner")["user_id"])
                 if item["token_id"] == token_create.json()["token_info"]["token_id"]
             )
 
@@ -3429,13 +3445,13 @@ class FastAPILocalServerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
-            platform = PlatformService(database_path)
+            platform = PlatformServices(database_path)
             lookup = AnswerService(
                 LocalQuestionIndex(()),
                 answer_retry_times=0,
             )
             client = TestClient(
-                create_app(lookup, auth_service=auth, platform_service=platform, require_auth=True)
+                create_app(lookup, auth_service=auth, platform_services=platform, require_auth=True)
             )
 
             client.post("/auth/register", json={"username": "owner", "password": "password123"})

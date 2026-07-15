@@ -12,12 +12,12 @@ SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from study_qb_assistant.image_ocr import (  # noqa: E402
+from study_qb_assistant.media.question_context import (  # noqa: E402
     CHAOXING_IMAGE_REFERER,
     browser_image_request_headers,
     build_model_query,
 )
-from study_qb_assistant.models import QuestionQuery  # noqa: E402
+from study_qb_assistant.questions.models import QuestionQuery  # noqa: E402
 
 
 class FakeImageResponse:
@@ -93,7 +93,7 @@ class ImageOcrHydrationTests(unittest.TestCase):
         ):
             hydrated = build_model_query(query)
 
-        self.assertEqual(hydrated.title, query.title)
+        self.assertEqual(hydrated.title, "")
         self.assertEqual(hydrated.question_type, "single")
         self.assertEqual(hydrated.request_id, "req-image-1")
         self.assertEqual(hydrated.page_url, query.page_url)

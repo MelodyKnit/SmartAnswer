@@ -82,6 +82,34 @@ const previewLogoUrl = computed(() => {
   return ''
 })
 
+/** 返回 SMTP 配置中首个未满足的启用条件。 */
+function smtpConfigurationIssue(): string | null {
+  if (!form.smtp_host.trim()) return '请填写 SMTP 服务器'
+  if (!Number.isInteger(form.smtp_port) || form.smtp_port < 1 || form.smtp_port > 65535) {
+    return '请填写有效的 SMTP 端口'
+  }
+  if (!['ssl', 'starttls', 'none'].includes(form.smtp_security)) {
+    return '请选择 SMTP 加密方式'
+  }
+  if (!form.smtp_username.trim()) return '请填写 SMTP 用户名'
+  if (!form.smtp_password.trim() && !form.smtp_password_configured) {
+    return '请填写 SMTP 密码'
+  }
+  if (!/^\S+@\S+\.\S+$/.test(form.smtp_from_email.trim())) {
+    return '请填写有效的发件邮箱'
+  }
+  return null
+}
+
+/** 开启邮箱验证前拦截不完整配置；关闭始终允许。 */
+function beforeEmailVerificationChange(): boolean {
+  if (form.email_verification_enabled === 'true') return true
+  const issue = smtpConfigurationIssue()
+  if (!issue) return true
+  ElMessage.warning(`请先完成 SMTP 配置后再开启邮箱验证：${issue}`)
+  return false
+}
+
 async function load() {
   loading.value = true
   try {
@@ -121,19 +149,11 @@ async function load() {
 }
 
 async function save() {
-  // 当开启邮箱验证码注册时，在前端预先进行强校验提示，防止什么都不填就直接开启提交
+  // 后端仍执行最终校验；这里用于处理直接编辑字段后保存的场景。
   if (form.email_verification_enabled === 'true') {
-    const hasHost = !!form.smtp_host.trim()
-    const hasUser = !!form.smtp_username.trim()
-    const hasFrom = !!form.smtp_from_email.trim()
-    const hasPassword = !!form.smtp_password.trim() || form.smtp_password_configured
-
-    if (!hasHost || !hasUser || !hasFrom) {
-      ElMessage.warning('启用“邮箱验证码注册”必须完整填写 SMTP 服务核心配置（SMTP 服务器、用户名及发件邮箱）！')
-      return
-    }
-    if (!hasPassword) {
-      ElMessage.warning('启用“邮箱验证码注册”必须配置 SMTP 密码！')
+    const issue = smtpConfigurationIssue()
+    if (issue) {
+      ElMessage.warning(`SMTP 配置不完整：${issue}`)
       return
     }
   }
@@ -282,6 +302,7 @@ onMounted(load)
               v-model="form.email_verification_enabled"
               active-value="true"
               inactive-value="false"
+              :before-change="beforeEmailVerificationChange"
             />
           </el-form-item>
           <el-form-item label="SMTP 服务器">

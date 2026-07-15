@@ -1,60 +1,28 @@
-# API 结构说明
+# API 结构
 
-该目录按“应用组装 / 数据契约 / 路由域 / 路由辅助”拆分。FastAPI 入口只负责装配应用，具体接口必须放到对应业务域目录，避免继续出现 `platform_xxx_routes.py` 这类平铺文件。
+`api/app.py` 只负责创建 FastAPI 应用和挂载路由。业务接口按版本和领域组织。
 
 ## 入口
 
-- `local_server.py`
-  - 创建 `FastAPI app`
-  - 挂载运行时状态
-  - 注册各业务域路由
+- `app.py`：应用组装与运行时状态挂载。
+- `v1/router.py`：`/api/v1` 唯一聚合入口。
+- `v1/<domain>/router.py`：领域路由。
+- `v1/<domain>/schemas.py`：该领域的请求模型。
+- `ocs/router.py`：稳定公共入口 `/ocs/query`。
+- `static/router.py`：前端静态资源和 SPA 页面。
 
-## 数据契约
+## 公共能力
 
-- `schemas.py`
-  - 统一存放请求体 `BaseModel`
-  - 请求体命名按业务意图表达，例如 `FeedbackPayload`、`ImportScriptCreatePayload`
+- `dependencies.py`：按领域读取运行时服务。
+- `security.py`：身份、角色与权限校验。
+- `middleware.py`：CORS、SPA 和旧接口弃用响应头。
+- `query_execution.py`：查题调用、计费和使用记录编排。
+- `legacy.py`：旧无前缀业务路径的临时兼容规则。
 
-## 路由辅助
+## 路由规则
 
-- `context.py`
-  - 当前请求上下文、鉴权判断、CORS、统一错误响应
-- `query_parser.py`
-  - 题目查询参数清洗与 `QuestionQuery` 构建
-- `route_support.py`
-  - 查题执行、日志记录、积分记账、状态与静态页面辅助
-
-## 路由域
-
-- `routes/auth/`
-  - 登录、注册、会话、重置密码
-- `routes/query/`
-  - `/query`、`/ocs/query`、状态与 OCS 配置接口
-- `routes/users/`
-  - 用户管理、个人资料、个人看板、使用统计
-- `routes/tokens/`
-  - API Key 创建、更新、吊销、导入脚本快捷配置
-- `routes/feedback/`
-  - 用户反馈提交、反馈列表、管理员处理反馈
-- `routes/wallet/`
-  - 钱包、积分发放、兑换码、兑换与积分策略只读接口
-- `routes/workbench/`
-  - 工作台、排行统计、通知
-- `routes/catalog/`
-  - 角色权限与题库记录管理
-- `routes/import_scripts/`
-  - 导入脚本模板创建、查询、删除与生成
-- `routes/llm/`
-  - 大模型配置、联网搜索配置与调用统计
-- `routes/system/`
-  - 系统配置、系统日志与运行状态
-- `routes/static/`
-  - 前端静态页面分发
-
-## 扩展约定
-
-- 新增接口先判断资源归属，再放入对应 `routes/<domain>/__init__.py`。
-- 新增业务域使用清晰的资源名目录，例如 `feedback`、`import_scripts`。
-- 不再新增 `*_routes.py` 平铺文件，也不要把多个资源混进一个“platform”文件。
-- 路由函数只做参数边界、鉴权、错误映射和响应组装；业务规则放在服务层。
-- URL 契约以资源路径为准，整理代码结构时不要无故改变前端已使用的路径。
+- 规范业务接口统一使用 `/api/v1/...`。
+- `/ocs/query` 是唯一保留的无版本业务入口。
+- 旧无前缀路径复用同一份 v1 router，不复制实现，不进入 OpenAPI，并返回 `Deprecation` 与 successor `Link`。
+- OpenAPI 位于 `/api/v1/openapi.json`，文档位于 `/api/docs`。
+- 路由只处理 HTTP 边界、鉴权、错误映射和响应组装；业务规则放入领域服务。

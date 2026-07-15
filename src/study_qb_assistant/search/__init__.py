@@ -8,11 +8,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ..answer_reuse import record_should_be_indexable_by_reuse_policy
+from study_qb_assistant.answering.reuse import record_should_be_indexable_by_reuse_policy
 from ..auth import AuthError
-from ..exporting import write_jsonl
-from ..input_anomalies import normalize_image_urls
-from ..models import CanonicalQuestionRecord, QueryResult, QuestionQuery
+from study_qb_assistant.storage.jsonl import write_jsonl
+from study_qb_assistant.media.inputs import normalize_image_urls
+from study_qb_assistant.questions.models import CanonicalQuestionRecord, QueryResult, QuestionQuery
 from .matching import MatchCandidate, QuestionMatcher
 from .support import float_from_metadata, is_ai_record, read_jsonl_records
 

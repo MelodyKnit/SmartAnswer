@@ -18,7 +18,7 @@ from study_qb_assistant.llm.prompts import render_prompt  # noqa: E402
 from study_qb_assistant.llm.providers.openai_compatible import (  # noqa: E402
     OpenAICompatibleProvider,
 )
-from study_qb_assistant.models import QuestionQuery  # noqa: E402
+from study_qb_assistant.questions.models import QuestionQuery  # noqa: E402
 
 
 class PromptTemplateTests(unittest.TestCase):

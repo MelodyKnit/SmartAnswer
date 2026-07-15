@@ -22,8 +22,8 @@ if str(SRC_ROOT) not in sys.path:
 
 from study_qb_assistant.ingestion import iter_cmmlu_records  # noqa: E402
 from study_qb_assistant.answering import AnswerService  # noqa: E402
-from study_qb_assistant.exporting import write_jsonl  # noqa: E402
-from study_qb_assistant.models import CanonicalQuestionRecord, QuestionQuery  # noqa: E402
+from study_qb_assistant.storage.jsonl import write_jsonl  # noqa: E402
+from study_qb_assistant.questions.models import CanonicalQuestionRecord, QuestionQuery  # noqa: E402
 from study_qb_assistant.search import LocalQuestionIndex  # noqa: E402
 
 

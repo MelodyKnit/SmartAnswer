@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ..answer_quality import repair_model_answer
+from study_qb_assistant.answering.quality import repair_model_answer
 from ..logger import log_event
-from ..models import ModelAnswer, QuestionQuery
+from study_qb_assistant.questions.models import ModelAnswer, QuestionQuery
 from .policies import has_unhydrated_image_context
 
 if TYPE_CHECKING:

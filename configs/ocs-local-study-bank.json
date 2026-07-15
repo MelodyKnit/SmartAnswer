@@ -1,7 +1,7 @@
 [
   {
     "name": "Local Study Question Bank",
-    "homepage": "http://127.0.0.1:8765/healthz",
+    "homepage": "http://127.0.0.1:8765/api/v1/healthz",
     "url": "http://127.0.0.1:8765/ocs/query",
     "method": "get",
     "type": "GM_xmlhttpRequest",

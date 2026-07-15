@@ -16,9 +16,9 @@ SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-import study_qb_assistant.runtime as runtime_module  # noqa: E402
+import study_qb_assistant.bootstrap as runtime_module  # noqa: E402
 import study_qb_assistant.config as config_module  # noqa: E402
-from study_qb_assistant.runtime import load_local_env  # noqa: E402
+from study_qb_assistant.bootstrap import load_local_env  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 

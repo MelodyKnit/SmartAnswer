@@ -9,6 +9,14 @@ import axios, { type AxiosInstance, type AxiosRequestConfig } from 'axios'
 
 const TOKEN_KEY = 'stqb_token'
 
+function resolveApiBaseUrl(configuredBase: string): string {
+  const normalized = configuredBase.trim().replace(/\/+$/, '')
+  if (normalized.endsWith('/api/v1')) {
+    return normalized
+  }
+  return normalized ? `${normalized}/api/v1` : '/api/v1'
+}
+
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY)
 }
@@ -46,7 +54,7 @@ export function registerUnauthorizedHandler(handler: () => void): void {
 }
 
 const http: AxiosInstance = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE || '',
+  baseURL: resolveApiBaseUrl(import.meta.env.VITE_API_BASE || ''),
   timeout: 20000,
 })
 

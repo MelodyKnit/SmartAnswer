@@ -4,7 +4,7 @@
 """
 
 from .answering import AnswerService
-from .models import CanonicalQuestionRecord
+from study_qb_assistant.questions.models import CanonicalQuestionRecord
 from .version import BUILD_INFO
 
 __version__ = BUILD_INFO.version

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from ..input_anomalies import normalize_image_urls
-from ..models import ModelAnswer, QuestionQuery
+from .inputs import normalize_image_urls
+from study_qb_assistant.questions.models import ModelAnswer, QuestionQuery
 
 
 def model_answer_indicates_unreadable_image(query: QuestionQuery, answer: ModelAnswer) -> bool:

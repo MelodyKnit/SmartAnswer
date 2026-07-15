@@ -14,8 +14,8 @@ import string
 import unicodedata
 from typing import Any
 
-from ..models import CanonicalQuestionRecord, QuestionQuery
-from ..normalization import normalize_options
+from study_qb_assistant.questions.models import CanonicalQuestionRecord, QuestionQuery
+from study_qb_assistant.questions.normalization import normalize_options
 from .support import is_ai_record, record_options_match
 
 fuzz: Any

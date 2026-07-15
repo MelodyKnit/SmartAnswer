@@ -18,12 +18,13 @@ SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from study_qb_assistant.api.local_server import create_app  # noqa: E402
+from study_qb_assistant.api.app import create_app  # noqa: E402
+from study_qb_assistant.answering.policies import has_unhydrated_image_context  # noqa: E402
 from study_qb_assistant.config import get_global_config  # noqa: E402
-from study_qb_assistant.image_ocr import is_public_http_url  # noqa: E402
+from study_qb_assistant.media.question_context import is_public_http_url  # noqa: E402
 from study_qb_assistant.media.question_context import ImageAsset  # noqa: E402
 from study_qb_assistant.media.question_images import hydrate_query_images_for_model  # noqa: E402
-from study_qb_assistant.models import QuestionQuery  # noqa: E402
+from study_qb_assistant.questions.models import QuestionQuery  # noqa: E402
 from study_qb_assistant.search import LocalQuestionIndex  # noqa: E402
 
 
@@ -51,7 +52,7 @@ class QuestionImageTests(unittest.TestCase):
 
         self.assertEqual(
             first.image_urls,
-            (f"https://ocs.example.com/media/ocs/images/{expected_filename}",),
+            (f"https://ocs.example.com/api/v1/media/ocs/images/{expected_filename}",),
         )
         self.assertEqual(second.image_urls, first.image_urls)
         self.assertEqual(first.image_data_urls, ())
@@ -81,8 +82,8 @@ class QuestionImageTests(unittest.TestCase):
         option_data_url = "data:image/png;base64," + base64.b64encode(option_bytes).decode("ascii")
         option_url = "https://cdn.example.com/option-a.png"
         expected_urls = (
-            f"https://ocs.example.com/media/ocs/images/{hashlib.sha256(stem_bytes).hexdigest()}.png",
-            f"https://ocs.example.com/media/ocs/images/{hashlib.sha256(option_bytes).hexdigest()}.png",
+            f"https://ocs.example.com/api/v1/media/ocs/images/{hashlib.sha256(stem_bytes).hexdigest()}.png",
+            f"https://ocs.example.com/api/v1/media/ocs/images/{hashlib.sha256(option_bytes).hexdigest()}.png",
         )
 
         def fake_fetch_public_image_asset(
@@ -115,6 +116,43 @@ class QuestionImageTests(unittest.TestCase):
         self.assertEqual(hydrated.image_data_urls, ())
         self.assertEqual(hydrated.option_image_urls, {})
 
+    def test_image_only_title_is_removed_after_hydration(self) -> None:
+        """纯图片 URL 题干水合后不应残留第三方外链触发未水合误判。"""
+
+        image_bytes = b"\x89PNG\r\n\x1a\nchaoxing"
+        data_url = "data:image/png;base64," + base64.b64encode(image_bytes).decode("ascii")
+        image_url = "https://p.ananas.chaoxing.com/star3/origin/demo.png"
+
+        def fake_fetch_public_image_asset(
+            url: str, *, referer: str | None = None, request_id: str | None = None
+        ) -> ImageAsset | None:
+            if url != image_url:
+                return None
+            return ImageAsset(
+                source_url=url,
+                mime_type="image/png",
+                content_bytes=image_bytes,
+                data_url=data_url,
+            )
+
+        with isolated_data_dir() as _directory:
+            query = QuestionQuery(
+                title=image_url,
+                image_urls=(image_url,),
+                question_type="single",
+                service_base_url="https://ocs.example.com",
+            )
+            with patch(
+                "study_qb_assistant.media.question_context.fetch_public_image_asset",
+                side_effect=fake_fetch_public_image_asset,
+            ):
+                hydrated = hydrate_query_images_for_model(query)
+
+        self.assertEqual(hydrated.title, "")
+        self.assertFalse(has_unhydrated_image_context(hydrated))
+        self.assertEqual(len(hydrated.image_urls), 1)
+        self.assertTrue(hydrated.image_urls[0].startswith("https://ocs.example.com/api/v1/media/"))
+
     def test_media_route_serves_only_safe_ocs_image_files(self) -> None:
         """公开媒体路由只应返回受控文件名的题目图片。"""
 
@@ -127,8 +165,8 @@ class QuestionImageTests(unittest.TestCase):
             image_dir.mkdir(parents=True, exist_ok=True)
             (image_dir / filename).write_bytes(image_bytes)
             client = TestClient(create_app(LocalQuestionIndex(()), require_auth=False))
-            found = client.get(f"/media/ocs/images/{filename}")
-            missing = client.get("/media/ocs/images/not-a-hash.png")
+            found = client.get(f"/api/v1/media/ocs/images/{filename}")
+            missing = client.get("/api/v1/media/ocs/images/not-a-hash.png")
 
         self.assertEqual(found.status_code, 200)
         self.assertEqual(found.content, image_bytes)

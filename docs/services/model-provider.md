@@ -97,7 +97,7 @@ ClassBot/New API 风格的网关是通过兼容 OpenAI 的聊天补全（Chat Co
 
 - 服务端先把 OCS 传入的图片 URL 或 data URL 保存到 `data/images/ocs/`。
 - 图片文件按内容 SHA-256 去重命名，例如 `<sha256>.png`。
-- 视觉模型调用时优先使用 `{STQB_PUBLIC_BASE_URL}/media/ocs/images/<sha256>.png`。
+- 视觉模型调用时优先使用 `{STQB_PUBLIC_BASE_URL}/api/v1/media/ocs/images/<sha256>.png`。
 - 如果没有可靠公开地址，本地开发会回退为 data URL；生产环境建议始终配置 `STQB_PUBLIC_BASE_URL`。
 - 原始图片和 base64 不写入题库、调用追溯或日志，只记录必要的文件名和统计信息。
 

@@ -27,10 +27,10 @@ if str(SRC_ROOT) not in sys.path:
 from study_qb_assistant.answering import AnswerService  # noqa: E402
 from study_qb_assistant.llm.cache import LlmAnswerCache  # noqa: E402
 from study_qb_assistant.ingestion import iter_cmmlu_records  # noqa: E402
-from study_qb_assistant.models import ModelAnswer, QuestionQuery  # noqa: E402
+from study_qb_assistant.questions.models import ModelAnswer, QuestionQuery  # noqa: E402
 from study_qb_assistant.search import LocalQuestionIndex  # noqa: E402
-from study_qb_assistant.storage.question_repository import SqlAlchemyQuestionRepository  # noqa: E402
-import study_qb_assistant.answer_quality as answer_quality_module  # noqa: E402
+from study_qb_assistant.storage.repositories.questions import SqlAlchemyQuestionRepository  # noqa: E402
+import study_qb_assistant.answering.quality as answer_quality_module  # noqa: E402
 
 _TEST_RULES_PAYLOAD = {
     "option_rules": [

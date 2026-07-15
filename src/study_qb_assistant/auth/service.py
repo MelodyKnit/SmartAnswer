@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from threading import Lock
 
-from ..storage.auth_repository import SqlAlchemyAuthRepository
+from ..storage.repositories.auth import SqlAlchemyAuthRepository
 from ..storage.redis_state import build_session_store_from_env
 from .records import SessionRecord, UserRecord
 from .security import (

@@ -56,9 +56,9 @@ COPY configs ./configs
 COPY client-scripts ./client-scripts
 COPY scripts ./scripts
 COPY src ./src
-COPY --from=web-builder /app/src/study_qb_assistant/api/static ./src/study_qb_assistant/api/static
+COPY --from=web-builder /app/src/study_qb_assistant/api/static/site ./src/study_qb_assistant/api/static/site
 COPY README.md pyproject.toml ./
 
 EXPOSE 8765
 
-CMD ["uvicorn", "study_qb_assistant.runtime:create_runtime_app", "--factory", "--host", "0.0.0.0", "--port", "8765", "--app-dir", "src"]
+CMD ["uvicorn", "study_qb_assistant.bootstrap:create_runtime_app", "--factory", "--host", "0.0.0.0", "--port", "8765", "--app-dir", "src"]

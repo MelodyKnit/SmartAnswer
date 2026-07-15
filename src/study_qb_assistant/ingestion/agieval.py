@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterator
 
-from ..models import CanonicalQuestionRecord
+from study_qb_assistant.questions.models import CanonicalQuestionRecord
 from ._shared import load_json_lines, tupled_options
 
 # AGIEval 数据集的开源托管仓库 URL

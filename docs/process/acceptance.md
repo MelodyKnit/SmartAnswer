@@ -11,7 +11,7 @@
 当前主要验证方式：
 
 - `python -m pytest tests -q`
-- 运行中的 `/healthz`
+- 运行中的 `/api/v1/healthz`
 - 运行中的 `/status`
 - 运行中的 `/ocs/query`
 

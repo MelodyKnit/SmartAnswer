@@ -14,15 +14,17 @@ import re
 import time
 from typing import cast
 
-from ...models import ModelAnswer, QuestionQuery
+from study_qb_assistant.questions.models import ModelAnswer, QuestionQuery
 from ..tracing import record_trace
 from ...logger import log_event
-from ..providers.base import ModelProvider
-from ..providers.web_search import WebSearchProvider, WebSearchResult, preferred_domain_score
+from ..contracts.providers import BaseModelProvider, ModelProvider
+from ..contracts.tools import EvidenceRetrievalPort
+from ..tools.web_search import WebSearchProvider, WebSearchResult, WebSearchTool
+from ..tools.web_search.providers import preferred_domain_score
 
 
 @dataclass(slots=True)
-class SearchAugmentedModelProvider:
+class SearchAugmentedModelProvider(BaseModelProvider):
     """使用网络搜索证据检索服务来包装底层大模型提供商的增强型解答类。
 
     它拦截了原有的 `answer` 调用，首先通过绑定的 `search_provider` 执行实时检索，
@@ -30,7 +32,7 @@ class SearchAugmentedModelProvider:
     """
 
     model_provider: ModelProvider  # 底层的大语言模型提供商实例
-    search_provider: WebSearchProvider  # 绑定的网络搜索服务提供商实例
+    search_provider: WebSearchProvider | EvidenceRetrievalPort
     top_k: int = 5  # 最大检索网络证据片段数量，默认为 5
     provider_name: str = "openai-compatible+web-search"  # 组合提供商名称
     search_first: bool = True  # 是否优先搜索后回答
@@ -41,6 +43,15 @@ class SearchAugmentedModelProvider:
     search_cache_path: str | None = None  # 可选的持久化搜索缓存路径
     _persistent_cache_loaded: bool = field(default=False, init=False, repr=False)
     search_cache_version: str = "v2"
+    _evidence_tool: EvidenceRetrievalPort = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        """把旧搜索提供者统一适配为证据检索工具。"""
+
+        if hasattr(self.search_provider, "retrieve"):
+            self._evidence_tool = cast(EvidenceRetrievalPort, self.search_provider)
+        else:
+            self._evidence_tool = WebSearchTool(cast(WebSearchProvider, self.search_provider))
 
     @property
     def model(self) -> str | None:
@@ -65,7 +76,8 @@ class SearchAugmentedModelProvider:
     @property
     def search_provider_name(self) -> str:
         """获取搜索引擎提供商的名称。"""
-        return self.search_provider.provider_name
+        provider = getattr(self._evidence_tool, "provider", None)
+        return str(getattr(provider, "provider_name", self._evidence_tool.tool_name))
 
     def answer(self, query: QuestionQuery) -> ModelAnswer:
         """先对题目执行网络检索，然后再使用检索证据生成最终的结构化答案。
@@ -136,7 +148,18 @@ class SearchAugmentedModelProvider:
         if cached is not None:
             return cached
         started = time.time()
-        results = self.search_provider.search(query, top_k=self.top_k)
+        execution = self._evidence_tool.retrieve(query, top_k=self.top_k)
+        if not execution.ok:
+            raise RuntimeError(execution.error or "web search failed")
+        results = tuple(
+            WebSearchResult(
+                title=item.title,
+                url=item.url,
+                snippet=item.snippet,
+                source=item.source,
+            )
+            for item in execution.evidence
+        )
         evidence_payload = [
             {
                 "title": result.title,
@@ -149,7 +172,7 @@ class SearchAugmentedModelProvider:
         log_event(
             "web_search_results",
             {
-                "provider": self.search_provider.provider_name,
+                "provider": self.search_provider_name,
                 "title": query.title,
                 "result_count": len(results),
                 "results": evidence_payload,
@@ -157,7 +180,7 @@ class SearchAugmentedModelProvider:
         )
         record_trace(
             phase="web_search",
-            provider=self.search_provider.provider_name,
+            provider=self.search_provider_name,
             question_title=query.title,
             prompt=f"web search query: {query.title}",
             evidence=evidence_payload,

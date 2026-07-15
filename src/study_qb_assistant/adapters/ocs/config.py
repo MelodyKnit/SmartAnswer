@@ -1,23 +1,67 @@
-"""OCS 风格的源配置辅助程序。
-
-该模块不再维护独立硬编码配置，而是复用平台导入脚本模板目录中的默认 OCS 模板，
-确保 `/configs/ocs-local-study-bank.json`、用户“复制导入脚本”和后台模板预览共用同一来源。
-"""
+"""OCS 配置与客户端包资源读取。"""
 
 from __future__ import annotations
 
-from ...platform.import_script_catalog import get_import_script_template, render_import_script
+import json
+from importlib.resources import files
+from typing import Any
+
+BASE_URL_PLACEHOLDER = "{{BASE_URL}}"
+TOKEN_PLACEHOLDER = "{{TOKEN}}"
 
 
-def build_ocs_config(base_url: str) -> list[dict]:
-    """为本地服务构建 OCS 风格的源配置信息。
+def load_ocs_import_template_payload() -> dict[str, Any]:
+    """读取随 Python 包发布的 OCS 导入模板。"""
 
-    参数:
-        base_url: 本地服务的基准 URL 地址（例如 "http://localhost:8000"）。
+    resource = files("study_qb_assistant.adapters.ocs.resources").joinpath(
+        "import-script-template.json"
+    )
+    with resource.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise ValueError("OCS 导入模板必须是 JSON 对象")
+    return payload
 
-    返回:
-        list[dict]: 包含 OCS 风格源配置字典的列表。
-    """
-    template = get_import_script_template()
-    rendered = render_import_script(template, base_url=base_url)
-    return list(rendered["ocs_config"])
+
+def load_ocs_client_script_source() -> str:
+    """读取随 Python 包发布的 OCS 客户端桥接脚本。"""
+
+    resource = files("study_qb_assistant.adapters.ocs.resources").joinpath(
+        "client-bridge.user.js"
+    )
+    return resource.read_text(encoding="utf-8")
+
+
+def build_ocs_config(base_url: str) -> list[dict[str, Any]]:
+    """根据服务基础地址构建 OCS 题库配置。"""
+
+    payload = load_ocs_import_template_payload()
+    normalized_base_url = base_url.rstrip("/")
+    config_items = payload.get("config_items") or []
+    return [replace_placeholders(dict(item), normalized_base_url) for item in config_items]
+
+
+def render_ocs_client_script(base_url: str, *, token: str = TOKEN_PLACEHOLDER) -> str:
+    """渲染默认服务地址和 API Key 的 OCS 客户端脚本。"""
+
+    normalized_base_url = base_url.rstrip("/")
+    script = load_ocs_client_script_source()
+    script = script.replace(
+        '    baseUrl: "http://127.0.0.1:8765",',
+        f'    baseUrl: "{normalized_base_url}",',
+    )
+    return script.replace('    apiKey: "",', f'    apiKey: "{token}",')
+
+
+def replace_placeholders(value: Any, base_url: str) -> Any:
+    """递归替换 OCS 模板中的服务地址占位符。"""
+
+    if isinstance(value, str):
+        return value.replace(BASE_URL_PLACEHOLDER, base_url)
+    if isinstance(value, list):
+        return [replace_placeholders(item, base_url) for item in value]
+    if isinstance(value, tuple):
+        return tuple(replace_placeholders(item, base_url) for item in value)
+    if isinstance(value, dict):
+        return {str(key): replace_placeholders(item, base_url) for key, item in value.items()}
+    return value

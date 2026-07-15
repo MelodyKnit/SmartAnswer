@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 import re
 
-from ...models import ModelAnswer, QuestionQuery
-from ...option_labels import canonicalize_label_answer
+from study_qb_assistant.questions.models import ModelAnswer, QuestionQuery
+from study_qb_assistant.questions.labels import canonicalize_label_answer
 from ...logger import log_event
-from ...question_types import JUDGEMENT_TYPES, has_blank_marker
+from study_qb_assistant.questions.types import JUDGEMENT_TYPES, has_blank_marker
 
 
 def strip_json_fence(content: str) -> str:

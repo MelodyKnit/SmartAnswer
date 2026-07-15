@@ -77,7 +77,7 @@ For local study and review scenarios, the backend is designed to be easy to call
 ```json
 {
   "name": "Local Study Question Bank",
-  "homepage": "http://127.0.0.1:8765/healthz",
+  "homepage": "http://127.0.0.1:8765/api/v1/healthz",
   "url": "http://127.0.0.1:8765/ocs/query",
   "method": "get",
   "type": "GM_xmlhttpRequest",
@@ -95,7 +95,7 @@ The ready-to-use local config artifact is [ocs-local-study-bank.json](../configs
 When the service is running, it also serves the same source shape at:
 
 ```text
-http://127.0.0.1:8765/configs/ocs-local-study-bank.json
+http://127.0.0.1:8765/api/v1/configs/ocs-local-study-bank.json
 ```
 
 To generate the same shape for another host or port:

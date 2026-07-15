@@ -22,9 +22,9 @@ SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from study_qb_assistant.models import ModelAnswer, QuestionQuery  # noqa: E402
+from study_qb_assistant.questions.models import ModelAnswer, QuestionQuery  # noqa: E402
 from study_qb_assistant.llm.orchestration import SearchAugmentedModelProvider  # noqa: E402
-from study_qb_assistant.http_client import _proxy_from_env  # noqa: E402
+from study_qb_assistant.llm.http_client import _proxy_from_env  # noqa: E402
 from study_qb_assistant.llm.providers.web_search import (  # noqa: E402
     CompositeWebSearchProvider,
     WebSearchResult,
@@ -183,7 +183,7 @@ class WebSearchTests(unittest.TestCase):
 
         with patch.dict(os.environ, {"STQB_SEARCH_PROXY": "http://127.0.0.1:7890"}, clear=True):
             with patch(
-                "study_qb_assistant.http_client.is_running_in_container", return_value=True
+                "study_qb_assistant.llm.http_client.is_running_in_container", return_value=True
             ):
                 proxy_url = _proxy_from_env("STQB_SEARCH_PROXY")
 

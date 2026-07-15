@@ -123,19 +123,24 @@ The service should support a thin adapter layer that:
 
 Keep this adapter outside the core retrieval logic.
 
-## 7. Health Endpoints
+## 7. API Versioning And Health Endpoints
 
-Recommended endpoints:
+All business APIs use the canonical `/api/v1` prefix. The only business exception is the
+OCS-compatible `/ocs/query` endpoint, whose path remains stable for imported clients.
 
-- `GET /healthz`
-- `GET /readyz`
-- `GET /providers`
-- `GET /query?title=...&options=...&type=...`
-- `POST /query`
+- `GET /api/v1/healthz`
+- `GET /api/v1/version`
+- `GET /api/v1/status`
+- `GET /api/v1/query?title=...&options=...&type=...`
+- `POST /api/v1/query`
 - `GET /ocs/query?title=...&options=...&type=...`
 - `POST /ocs/query`
 
-Suggested `GET /providers` response:
+OpenAPI UI is available at `/api/docs`; the schema is served from
+`/api/v1/openapi.json`. Legacy unversioned business routes remain temporarily callable,
+are hidden from OpenAPI, and return `Deprecation: true` plus a successor `Link` header.
+
+Suggested runtime status response:
 
 ```json
 {

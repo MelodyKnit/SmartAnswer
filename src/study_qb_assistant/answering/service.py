@@ -2,30 +2,35 @@
 
 from __future__ import annotations
 
-from ..answer_quality import direct_known_answer, is_cache_safe_answer
-from ..answer_reuse import NON_REUSABLE_STATUS, decide_answer_reuse
-from ..input_anomalies import (
-    InputAnomaly,
-    analyze_query_input,
-    result_from_input_anomaly,
-)
+from typing import TYPE_CHECKING
+
+from study_qb_assistant.answering.quality import direct_known_answer, is_cache_safe_answer
+from study_qb_assistant.answering.reuse import NON_REUSABLE_STATUS, decide_answer_reuse
+from study_qb_assistant.questions.validation import InputAnomaly, analyze_query_input
 from ..llm.cache import CachedLlmAnswer, LlmAnswerCache
+from ..llm.contracts.tools import AnswerRetrievalPort
 from ..llm.providers import ModelProvider
+from ..llm.tools.local_rag import LocalRagTool
 from ..media.image_anomalies import (
     model_answer_indicates_unreadable_image,
     provider_error_indicates_unreadable_image,
 )
-from ..models import ModelAnswer, QueryResult, QuestionQuery
+from study_qb_assistant.questions.models import ModelAnswer, QueryResult, QuestionQuery
 from ..search import LocalQuestionIndex
 from .non_answer_policy import (
     model_answer_has_fillable_content,
     model_answer_indicates_no_reliable_answer,
+    result_from_input_anomaly,
     result_from_no_reliable_model_answer,
 )
 from .persistence import persist_model_answer_record
 from .policies import is_image_context_without_text_snapshot
 from .protocols import QuestionRecordRepository
 from .retry import retry_model_answer
+
+if TYPE_CHECKING:
+    from ..llm.management import LlmManagementService
+    from ..platform.settings import SettingsService
 
 
 class AnswerService:
@@ -43,10 +48,12 @@ class AnswerService:
         llm_answer_cache: LlmAnswerCache | None = None,
         trusted_confidence_threshold: float = 0.95,
         answer_retry_times: int = 3,
+        answer_retrieval_tool: AnswerRetrievalPort | None = None,
     ) -> None:
         """初始化答案决议服务。"""
 
         self.index = index
+        self.answer_retrieval_tool = answer_retrieval_tool or LocalRagTool(index)
         self.model_provider = model_provider
         self.allow_model_fallback = allow_model_fallback
         self.explain_local_matches = explain_local_matches
@@ -55,15 +62,17 @@ class AnswerService:
         self.llm_answer_cache = llm_answer_cache
         self.trusted_confidence_threshold = min(max(trusted_confidence_threshold, 0.0), 1.0)
         self.answer_retry_times = max(0, min(int(answer_retry_times), 10))
-        self.platform_service: object | None = None
+        self.runtime_settings_service: SettingsService | None = None
+        self.model_management_service: LlmManagementService | None = None
         self.question_repository: QuestionRecordRepository | None = None
 
     def query(self, query: QuestionQuery) -> QueryResult:
         """查询问题的答案，返回带来源标记的本地结果或明确标识的模型结果。"""
 
         local_result: QueryResult | None = None
-        if not self.no_local_bank_mode:
-            local_result = self.index.query(query, allow_fuzzy=False)
+        image_only_query = is_image_context_without_text_snapshot(query)
+        if not self.no_local_bank_mode and not image_only_query:
+            local_result = self.answer_retrieval_tool.query(query, allow_fuzzy=False)
             if local_result.ok:
                 if self.explain_local_matches and self.model_provider and not local_result.explanation:
                     return self._add_model_explanation(local_result, query)
@@ -87,8 +96,8 @@ class AnswerService:
         if cached_answer is not None:
             return self._result_from_cached_answer(query, cached_answer)
 
-        if not self.no_local_bank_mode:
-            local_result = self.index.query(query)
+        if not self.no_local_bank_mode and not image_only_query:
+            local_result = self.answer_retrieval_tool.query(query)
             if local_result.ok:
                 if self.explain_local_matches and self.model_provider and not local_result.explanation:
                     return self._add_model_explanation(local_result, query)

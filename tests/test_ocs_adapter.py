@@ -19,7 +19,7 @@ if str(SRC_ROOT) not in sys.path:
 
 from study_qb_assistant.adapters import to_ocs_response  # noqa: E402
 from study_qb_assistant.ingestion import iter_cmmlu_records  # noqa: E402
-from study_qb_assistant.models import QueryResult, QuestionQuery  # noqa: E402
+from study_qb_assistant.questions.models import QueryResult, QuestionQuery  # noqa: E402
 from study_qb_assistant.search import LocalQuestionIndex  # noqa: E402
 
 

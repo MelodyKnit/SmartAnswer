@@ -15,9 +15,9 @@ from urllib.parse import urlparse
 
 import httpx
 
-from ..input_anomalies import is_image_data_url, normalize_image_data_urls, normalize_image_urls
+from .inputs import is_image_data_url, normalize_image_data_urls, normalize_image_urls
 from ..logger import log_event
-from ..models import QuestionQuery
+from study_qb_assistant.questions.models import QuestionQuery
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 DATA_URL_PREFIX_PATTERN = re.compile(r"^data:(image/[-+.\w]+);base64,", re.I)

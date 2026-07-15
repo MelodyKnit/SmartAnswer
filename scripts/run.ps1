@@ -22,8 +22,8 @@ $env:STQB_PORT = [string]$Port
 
 if ($Dev) {
     $env:STQB_RELOAD = "true"
-    python -m uvicorn study_qb_assistant.runtime:create_runtime_app --factory --host $HostName --port $Port --reload --reload-dir "$reloadDir" --reload-include "*.py" --app-dir src
+    python -m uvicorn study_qb_assistant.bootstrap:create_runtime_app --factory --host $HostName --port $Port --reload --reload-dir "$reloadDir" --reload-include "*.py" --app-dir src
 } else {
     $env:STQB_RELOAD = "false"
-    python -m uvicorn study_qb_assistant.runtime:create_runtime_app --factory --host $HostName --port $Port --app-dir src
+    python -m uvicorn study_qb_assistant.bootstrap:create_runtime_app --factory --host $HostName --port $Port --app-dir src
 }

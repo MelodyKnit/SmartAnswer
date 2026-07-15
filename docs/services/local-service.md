@@ -79,7 +79,7 @@ OCS 或 /query 请求
 
 可用端点：
 
-- `GET /healthz`
+- `GET /api/v1/healthz`
 - `GET /auth/session`
 - `POST /auth/register`
 - `POST /auth/login`
@@ -91,7 +91,7 @@ OCS 或 /query 请求
 - `POST /query`
 - `GET /ocs/query?title=...&options=...&type=...`
 - `POST /ocs/query`
-- `GET /configs/ocs-local-study-bank.json`
+- `GET /api/v1/configs/ocs-local-study-bank.json`
 - `GET /users/me`
 - `GET /users`
 - `PATCH /users/{username}`
@@ -222,12 +222,12 @@ http://127.0.0.1:8765/query?title=...&options=A.xxx#B.xxx#C.xxx#D.xxx&type=singl
 ## 11. 端到端验证
 
 - 规范化索引存在且含有记录
-- `GET /healthz`
-- `GET /status`
-- `GET /query`
-- `POST /query`
+- `GET /api/v1/healthz`
+- `GET /api/v1/status`
+- `GET /api/v1/query`
+- `POST /api/v1/query`
 - `GET /ocs/query`
-- `GET /configs/ocs-local-study-bank.json`
+- `GET /api/v1/configs/ocs-local-study-bank.json`
 - `OPTIONS /ocs/query`
 
 报告将写入：

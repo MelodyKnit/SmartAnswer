@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from ..input_anomalies import normalize_image_data_urls, normalize_image_urls
+from study_qb_assistant.media.inputs import normalize_image_data_urls, normalize_image_urls
 from ..media import is_ocs_image_url
-from ..models import QuestionQuery
+from study_qb_assistant.questions.models import QuestionQuery
 
 
 def is_image_context_without_text_snapshot(query: QuestionQuery) -> bool:

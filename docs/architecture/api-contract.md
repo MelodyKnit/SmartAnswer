@@ -941,7 +941,7 @@
 
 推荐端点：
 
-- `GET /healthz`
+- `GET /api/v1/healthz`
 - `GET /version`：公开返回当前镜像的版本、构建提交与构建类型，供部署健康验证使用。
 - `GET /status`
 - `GET /query?title=...&options=...&type=...`

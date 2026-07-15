@@ -5,10 +5,10 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-from ..input_anomalies import normalize_image_urls
+from study_qb_assistant.media.inputs import normalize_image_urls
 from ..llm.cache import CachedLlmAnswer, cache_key
 from ..llm.cache.support import cache_candidate_for_answer
-from ..models import CanonicalQuestionRecord, ModelAnswer, QuestionQuery
+from study_qb_assistant.questions.models import CanonicalQuestionRecord, ModelAnswer, QuestionQuery
 
 if TYPE_CHECKING:
     from .service import AnswerService

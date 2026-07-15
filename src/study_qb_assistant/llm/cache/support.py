@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from ...models import CanonicalQuestionRecord, ModelAnswer, QuestionQuery
-from ...option_labels import canonicalize_label_answer
-from ...answer_reuse import decide_answer_reuse
+from study_qb_assistant.questions.models import CanonicalQuestionRecord, ModelAnswer, QuestionQuery
+from study_qb_assistant.questions.labels import canonicalize_label_answer
+from study_qb_assistant.answering.reuse import decide_answer_reuse
 
 
 def cache_record_key(record: CanonicalQuestionRecord, cache_key_builder) -> str:

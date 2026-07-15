@@ -21,12 +21,12 @@ SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from study_qb_assistant.answer_quality import (
+from study_qb_assistant.answering.quality import (
     is_cache_safe_answer,
     repair_model_answer,
 )  # noqa: E402
-import study_qb_assistant.answer_quality as answer_quality_module  # noqa: E402
-from study_qb_assistant.models import ModelAnswer, QuestionQuery  # noqa: E402
+import study_qb_assistant.answering.quality as answer_quality_module  # noqa: E402
+from study_qb_assistant.questions.models import ModelAnswer, QuestionQuery  # noqa: E402
 
 _TEST_RULES_PAYLOAD = {
     "option_rules": [

@@ -28,7 +28,7 @@ class OcsConfigTests(unittest.TestCase):
 
         self.assertEqual(len(config), 1)
         item = config[0]
-        self.assertEqual(item["homepage"], "http://127.0.0.1:8765/healthz")
+        self.assertEqual(item["homepage"], "http://127.0.0.1:8765/api/v1/healthz")
         self.assertEqual(item["url"], "http://127.0.0.1:8765/ocs/query")
         self.assertEqual(item["type"], "GM_xmlhttpRequest")
         self.assertEqual(item["data"]["title"], "${title}")

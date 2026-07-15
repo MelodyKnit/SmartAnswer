@@ -4,8 +4,42 @@ from __future__ import annotations
 
 import re
 
-from ..input_anomalies import InputAnomaly, result_from_input_anomaly
-from ..models import ModelAnswer, QueryResult, QuestionQuery
+from study_qb_assistant.questions.models import ModelAnswer, QueryResult, QuestionQuery
+from study_qb_assistant.questions.validation import InputAnomaly
+
+INPUT_ANOMALY_MODE = "input_anomaly"
+
+
+def result_from_input_anomaly(query: QuestionQuery, anomaly: InputAnomaly) -> QueryResult:
+    """把输入异常转换为统一结果，供 API 与使用记录复用。"""
+
+    return QueryResult(
+        ok=False,
+        query=query,
+        candidate_answer=None,
+        answer_text=None,
+        explanation=None,
+        confidence=0.0,
+        resolution_mode=INPUT_ANOMALY_MODE,
+        review_required=True,
+        sources=(
+            {
+                "source_name": "input-validator",
+                "source_type": "input_anomaly",
+                "source_id": anomaly.code,
+                "source_url": None,
+                "source_license": None,
+                "score": 0.0,
+            },
+        ),
+        error_code=anomaly.code,
+        error_message=anomaly.message,
+        debug={
+            "provider": "input-validator",
+            "input_flags": ",".join(anomaly.flags),
+            **{key: str(value) for key, value in anomaly.context.items()},
+        },
+    )
 
 
 def model_answer_indicates_no_reliable_answer(

@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 
-from ..models import CanonicalQuestionRecord
+from study_qb_assistant.questions.models import CanonicalQuestionRecord
 from .agieval import iter_agieval_records
 from .cmmlu import iter_cmmlu_records
 from .m3ke import iter_m3ke_records

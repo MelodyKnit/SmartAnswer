@@ -194,7 +194,7 @@ graph TD
 
 ### 4. 答题检索模块（Query/OCS API）
 
-#### [GET/POST] `/api/v1/ocs/query` (答题接口)
+#### [GET/POST] `/ocs/query` (OCS 兼容答题接口)
 * **说明**：脚本调用，采用 URL 参数中附带 Token 或 Header 中附带 Token 鉴权。自动根据结果的解析类型（精确匹配/网络检索/大模型求解）扣减对应积分。
 * **鉴权方式**：校验 URL 中的 `?token=stqb_ak_...`
 * **响应体 (JSON)**:

@@ -1,64 +1,31 @@
 # study_qb_assistant
 
-此包是本项目的核心实现，当前按领域边界组织：
+后端按业务职责组织，包根目录只保留运行组装、全局配置和版本信息。
 
-- `api/`
-  - FastAPI 应用组装、请求模型、路由与上下文辅助
-- `adapters/`
-  - OCS 协议适配与配置生成
-- `llm/`
-  - 大模型提供者、联网搜索增强、模型配置、调用追踪与 LLM 答案缓存
-- `answering/`
-  - 答题决议编排、AI 异常重试、答案沉淀与不可作答策略
-- `answer_quality/`
-  - 模型答案修复、高信号规则匹配与标签映射
-- `auth/`
-  - 本地账号鉴权、会话、密码重置与积分扣减
-- `platform/`
-  - API 令牌、计费、反馈、钱包、系统配置
-- `logger/`
-  - 结构化日志、控制台格式器与敏感信息脱敏
-- `media/`
-  - 题目图片上下文装载、图片资产存储、本地图床与图片不可读策略
-- `search/`
-  - 本地题库检索索引与检索辅助
-- `storage/`
-  - SQLAlchemy ORM、数据库仓储与 Redis 状态存储
-- `ingestion/`
-  - 外部题库导入读取器
+## 目录边界
 
-仍保留在包根目录的模块，原则上应满足“跨领域共享且职责单一”：
+- `adapters/ocs/`：OCS 请求、响应、题型策略和客户端资源适配。
+- `answering/`：答题编排、重试、复用、沉淀、不可作答策略和答案质量处理。
+- `questions/`：题目模型、题型、标签、规范化、解析与输入校验。
+- `api/`：FastAPI 应用组装、公共依赖、中间件、OCS 公共入口和版本化业务接口。
+- `platform/`：令牌、使用记录、反馈、钱包、通知、公告、权限、设置等领域服务。
+- `storage/repositories/`：按业务领域拆分的 SQLAlchemy 仓储；ORM 表定义仍集中在 `storage/orm.py`。
+- `llm/`：模型提供者、工具、提示词、配置、调用追踪和模型管理。
+- `media/`：题目图片输入、存储、图床和视觉上下文构建。
+- `search/`：本地题库索引和匹配算法。
+- `auth/`、`ingestion/`、`logger/`：认证、题库导入和日志基础能力。
 
-- `runtime.py`
-  - 运行时服务组装入口
-- `models.py`
-  - 核心数据结构
-- `http_client.py`
-  - 统一 HTTP 请求封装
-- `normalization.py`
-  - 基础文本标准化
-- `option_labels.py`
-  - 选项标签规整
-- `exporting.py`
-  - 标准题库导出辅助
-- `image_ocr.py`
-  - 图片题旧导入兼容入口，新代码应使用 `media.question_context`
-- `input_anomalies.py`
-  - 进入答题流程前的输入异常识别，不承载模型答案质量策略
+## 公共入口
 
-## 关键公共入口
+- `study_qb_assistant.AnswerService`
+- `study_qb_assistant.CanonicalQuestionRecord`
+- `study_qb_assistant.__version__`
+- `study_qb_assistant.bootstrap.create_runtime_app`
 
-- `CanonicalQuestionRecord`
-- `QuestionQuery`
-- `QueryResult`
-- `AnswerService`
-- `LocalQuestionIndex`
-- `OpenAICompatibleProvider`
+## 约束
 
-## 设计约束
-
-- 包根目录只保留真正跨领域共享的核心模块
-- 领域内的数据记录、服务实现和辅助工具优先放入对应子目录
-- 大模型相关实现统一放入 `llm/`，不要在顶层新增 `providers` 或 `ai_*` 包
-- 运行日志统一放入 `logger/`
-- 当某个文件开始同时承担“入口 + 解析 + 规则 + 存储”多种职责时，应优先拆分
+- 不在包根目录新增题目、答题、HTTP 或平台业务模块。
+- 新业务接口放入 `api/v1/<domain>/router.py`，请求模型放入同域 `schemas.py`。
+- `/ocs/query` 只由 `api/ocs` 提供，不进入版本化业务路由。
+- 平台路由按领域注入服务，不依赖万能 Facade。
+- 上层服务不直接操作 SQLAlchemy ORM；持久化通过领域仓储完成。

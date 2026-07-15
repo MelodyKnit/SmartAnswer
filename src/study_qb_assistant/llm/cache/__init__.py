@@ -22,11 +22,11 @@ from .support import (
     is_cacheable_model_answer,
     optional_string,
 )
-from ...answer_reuse import record_should_be_indexable_by_reuse_policy, decide_answer_reuse
-from ...input_anomalies import normalize_image_urls
-from ...models import CanonicalQuestionRecord, ModelAnswer, QuestionQuery
-from ...normalization import normalize_options, normalize_text
-from ...option_labels import canonicalize_label_answer
+from study_qb_assistant.answering.reuse import record_should_be_indexable_by_reuse_policy, decide_answer_reuse
+from study_qb_assistant.media.inputs import normalize_image_urls
+from study_qb_assistant.questions.models import CanonicalQuestionRecord, ModelAnswer, QuestionQuery
+from study_qb_assistant.questions.normalization import normalize_options, normalize_text
+from study_qb_assistant.questions.labels import canonicalize_label_answer
 
 
 class LlmAnswerCache:

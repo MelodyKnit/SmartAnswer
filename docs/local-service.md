@@ -72,26 +72,26 @@ Model-backed mode requires the environment variables documented in [model-provid
 
 Available endpoints:
 
-- `GET /healthz`
-- `GET /auth/session`
-- `POST /auth/register`
-- `POST /auth/login`
-- `POST /auth/logout`
-- `POST /auth/reset-request`
-- `POST /auth/reset-confirm`
-- `GET /status`
-- `GET /query?title=...&options=...&type=...`
-- `POST /query`
+- `GET /api/v1/healthz`
+- `GET /api/v1/auth/session`
+- `POST /api/v1/auth/register`
+- `POST /api/v1/auth/login`
+- `POST /api/v1/auth/logout`
+- `POST /api/v1/auth/reset-request`
+- `POST /api/v1/auth/reset-confirm`
+- `GET /api/v1/status`
+- `GET /api/v1/query?title=...&options=...&type=...`
+- `POST /api/v1/query`
 - `GET /ocs/query?title=...&options=...&type=...`
 - `POST /ocs/query`
-- `GET /configs/ocs-local-study-bank.json`
+- `GET /api/v1/configs/ocs-local-study-bank.json`
 
 ## 5. GET Query Shape
 
 Runtime status:
 
 ```text
-http://127.0.0.1:8765/status
+http://127.0.0.1:8765/api/v1/status
 ```
 
 The status endpoint reports non-sensitive runtime facts such as loaded record count, source names, source licenses, and model feature switches. It does not expose API keys.
@@ -99,13 +99,13 @@ The status endpoint reports non-sensitive runtime facts such as loaded record co
 Minimal query:
 
 ```text
-http://127.0.0.1:8765/query?title=壁胸膜的分部不包括&type=single
+http://127.0.0.1:8765/api/v1/query?title=壁胸膜的分部不包括&type=single
 ```
 
 Options can be passed as a `#`-separated string:
 
 ```text
-http://127.0.0.1:8765/query?title=...&options=A.xxx#B.xxx#C.xxx#D.xxx&type=single
+http://127.0.0.1:8765/api/v1/query?title=...&options=A.xxx#B.xxx#C.xxx#D.xxx&type=single
 ```
 
 ## 6. POST Query Shape
@@ -197,12 +197,12 @@ python scripts\verify_local_service.py --index data\normalized\cmmlu.jsonl
 The verifier checks:
 
 - normalized index exists and has records
-- `GET /healthz`
-- `GET /status`
-- `GET /query`
-- `POST /query`
+- `GET /api/v1/healthz`
+- `GET /api/v1/status`
+- `GET /api/v1/query`
+- `POST /api/v1/query`
 - `GET /ocs/query`
-- `GET /configs/ocs-local-study-bank.json`
+- `GET /api/v1/configs/ocs-local-study-bank.json`
 - `OPTIONS /ocs/query`
 
 The report is written to:

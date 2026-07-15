@@ -8,14 +8,14 @@ import time
 from threading import RLock
 
 from ...auth import AuthError
-from ...storage.platform_repository import SqlAlchemyPlatformRepository
 from ...platform.config import (
     LLM_RUNTIME_CONFIG_KEYS,
     LLM_RUNTIME_DEFAULTS,
     LLM_RUNTIME_SECRET_KEYS,
     SYSTEM_CONFIG_KEYS,
 )
-from ...platform.records import LlmModelRecord
+from ..management.records import LlmModelRecord
+from .contracts import LlmConfigRepository
 
 
 def default_llm_runtime_config() -> dict[str, str]:
@@ -48,7 +48,7 @@ def legacy_system_llm_keys() -> tuple[str, ...]:
 
 
 def list_llm_models(
-    repository: SqlAlchemyPlatformRepository,
+    repository: LlmConfigRepository,
     lock: RLock,
     *,
     reveal_secret: bool = False,
@@ -59,7 +59,7 @@ def list_llm_models(
 
 
 def get_llm_model(
-    repository: SqlAlchemyPlatformRepository,
+    repository: LlmConfigRepository,
     lock: RLock,
     model_id: str,
     *,
@@ -74,7 +74,7 @@ def get_llm_model(
 
 
 def create_llm_model(
-    repository: SqlAlchemyPlatformRepository,
+    repository: LlmConfigRepository,
     lock: RLock,
     *,
     name: str,
@@ -119,7 +119,7 @@ def create_llm_model(
 
 
 def update_llm_model(
-    repository: SqlAlchemyPlatformRepository,
+    repository: LlmConfigRepository,
     lock: RLock,
     model_id: str,
     values: dict,
@@ -155,7 +155,7 @@ def update_llm_model(
 
 
 def delete_llm_model(
-    repository: SqlAlchemyPlatformRepository,
+    repository: LlmConfigRepository,
     lock: RLock,
     model_id: str,
 ) -> bool:
@@ -168,7 +168,7 @@ def delete_llm_model(
 
 
 def active_llm_models(
-    repository: SqlAlchemyPlatformRepository,
+    repository: LlmConfigRepository,
     lock: RLock,
 ) -> list[LlmModelRecord]:
     """返回用于组装主备链的启用模型。"""
@@ -178,7 +178,7 @@ def active_llm_models(
 
 
 def get_llm_runtime_config(
-    repository: SqlAlchemyPlatformRepository,
+    repository: LlmConfigRepository,
     lock: RLock,
     *,
     reveal_secret: bool = False,
@@ -210,7 +210,7 @@ def get_llm_runtime_config(
 
 
 def set_llm_runtime_config(
-    repository: SqlAlchemyPlatformRepository,
+    repository: LlmConfigRepository,
     lock: RLock,
     values: dict[str, object],
 ) -> dict:
@@ -232,7 +232,7 @@ def set_llm_runtime_config(
     return get_llm_runtime_config(repository, lock)
 
 
-def read_llm_runtime_config_raw(repository: SqlAlchemyPlatformRepository) -> dict[str, str]:
+def read_llm_runtime_config_raw(repository: LlmConfigRepository) -> dict[str, str]:
     """读取未脱敏的 LLM 运行时配置，供运行时内部组装 provider 使用。"""
 
     raw = default_llm_runtime_config()
@@ -337,7 +337,7 @@ def normalize_status(value: str) -> str:
 
 
 def migrate_legacy_llm_settings(
-    repository: SqlAlchemyPlatformRepository,
+    repository: LlmConfigRepository,
     *,
     default_system_config: dict[str, str],
 ) -> None:

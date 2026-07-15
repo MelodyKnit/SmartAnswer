@@ -4,7 +4,8 @@ Updated: `2026-06-07`
 
 ## 1. Purpose
 
-The local service exposes `/ocs/query` as a thin compatibility endpoint around the stable internal `/query` API.
+The local service exposes `/ocs/query` as a thin compatibility endpoint around the stable
+internal `/api/v1/query` API.
 
 Use it for local study and review workflows where an external client expects a compact `code/data` response shape.
 
@@ -28,7 +29,7 @@ Local config file:
 When the local service is running, the same source shape is served at:
 
 ```text
-http://127.0.0.1:8765/configs/ocs-local-study-bank.json
+http://127.0.0.1:8765/api/v1/configs/ocs-local-study-bank.json
 ```
 
 Generate config for a custom host or port:
@@ -43,7 +44,7 @@ Config content:
 [
   {
     "name": "Local Study Question Bank",
-    "homepage": "http://127.0.0.1:8765/healthz",
+    "homepage": "http://127.0.0.1:8765/api/v1/healthz",
     "url": "http://127.0.0.1:8765/ocs/query",
     "method": "get",
     "type": "GM_xmlhttpRequest",
@@ -59,6 +60,10 @@ Config content:
 ```
 
 OCS expects the handler return value to place the answer in the second slot. The local config therefore returns `[question, answer]` for successful responses.
+
+The adapter implementation lives in `study_qb_assistant.adapters.ocs`. Standard OCS types
+use registered strategies; platform-private types such as `reader` and `line` are retained
+as unsupported types instead of being silently mapped to an incorrect standard type.
 
 OCS/Tampermonkey deployments may also require the script environment to allow connections to the local host, for example `127.0.0.1` or `localhost`. The project service sends permissive CORS headers, but userscript managers can still enforce their own connection allow-list.
 

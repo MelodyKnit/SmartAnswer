@@ -6,8 +6,8 @@ import hashlib
 import time
 from dataclasses import asdict, dataclass
 
-from ...models import CanonicalQuestionRecord, QuestionQuery
-from ...option_labels import canonicalize_label_answer
+from study_qb_assistant.questions.models import CanonicalQuestionRecord, QuestionQuery
+from study_qb_assistant.questions.labels import canonicalize_label_answer
 
 
 @dataclass(slots=True)

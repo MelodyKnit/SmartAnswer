@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from study_qb_assistant.api.local_server import create_app
+from study_qb_assistant.api.app import create_app
 from study_qb_assistant.config import GlobalConfig
 from study_qb_assistant.media.brand_images import (
     BrandLogoError,
@@ -88,12 +88,12 @@ def test_system_logo_upload_and_download(temp_brand_dir, temp_db_dir, monkeypatc
     monkeypatch.setattr(GlobalConfig, "brand_images_dir", temp_brand_dir)
 
     from study_qb_assistant.auth import AuthService
-    from study_qb_assistant.platform import PlatformService
+    from study_qb_assistant.platform.container import PlatformServices
     from study_qb_assistant.search import LocalQuestionIndex
 
     db_path = temp_db_dir / "study-qb.sqlite3"
     auth = AuthService(db_path)
-    platform = PlatformService(db_path)
+    platform = PlatformServices(db_path)
 
     # 模拟空题库索引
     index = LocalQuestionIndex(records=())
@@ -102,7 +102,7 @@ def test_system_logo_upload_and_download(temp_brand_dir, temp_db_dir, monkeypatc
     app = create_app(
         index,
         auth_service=auth,
-        platform_service=platform,
+        platform_services=platform,
         require_auth=True,
     )
     client = TestClient(app)
@@ -158,16 +158,16 @@ def test_system_logo_upload_rejects_invalid_image_bytes(
     monkeypatch.setattr(GlobalConfig, "brand_images_dir", temp_brand_dir)
 
     from study_qb_assistant.auth import AuthService
-    from study_qb_assistant.platform import PlatformService
+    from study_qb_assistant.platform.container import PlatformServices
     from study_qb_assistant.search import LocalQuestionIndex
 
     db_path = temp_db_dir / "study-qb.sqlite3"
     auth = AuthService(db_path)
-    platform = PlatformService(db_path)
+    platform = PlatformServices(db_path)
     app = create_app(
         LocalQuestionIndex(records=()),
         auth_service=auth,
-        platform_service=platform,
+        platform_services=platform,
         require_auth=True,
     )
     client = TestClient(app)
@@ -193,16 +193,16 @@ def test_system_logo_upload_rejects_invalid_image_bytes(
 def test_redeem_code_custom_and_bulk(temp_db_dir):
     """测试管理员创建自定义兑换码，以及随机兑换码批量创建的后端逻辑。"""
     from study_qb_assistant.auth import AuthService
-    from study_qb_assistant.platform import PlatformService
+    from study_qb_assistant.platform.container import PlatformServices
     from study_qb_assistant.search import LocalQuestionIndex
 
     db_path = temp_db_dir / "study-qb.sqlite3"
     auth = AuthService(db_path)
-    platform = PlatformService(db_path)
+    platform = PlatformServices(db_path)
     index = LocalQuestionIndex(records=())
 
     app = create_app(
-        index, auth_service=auth, platform_service=platform, require_auth=True
+        index, auth_service=auth, platform_services=platform, require_auth=True
     )
     client = TestClient(app)
 

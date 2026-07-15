@@ -146,7 +146,7 @@ to the application container; see [docs/deployment.md](docs/deployment.md) for t
 GitHub repository setup.
 For production vision-question support, set `STQB_PUBLIC_BASE_URL` to the public HTTPS
 origin of the service. OCS question images are stored under `deploy-data/images/ocs/`
-and exposed as `/media/ocs/images/<sha256>.<ext>` for vision models.
+and exposed as `/api/v1/media/ocs/images/<sha256>.<ext>` for vision models.
 
 Install and run commit hooks:
 
@@ -158,8 +158,8 @@ pre-commit run --all-files
 Quick API smoke checks:
 
 ```powershell
-Invoke-RestMethod -Uri "http://127.0.0.1:8765/healthz"
-Invoke-RestMethod -Uri "http://127.0.0.1:8765/status"
-Invoke-RestMethod -Uri "http://127.0.0.1:8765/configs/ocs-local-study-bank.json"
+Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/v1/healthz"
+Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/v1/status"
+Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/v1/configs/ocs-local-study-bank.json"
 Invoke-RestMethod -Uri "http://127.0.0.1:8765/ocs/query?title=示例题&type=single"
 ```

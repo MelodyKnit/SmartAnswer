@@ -77,7 +77,7 @@ http://127.0.0.1:8765/query?title=...&options=A.xxx#B.xxx#C.xxx#D.xxx&type=singl
 ```json
 {
   "name": "Local Study Question Bank",
-  "homepage": "http://127.0.0.1:8765/healthz",
+  "homepage": "http://127.0.0.1:8765/api/v1/healthz",
   "url": "http://127.0.0.1:8765/ocs/query",
   "method": "get",
   "type": "GM_xmlhttpRequest",
@@ -95,7 +95,7 @@ http://127.0.0.1:8765/query?title=...&options=A.xxx#B.xxx#C.xxx#D.xxx&type=singl
 服务运行时，它也会在以下地址提供相同的源配置结构：
 
 ```text
-http://127.0.0.1:8765/configs/ocs-local-study-bank.json
+http://127.0.0.1:8765/api/v1/configs/ocs-local-study-bank.json
 ```
 
 要为其他主机或端口生成相同的结构：

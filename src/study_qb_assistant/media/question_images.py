@@ -10,10 +10,11 @@ from urllib.parse import urljoin, urlparse
 
 from ..config import get_global_config
 from ..logger import log_event
-from ..models import QuestionQuery
+from .inputs import strip_embedded_image_urls
+from study_qb_assistant.questions.models import QuestionQuery
 from .question_context import ImageAsset, image_bytes_to_data_url, load_query_image_assets
 
-IMAGE_ROUTE_PREFIX = "/media/ocs/images/"
+IMAGE_ROUTE_PREFIX = "/api/v1/media/ocs/images/"
 IMAGE_FILENAME_PATTERN = re.compile(
     r"^[a-f0-9]{64}\.(?:png|jpg|jpeg|webp|gif|bmp)$",
     re.I,
@@ -53,10 +54,15 @@ def hydrate_query_images_for_model(query: QuestionQuery) -> QuestionQuery:
     if not stored_images:
         return query
     public_urls = tuple(image.public_url for image in stored_images if image.public_url)
+    cleaned_title = strip_embedded_image_urls(
+        query.title,
+        query.image_urls,
+        query.option_image_urls.values(),
+    )
     if public_urls:
         log_model_image_refs(query, stored_images, mode="public_url")
         return QuestionQuery(
-            title=query.title,
+            title=cleaned_title,
             options=query.options,
             question_type=query.question_type,
             request_id=query.request_id,
@@ -73,7 +79,7 @@ def hydrate_query_images_for_model(query: QuestionQuery) -> QuestionQuery:
     if data_urls:
         log_model_image_refs(query, stored_images, mode="data_url_fallback")
         return QuestionQuery(
-            title=query.title,
+            title=cleaned_title,
             options=query.options,
             question_type=query.question_type,
             request_id=query.request_id,
@@ -146,7 +152,7 @@ def public_image_url(filename: str, *, query: QuestionQuery | None = None) -> st
         base_url = get_global_config().public_base_url
     if not base_url:
         return ""
-    return urljoin(base_url.rstrip("/") + "/", f"media/ocs/images/{filename}")
+    return urljoin(base_url.rstrip("/") + "/", f"api/v1/media/ocs/images/{filename}")
 
 
 def is_safe_ocs_image_filename(filename: str) -> bool:

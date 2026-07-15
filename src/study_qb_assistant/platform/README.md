@@ -1,30 +1,28 @@
-# Platform 结构说明
+# Platform 结构
 
-该目录负责平台领域能力，当前按“服务 / 记录 / 配置 / 存储”拆分：
+平台能力按业务域拆分，不再提供承担全部职责的 `PlatformService`。
 
-- `service.py`
-  - 平台 Facade，对外保留统一 `PlatformService` 入口
-- `llm_service.py`
-  - 大模型配置、连通性测试、调用追溯与统计
-- `records.py`
-  - 平台状态落盘时使用的记录模型
-- `config.py`
-  - 平台系统配置字段与环境变量映射常量
-- `storage.py`
-  - 平台令牌的序列化、安全脱敏与公开视图辅助
+## 组装
 
-## 设计约束
+- `container.py` 定义 `PlatformServices`，只创建领域仓储和领域服务。
+- `base.py` 提供领域服务共享的仓储引用和进程内事务锁。
+- API 依赖从 `PlatformServices` 中按领域取得服务，不通过转发方法调用。
 
-- 对外统一从 `study_qb_assistant.platform` 导入 `PlatformService`
-- `service.py` 负责对外兼容入口和跨域编排，单一业务域优先拆入明确子服务
-- `records.py` 只负责状态记录结构，不承担业务判断
-- `config.py` 只负责配置常量定义，不承载业务逻辑
-- 平台数据实际持久化由 SQLAlchemy 仓储层负责，默认数据库为 SQLite
+## 领域
 
-## 扩展建议
+- `tokens/`：API Key 生命周期与 OCS 配置生成。
+- `usage/`：调用记录与统计。
+- `feedback/`：反馈提交和处理。
+- `wallet/`：积分、流水和兑换码。
+- `notifications/`、`announcements/`：通知中心与公告。
+- `import_scripts/`：导入脚本模板和生成。
+- `permissions/`：角色权限。
+- `settings/`：系统配置和运行时配置映射。
+- `dashboard/`：跨域只读工作台聚合。
 
-- 新增平台持久化对象，先补到 `records.py`
-- 新增平台业务操作，先判断是否属于已有子服务；跨域编排才放到 `service.py`
-- 新增系统配置项时，先同步更新 `config.py`
-- 新增平台状态读写规则时，优先落到 `storage.py`
-- 若后续钱包、反馈、计费或公告继续膨胀，按 `llm_service.py` 的方式拆成子服务，同时保持 `PlatformService` Facade 入口
+## 约束
+
+- 单一业务规则放在所属领域服务中。
+- 跨域流程必须显式注入所需服务，不重新建立万能 Facade。
+- 记录类型与展示辅助放在所属领域目录，不集中堆放互不相关的数据结构。
+- 数据持久化由 `storage/repositories` 中的对应领域仓储负责。

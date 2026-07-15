@@ -36,8 +36,8 @@ wait_until_healthy() {
   local attempt health_payload version_payload
 
   for attempt in $(seq 1 45); do
-    health_payload="$(curl --fail --silent --show-error "$health_base_url/healthz" 2>/dev/null || true)"
-    version_payload="$(curl --fail --silent --show-error "$health_base_url/version" 2>/dev/null || true)"
+    health_payload="$(curl --fail --silent --show-error "$health_base_url/api/v1/healthz" 2>/dev/null || true)"
+    version_payload="$(curl --fail --silent --show-error "$health_base_url/api/v1/version" 2>/dev/null || true)"
     if [[ "$health_payload" == *'"ok":true'* ]] && [[ "$version_payload" == *"\"version\":\"$expected_version\""* ]]; then
       return 0
     fi

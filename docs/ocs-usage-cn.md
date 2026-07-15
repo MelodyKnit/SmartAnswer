@@ -166,7 +166,7 @@ python scripts\serve_local.py --index data\normalized\verified.jsonl --host 127.
 [
   {
     "name": "Local Study Question Bank",
-    "homepage": "http://127.0.0.1:8765/healthz",
+    "homepage": "http://127.0.0.1:8765/api/v1/healthz",
     "url": "http://127.0.0.1:8765/ocs/query",
     "method": "get",
     "type": "GM_xmlhttpRequest",
@@ -192,7 +192,7 @@ configs\ocs-local-study-bank.json
 服务启动后也可以从接口获取：
 
 ```text
-http://127.0.0.1:8765/configs/ocs-local-study-bank.json
+http://127.0.0.1:8765/api/v1/configs/ocs-local-study-bank.json
 ```
 
 如果 OCS/Tampermonkey 拦截跨域请求，请在脚本或管理器配置中允许连接：
@@ -207,7 +207,7 @@ localhost
 健康检查：
 
 ```powershell
-Invoke-RestMethod -Uri "http://127.0.0.1:8765/healthz"
+Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/v1/healthz"
 ```
 
 确认题库和模型开关状态：

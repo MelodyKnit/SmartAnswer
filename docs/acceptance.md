@@ -44,7 +44,7 @@ Passing acceptance proves:
 - `/query` works through GET and POST
 - `/status` reports the loaded index and non-sensitive model switches
 - `/ocs/query` returns the configured `code/data/ai` shape
-- `/configs/ocs-local-study-bank.json` returns the expected source config
+- `/api/v1/configs/ocs-local-study-bank.json` returns the expected source config
 - the local config file has the expected source fields
 - the local config can be used to call the source URL and execute the handler
 - model fallback works through a local OpenAI-compatible mock provider

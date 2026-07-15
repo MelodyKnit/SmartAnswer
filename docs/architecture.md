@@ -185,6 +185,24 @@ Current implementation:
 - model provider: OpenAI-compatible chat completions adapter
 - AI learned bank: unified JSONL learned-bank under `data\normalized\ai-learned.jsonl`, promoted only after repeated high-confidence agreement
 - external client adapter: OCS-style `/ocs/query` response and source config
+- API boundary: canonical business routes under `/api/v1`, with `/ocs/query` as the only
+  stable unversioned integration endpoint
+- OCS integration: `adapters/ocs` Facade, Protocol and registered question-type strategies
+- LLM tools: `llm/tools/local_rag` and `llm/tools/web_search`; the `search` package continues
+  to own local matching algorithms and indexes
+
+### 7.1 Backend package boundaries
+
+- `questions` owns canonical question models, parsing, normalization and validation.
+- `answering` owns answer orchestration, retries, persistence, reuse and quality policies.
+- `api/v1/<domain>` owns versioned HTTP routes and request schemas; `api/v1/router.py`
+  is the only v1 aggregation entry.
+- `platform/<domain>` owns platform business services. `PlatformServices` is an assembly
+  container, not a business facade.
+- `storage/repositories/<domain>.py` owns SQLAlchemy data access while `storage/orm.py`
+  remains the centralized table registry.
+- `adapters/ocs` and `llm/tools` expose explicit Protocol/ABC boundaries for integration
+  and tool extensions.
 
 Current implemented runtime flow:
 

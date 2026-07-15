@@ -55,7 +55,7 @@ When the model gateway or outbound proxy runs on the host machine instead of ins
 same container network, use `host.docker.internal` rather than `127.0.0.1`.
 Inside the container, loopback only points to the application container itself.
 Vision questions store readable OCS images under `deploy-data/images/ocs/` and send the
-model a URL under `/media/ocs/images/`. Configure `STQB_PUBLIC_BASE_URL` to the public
+model a URL under `/api/v1/media/ocs/images/`. Configure `STQB_PUBLIC_BASE_URL` to the public
 HTTPS origin that the model provider can reach; otherwise local loopback requests fall
 back to inline data URLs for development.
 
@@ -116,7 +116,8 @@ the GitHub repository, not in application configuration or server `.env` files:
 
 The workflow passes the GHCR token over SSH standard input only. The remote script uses a
 temporary Docker credential directory, pulls the immutable digest, creates a SQLite online
-backup, replaces `.env.release` atomically and verifies `/healthz` plus `/version`. A failed
+backup, replaces `.env.release` atomically and verifies `/api/v1/healthz` plus
+`/api/v1/version`. A failed
 start or health check restores the prior image reference and database snapshot. The server
 does not keep the GitHub or GHCR token, and the business container never receives Docker
 access.

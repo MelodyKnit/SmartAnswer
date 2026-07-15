@@ -12,12 +12,12 @@ SRC_ROOT = PROJECT_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from study_qb_assistant.answer_reuse import (  # noqa: E402
+from study_qb_assistant.answering.reuse import (  # noqa: E402
     REUSE_POLICY_NON_REUSABLE_OPEN_TEXT,
     REUSE_POLICY_REUSABLE,
     decide_answer_reuse,
 )
-from study_qb_assistant.models import QuestionQuery  # noqa: E402
+from study_qb_assistant.questions.models import QuestionQuery  # noqa: E402
 
 
 class AnswerReusePolicyTests(unittest.TestCase):

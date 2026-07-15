@@ -15,7 +15,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from study_qb_assistant.llm.cache import LlmAnswerCache, cache_key  # noqa: E402
-from study_qb_assistant.models import QuestionQuery  # noqa: E402
+from study_qb_assistant.questions.models import QuestionQuery  # noqa: E402
 
 
 class LlmAnswerCachePersistenceTests(unittest.TestCase):
