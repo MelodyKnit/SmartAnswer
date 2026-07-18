@@ -113,6 +113,12 @@ class UsageService(PlatformDomainService):
                 end_time=end_time,
             )
 
+    def user_usage_counts(self) -> dict[str, int]:
+        """按用户名返回累计查题调用次数。"""
+
+        with self.lock:
+            return dict(self.repository.usage_counts_by_field("username"))
+
     def usage_scope(self, *, username: str, role: str, scope: str = "self") -> tuple[str, str | None]:
         """归一化统计范围，并返回仓储层需要的用户过滤器。"""
 

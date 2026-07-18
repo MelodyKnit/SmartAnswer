@@ -236,7 +236,7 @@ onMounted(load)
 <template>
   <div>
     <PageHeader
-      title="导入脚本"
+      title="复制导入"
       description="查看仓库内提交的导入脚本模板，和用户侧「复制导入脚本」共用同一模板源。"
     >
       <template #actions>

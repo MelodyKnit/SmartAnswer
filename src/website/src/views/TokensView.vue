@@ -21,9 +21,12 @@ const newMinAnswerConfidence = ref(0)
 
 const editVisible = ref(false)
 const updating = ref(false)
+const revoking = ref(false)
 const editForm = ref({
   token_id: '',
+  key_mask: '',
   description: '',
+  status: 'active',
   quota_limit: -1,
   reject_low_confidence: false,
   min_answer_confidence: 0,
@@ -74,22 +77,27 @@ async function submitCreate() {
   }
 }
 
-async function revoke(token: ApiToken) {
+async function revokeEditingToken() {
+  const label = editForm.value.description || editForm.value.key_mask
   const confirmed = await ElMessageBox.confirm(
-    `确定吊销令牌「${token.description || token.key_mask}」吗？吊销后使用该令牌的客户端将立即失效。`,
+    `确定吊销令牌「${label}」吗？吊销后使用该令牌的客户端将立即失效。`,
     '吊销确认',
     { type: 'warning', confirmButtonText: '吊销', cancelButtonText: '取消' },
   )
     .then(() => true)
     .catch(() => false)
   if (!confirmed) return
+  revoking.value = true
   try {
-    await tokenApi.revoke(token.token_id)
-    removeApiTokenSecret(token.token_id)
+    await tokenApi.revoke(editForm.value.token_id)
+    removeApiTokenSecret(editForm.value.token_id)
     ElMessage.success('已吊销')
+    editVisible.value = false
     await load()
   } catch (err) {
     ElMessage.error(err instanceof ApiException ? err.message : '操作失败')
+  } finally {
+    revoking.value = false
   }
 }
 
@@ -129,7 +137,9 @@ async function copyToken(token: ApiToken) {
 function openEdit(token: ApiToken) {
   editForm.value = {
     token_id: token.token_id,
+    key_mask: token.key_mask,
     description: token.description || '',
+    status: token.status,
     quota_limit: token.quota_limit ?? -1,
     reject_low_confidence: Boolean(token.reject_low_confidence),
     min_answer_confidence: token.min_answer_confidence ?? 0,
@@ -184,7 +194,7 @@ onMounted(load)
   <div>
     <PageHeader title="API Key 管理" description="创建并管理用于 OCS 等客户端接入答题服务的 API 令牌。">
       <template #actions>
-        <el-button :icon="'DocumentCopy'" @click="openImportScript()">复制导入脚本</el-button>
+        <el-button :icon="'DocumentCopy'" @click="openImportScript()">复制导入</el-button>
         <el-button type="primary" :icon="'Plus'" @click="openCreate">创建 API Key</el-button>
       </template>
     </PageHeader>
@@ -247,7 +257,7 @@ onMounted(load)
         <el-table-column label="创建时间" width="170" align="center">
           <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="230" align="right">
+        <el-table-column label="操作" width="190" align="right">
           <template #default="{ row }">
             <div class="flex justify-end gap-2">
               <template v-if="row.status === 'active'">
@@ -256,7 +266,7 @@ onMounted(load)
                   type="primary"
                   @click="openImportScript(row)"
                 >
-                  导入脚本
+                  复制导入
                 </el-button>
                 <el-button
                   link
@@ -264,13 +274,6 @@ onMounted(load)
                   @click="openEdit(row)"
                 >
                   编辑
-                </el-button>
-                <el-button
-                  link
-                  type="danger"
-                  @click="revoke(row)"
-                >
-                  吊销
                 </el-button>
               </template>
               <el-button
@@ -320,7 +323,7 @@ onMounted(load)
 
     <!-- 编辑弹窗 -->
     <el-dialog v-model="editVisible" title="编辑 API Key" width="440px">
-      <el-form label-position="top">
+      <el-form label-position="top" :disabled="updating || revoking">
         <el-form-item label="API Key 名称">
           <el-input v-model="editForm.description" placeholder="请输入描述" maxlength="64" />
         </el-form-item>
@@ -341,9 +344,23 @@ onMounted(load)
           />
         </el-form-item>
       </el-form>
+      <div
+        v-if="editForm.status === 'active'"
+        class="mt-2 flex items-center justify-between gap-4 rounded-lg border border-danger/30 bg-danger/5 p-3"
+      >
+        <div class="min-w-0">
+          <div class="text-sm font-medium text-ink">吊销 API Key</div>
+          <div class="mt-1 text-xs text-ink-muted">吊销后，使用该密钥的客户端将立即无法访问服务。</div>
+        </div>
+        <el-button type="danger" plain :loading="revoking" @click="revokeEditingToken">
+          吊销
+        </el-button>
+      </div>
       <template #footer>
-        <el-button @click="editVisible = false">取消</el-button>
-        <el-button type="primary" :loading="updating" @click="submitUpdate">保存</el-button>
+        <el-button :disabled="revoking" @click="editVisible = false">取消</el-button>
+        <el-button type="primary" :loading="updating" :disabled="revoking" @click="submitUpdate">
+          保存
+        </el-button>
       </template>
     </el-dialog>
 

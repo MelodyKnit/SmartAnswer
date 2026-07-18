@@ -63,7 +63,7 @@ const routes: RouteRecordRaw[] = [
         path: 'import-scripts',
         name: 'import-scripts',
         component: () => import('@/views/ImportScriptsView.vue'),
-        meta: { access: 'admin', title: '导入脚本' },
+        meta: { access: 'admin', title: '复制导入' },
       },
       {
         path: 'usage-logs',

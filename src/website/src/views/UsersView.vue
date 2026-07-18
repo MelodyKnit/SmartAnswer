@@ -3,7 +3,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { billingApi, userApi, walletApi } from '@/api/endpoints'
-import type { User } from '@/api/types'
+import type { ManagedUser } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
 import { ApiException } from '@/api/http'
 import { formatDateTime } from '@/utils/format'
@@ -11,7 +11,7 @@ import PageHeader from '@/components/PageHeader.vue'
 
 const auth = useAuthStore()
 const loading = ref(false)
-const users = ref<User[]>([])
+const users = ref<ManagedUser[]>([])
 const manualGrantDefault = ref(1)
 
 const ROLE_LABELS: Record<string, string> = {
@@ -48,7 +48,7 @@ const editing = reactive({
   original_role: 'user',
 })
 
-function openEdit(user: User) {
+function openEdit(user: ManagedUser) {
   editing.username = user.username
   editing.role = user.role
   editing.original_role = user.role
@@ -75,7 +75,7 @@ async function submitEdit() {
 const grantVisible = ref(false)
 const grant = reactive({ username: '', points: manualGrantDefault.value })
 
-function openGrant(user: User) {
+function openGrant(user: ManagedUser) {
   grant.username = user.username
   grant.points = manualGrantDefault.value
   grantVisible.value = true
@@ -130,6 +130,9 @@ onMounted(async () => {
           </template>
         </el-table-column>
         <el-table-column label="积分" width="100" prop="points" align="center" />
+        <el-table-column label="使用次数" width="110" align="center">
+          <template #default="{ row }">{{ row.usage_count ?? 0 }}</template>
+        </el-table-column>
         <el-table-column label="邮箱" min-width="160" align="center">
           <template #default="{ row }">{{ row.email || '—' }}</template>
         </el-table-column>

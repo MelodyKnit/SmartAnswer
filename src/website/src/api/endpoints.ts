@@ -14,6 +14,7 @@ import type {
   LlmCallTrace,
   LlmModel,
   LlmRuntimeConfig,
+  ManagedUser,
   NotificationItem,
   NotificationCenterItem,
   NotificationCenterSource,
@@ -74,7 +75,7 @@ export const authApi = {
 /* ---------------- 用户中心 ---------------- */
 export const userApi = {
   me: () => api.get<{ ok: true; user: User; billing: Billing; wallet: WalletSummary }>('/users/me'),
-  list: () => api.get<{ ok: true; users: User[] }>('/users'),
+  list: () => api.get<{ ok: true; users: ManagedUser[] }>('/users'),
   update: (username: string, body: { role?: string; points?: number; status?: string }) =>
     api.patch<{ ok: true; user: User }>(`/users/${encodeURIComponent(username)}`, body),
   updateProfile: (display_name: string) =>

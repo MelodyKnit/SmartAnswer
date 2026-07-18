@@ -6,7 +6,12 @@ from fastapi import APIRouter, Request
 from starlette.responses import JSONResponse
 
 from ....auth import AuthError
-from ...dependencies import get_auth_service, get_settings_service, get_wallet_service
+from ...dependencies import (
+    get_auth_service,
+    get_settings_service,
+    get_usage_service,
+    get_wallet_service,
+)
 from ...security import (
     auth_error_response,
     current_user,
@@ -93,7 +98,11 @@ def build_user_router() -> APIRouter:
         if denied:
             return denied
         auth = get_auth_service(request)
-        return JSONResponse({"ok": True, "users": auth.list_users()})
+        usage_counts = get_usage_service(request).user_usage_counts()
+        users = auth.list_users()
+        for user in users:
+            user["usage_count"] = usage_counts.get(str(user["username"]), 0)
+        return JSONResponse({"ok": True, "users": users})
 
     @router.patch("/users/{username}")
     def users_update(request: Request, username: str, payload: UserUpdatePayload) -> JSONResponse:

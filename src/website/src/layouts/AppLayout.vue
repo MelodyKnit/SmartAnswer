@@ -50,7 +50,7 @@ const allGroups: MenuGroup[] = [
   {
     title: '管理',
     items: [
-      { index: '/import-scripts', label: '导入脚本', icon: 'Document', access: 'admin' },
+      { index: '/import-scripts', label: '复制导入', icon: 'Document', access: 'admin' },
       { index: '/redeem-management', label: '兑换管理', icon: 'Coin', access: 'admin' },
       { index: '/llm-models', label: '大模型配置', icon: 'Cpu', access: 'admin' },
       { index: '/questions', label: '题库管理', icon: 'Notebook', access: 'admin' },

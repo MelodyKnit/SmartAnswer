@@ -15,6 +15,10 @@ export interface User {
   created_at: number
 }
 
+export interface ManagedUser extends User {
+  usage_count: number
+}
+
 export interface Billing {
   local_hit: number
   web_search: number

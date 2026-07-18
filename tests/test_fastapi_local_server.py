@@ -1720,7 +1720,31 @@ class FastAPILocalServerTests(unittest.TestCase):
                 "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'bob', 'password': 'password123'}).json()['token']}"
             }
 
-            users = client.get("/users", headers=admin_headers)
+            alice = auth.get_user("alice")
+            assert alice is not None
+            for title, resolution_mode in (
+                ("命中题目", "local_hit"),
+                ("模型异常题目", "model_error"),
+            ):
+                platform.usage.record_usage(
+                    user_id=alice["user_id"],
+                    username="alice",
+                    token_id=None,
+                    title=title,
+                    question_type="single",
+                    resolution_mode=resolution_mode,
+                    answer="A" if resolution_mode == "local_hit" else None,
+                    confidence=1.0 if resolution_mode == "local_hit" else 0.0,
+                    provider="local" if resolution_mode == "local_hit" else "model",
+                    points_cost=0,
+                )
+
+            with mock.patch.object(
+                platform.usage.repository,
+                "usage_counts_by_field",
+                wraps=platform.usage.repository.usage_counts_by_field,
+            ) as usage_count_query:
+                users = client.get("/api/v1/users", headers=admin_headers)
             patch_points_ok = client.patch(
                 "/users/bob", json={"points": 250}, headers=admin_headers
             )
@@ -1753,6 +1777,11 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(promote_admin.status_code, 200)
         self.assertEqual(users.status_code, 200)
         self.assertEqual(len(users.json()["users"]), 3)
+        usage_counts = {
+            item["username"]: item["usage_count"] for item in users.json()["users"]
+        }
+        self.assertEqual(usage_counts, {"alice": 2, "bob": 0, "boss": 0})
+        usage_count_query.assert_called_once_with("username")
         self.assertEqual(patch_points_ok.json()["user"]["points"], 250)
         self.assertEqual(patch_role_forbidden.status_code, 403)
         self.assertEqual(patch_forbidden.status_code, 403)
