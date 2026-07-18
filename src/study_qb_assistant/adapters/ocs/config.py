@@ -8,6 +8,7 @@ from typing import Any
 
 BASE_URL_PLACEHOLDER = "{{BASE_URL}}"
 TOKEN_PLACEHOLDER = "{{TOKEN}}"
+CONFIG_NAME_PLACEHOLDER = "{{CONFIG_NAME}}"
 
 
 def load_ocs_import_template_payload() -> dict[str, Any]:
@@ -32,13 +33,48 @@ def load_ocs_client_script_source() -> str:
     return resource.read_text(encoding="utf-8")
 
 
-def build_ocs_config(base_url: str) -> list[dict[str, Any]]:
-    """根据服务基础地址构建 OCS 题库配置。"""
+def build_ocs_config(
+    base_url: str,
+    *,
+    platform_name: str,
+    token_description: str = "",
+    token_key_mask: str = "",
+) -> list[dict[str, Any]]:
+    """根据运行时平台与令牌信息构建 OCS 题库配置。"""
 
     payload = load_ocs_import_template_payload()
     normalized_base_url = base_url.rstrip("/")
     config_items = payload.get("config_items") or []
-    return [replace_placeholders(dict(item), normalized_base_url) for item in config_items]
+    config_name = build_ocs_config_name(
+        platform_name,
+        token_description=token_description,
+        token_key_mask=token_key_mask,
+    )
+    return [
+        replace_placeholders(dict(item), normalized_base_url, config_name)
+        for item in config_items
+    ]
+
+
+def build_ocs_config_name(
+    platform_name: str,
+    *,
+    token_description: str = "",
+    token_key_mask: str = "",
+) -> str:
+    """生成 OCS 中可区分来源与 API Key 的题库名称。"""
+
+    normalized_platform_name = normalize_display_text(platform_name)
+    if not normalized_platform_name:
+        raise ValueError("平台名称不能为空")
+    normalized_description = normalize_display_text(token_description)
+    if normalized_description:
+        return f"{normalized_platform_name} · {normalized_description}"
+
+    normalized_key_mask = normalize_display_text(token_key_mask)
+    if normalized_key_mask:
+        return f"{normalized_platform_name} · {normalized_key_mask[-4:]}"
+    return normalized_platform_name
 
 
 def render_ocs_client_script(base_url: str, *, token: str = TOKEN_PLACEHOLDER) -> str:
@@ -53,15 +89,27 @@ def render_ocs_client_script(base_url: str, *, token: str = TOKEN_PLACEHOLDER) -
     return script.replace('    apiKey: "",', f'    apiKey: "{token}",')
 
 
-def replace_placeholders(value: Any, base_url: str) -> Any:
+def replace_placeholders(value: Any, base_url: str, config_name: str) -> Any:
     """递归替换 OCS 模板中的服务地址占位符。"""
 
     if isinstance(value, str):
-        return value.replace(BASE_URL_PLACEHOLDER, base_url)
+        return (
+            value.replace(BASE_URL_PLACEHOLDER, base_url)
+            .replace(CONFIG_NAME_PLACEHOLDER, config_name)
+        )
     if isinstance(value, list):
-        return [replace_placeholders(item, base_url) for item in value]
+        return [replace_placeholders(item, base_url, config_name) for item in value]
     if isinstance(value, tuple):
-        return tuple(replace_placeholders(item, base_url) for item in value)
+        return tuple(replace_placeholders(item, base_url, config_name) for item in value)
     if isinstance(value, dict):
-        return {str(key): replace_placeholders(item, base_url) for key, item in value.items()}
+        return {
+            str(key): replace_placeholders(item, base_url, config_name)
+            for key, item in value.items()
+        }
     return value
+
+
+def normalize_display_text(value: object) -> str:
+    """清理配置展示文本，避免控制字符影响 OCS 配置可读性。"""
+
+    return " ".join(str(value or "").replace("\r", " ").replace("\n", " ").split())

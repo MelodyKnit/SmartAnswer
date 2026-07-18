@@ -30,7 +30,15 @@ def build_import_script_router() -> APIRouter:
         if denied:
             return denied
         platform = get_import_script_service(request)
-        return JSONResponse({"ok": True, "scripts": platform.list_import_scripts()})
+        settings = get_settings_service(request)
+        return JSONResponse(
+            {
+                "ok": True,
+                "scripts": platform.list_import_scripts(
+                    platform_name=str(settings.get_site_config()["site_title"])
+                ),
+            }
+        )
 
     @router.post("/import-scripts")
     def import_script_create(request: Request, payload: ImportScriptCreatePayload) -> JSONResponse:
@@ -89,10 +97,12 @@ def build_import_script_router() -> APIRouter:
         if denied:
             return denied
         platform = get_import_script_service(request)
+        settings = get_settings_service(request)
         try:
             item = platform.get_import_script(
                 script_id,
-                base_url=base_url_from_request(request, get_settings_service(request)),
+                base_url=base_url_from_request(request, settings),
+                platform_name=str(settings.get_site_config()["site_title"]),
             )
         except AuthError as exc:
             return auth_error_response(exc)

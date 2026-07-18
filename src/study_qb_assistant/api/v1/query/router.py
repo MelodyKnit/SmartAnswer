@@ -113,7 +113,12 @@ def build_query_router() -> APIRouter:
     def ocs_config(request: Request) -> JSONResponse:
         settings = get_settings_service(request)
         integration = get_ocs_integration(request)
-        return JSONResponse(integration.build_config(base_url_from_request(request, settings)))
+        return JSONResponse(
+            integration.build_config(
+                base_url_from_request(request, settings),
+                platform_name=str(settings.get_site_config()["site_title"]),
+            )
+        )
 
     @router.get("/query")
     def query_get(

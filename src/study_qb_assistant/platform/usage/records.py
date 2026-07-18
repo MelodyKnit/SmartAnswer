@@ -25,6 +25,7 @@ class UsageLogRecord:
     elapsed_ms: float
     created_at: float
     request_id: str = ""
+    client_ip: str = ""
     question_id: str | None = None
     source_name: str = ""
     source_type: str = ""
@@ -54,6 +55,7 @@ class UsageLogRecord:
             "elapsed_ms": self.elapsed_ms,
             "created_at": self.created_at,
             "request_id": self.request_id,
+            "client_ip": self.client_ip,
             "question_id": self.question_id,
             "source_name": self.source_name,
             "source_type": self.source_type,
@@ -80,6 +82,7 @@ class UsageLogRecord:
             elapsed_ms=float(payload.get("elapsed_ms") or 0.0),
             created_at=float(payload.get("created_at") or time.time()),
             request_id=str(payload.get("request_id") or ""),
+            client_ip=str(payload.get("client_ip") or ""),
             question_id=(str(payload["question_id"]) if payload.get("question_id") else None),
             source_name=str(payload.get("source_name") or ""),
             source_type=str(payload.get("source_type") or ""),

@@ -42,7 +42,7 @@ http://127.0.0.1:8765/api/v1/configs/ocs-local-study-bank.json
 ```json
 [
   {
-    "name": "Local Study Question Bank",
+    "name": "当前平台名称",
     "homepage": "http://127.0.0.1:8765/api/v1/healthz",
     "url": "http://127.0.0.1:8765/ocs/query",
     "method": "get",
@@ -59,6 +59,8 @@ http://127.0.0.1:8765/api/v1/configs/ocs-local-study-bank.json
 ```
 
 OCS 期望 handler 的返回值将答案放在第二个位置。因此，本地配置在请求成功时返回 `[question, answer]`。
+
+运行时配置接口会读取系统 `site_title` 作为题库名称；经 API Key 页面复制时，会追加该 Key 的名称，格式为 `平台名称 · API Key 名称`。名称为空时只追加掩码末尾四位，避免泄露密钥。
 
 OCS/Tampermonkey 部署可能还需要脚本环境允许连接 to 本地主机，例如 `127.0.0.1` 或 `localhost`。项目服务会发送宽松的 CORS 标头，但用户脚本管理器仍可能强制执行其自己的连接白名单。
 

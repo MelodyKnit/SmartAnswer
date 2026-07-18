@@ -7,6 +7,7 @@ import time
 from threading import RLock
 from typing import Any
 
+from ...adapters.ocs.config import build_ocs_config_name
 from ...auth import AuthError
 from ..base import PlatformDomainService
 from .templates import (
@@ -24,11 +25,15 @@ class ImportScriptService(PlatformDomainService):
         super().__init__(repository, lock)
         self.token_repository = token_repository
 
-    def list_import_scripts(self) -> list[dict]:
+    def list_import_scripts(self, *, platform_name: str) -> list[dict]:
         """列出全部导入脚本。"""
         builtin_scripts = []
         for template in load_import_script_templates():
-            item = render_import_script(template, "")
+            item = render_import_script(
+                template,
+                "",
+                config_name=build_ocs_config_name(platform_name),
+            )
             item["builtin"] = True
             item["status"] = "active"
             item["created_at"] = 0
@@ -38,14 +43,24 @@ class ImportScriptService(PlatformDomainService):
             custom_scripts = [item.to_dict() for item in self.repository.list_import_scripts()]
         return [*builtin_scripts, *custom_scripts]
 
-    def get_import_script(self, script_id: str, *, base_url: str = "") -> dict | None:
+    def get_import_script(
+        self,
+        script_id: str,
+        *,
+        base_url: str = "",
+        platform_name: str,
+    ) -> dict | None:
         """读取单个导入脚本。"""
         try:
             template = get_import_script_template(script_id)
         except KeyError:
             template = None
         if template is not None:
-            payload = render_import_script(template, base_url)
+            payload = render_import_script(
+                template,
+                base_url,
+                config_name=build_ocs_config_name(platform_name),
+            )
             payload["builtin"] = True
             payload["status"] = "active"
             payload["created_at"] = 0

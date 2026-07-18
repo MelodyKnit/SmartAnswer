@@ -1,6 +1,6 @@
 [
   {
-    "name": "Local Study Question Bank",
+    "name": "AI题库",
     "homepage": "http://127.0.0.1:8765/api/v1/healthz",
     "url": "http://127.0.0.1:8765/ocs/query",
     "method": "get",

@@ -126,6 +126,7 @@ class UsageLogEntity(Base):
     elapsed_ms: Mapped[float] = mapped_column(Float, default=0.0)
     created_at: Mapped[float] = mapped_column(Float, index=True)
     request_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    client_ip: Mapped[str] = mapped_column(String(64), default="")
     question_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     source_name: Mapped[str] = mapped_column(String(255), default="")
     source_type: Mapped[str] = mapped_column(String(64), default="")

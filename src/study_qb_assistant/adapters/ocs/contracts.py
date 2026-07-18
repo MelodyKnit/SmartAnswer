@@ -26,7 +26,7 @@ class OcsIntegrationPort(Protocol):
     ) -> dict[str, object]:
         """生成低置信度拒答响应。"""
 
-    def build_config(self, base_url: str) -> list[dict[str, Any]]:
+    def build_config(self, base_url: str, *, platform_name: str) -> list[dict[str, Any]]:
         """生成可导入 OCS 的题库配置。"""
 
     def render_client_script(self, base_url: str, *, token: str = "{{TOKEN}}") -> str:

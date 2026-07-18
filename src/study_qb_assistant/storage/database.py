@@ -114,6 +114,7 @@ def ensure_sqlite_compat_columns(engine: Engine) -> None:
         "usage_logs": {
             "elapsed_ms": "REAL DEFAULT 0.0",
             "request_id": "TEXT DEFAULT ''",
+            "client_ip": "TEXT DEFAULT ''",
             "question_id": "TEXT",
             "source_name": "TEXT DEFAULT ''",
             "source_type": "TEXT DEFAULT ''",
@@ -193,6 +194,7 @@ def ensure_sql_compat_columns(engine: Engine) -> None:
         "usage_logs": {
             "elapsed_ms": "FLOAT DEFAULT 0.0",
             "request_id": "VARCHAR(64) DEFAULT ''",
+            "client_ip": "VARCHAR(64) DEFAULT ''",
             "question_id": "VARCHAR(128)",
             "source_name": "VARCHAR(255) DEFAULT ''",
             "source_type": "VARCHAR(64) DEFAULT ''",

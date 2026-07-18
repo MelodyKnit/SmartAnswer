@@ -21,7 +21,7 @@ from ..platform.usage import UsageService
 from ..questions.models import QuestionQuery
 from ..search import LocalQuestionIndex
 from .dependencies import get_ocs_integration
-from .http import model_visible_base_url
+from .http import model_visible_base_url, extract_client_ip
 from .security import auth_error_response, authorization_bearer, current_user
 
 
@@ -41,10 +41,13 @@ def run_lookup(
         query.request_id = secrets.token_hex(12)
     if not query.service_base_url:
         query.service_base_url = model_visible_base_url(request, settings)
+    client_ip = extract_client_ip(request)
     started = time.time()
     try:
         set_request_id(str(query.request_id or ""))
         result = lookup.query(query)
+        # 将 client_ip 以 debug 的方式载入 result中
+        result.debug.setdefault("client_ip", client_ip)
         if legacy_image_url_only(query):
             result.debug.setdefault("legacy_url_only", "true")
         if query.image_capture_status:
@@ -62,6 +65,7 @@ def run_lookup(
                 query,
                 result,
                 elapsed_seconds,
+                client_ip=client_ip,
             )
         except AuthError as exc:
             return auth_error_response(exc)
@@ -143,6 +147,7 @@ def record_usage(
     query: QuestionQuery,
     result,
     elapsed_seconds: float,
+    client_ip: str = "",
 ) -> dict | None:
     """记录本次调用的积分消耗与审计日志。"""
     user = current_user(request)
@@ -173,6 +178,7 @@ def record_usage(
         points_cost=points_cost,
         elapsed_ms=round(max(0.0, elapsed_seconds) * 1000, 2),
         request_id=str(query.request_id or ""),
+        client_ip=client_ip,
         question_id=question_id,
         source_name=str(primary_source.get("source_name") or ""),
         source_type=source_type,

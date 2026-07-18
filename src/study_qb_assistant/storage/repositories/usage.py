@@ -30,6 +30,7 @@ class UsageRepository(SqlAlchemyRepository):
                 elapsed_ms=record.elapsed_ms,
                 created_at=record.created_at,
                 request_id=record.request_id,
+                client_ip=record.client_ip,
                 question_id=record.question_id,
                 source_name=record.source_name,
                 source_type=record.source_type,
@@ -64,6 +65,7 @@ class UsageRepository(SqlAlchemyRepository):
                 elapsed_ms=record.elapsed_ms,
                 created_at=record.created_at,
                 request_id=record.request_id,
+                client_ip=record.client_ip,
                 question_id=record.question_id,
                 source_name=record.source_name,
                 source_type=record.source_type,
@@ -138,6 +140,7 @@ class UsageRepository(SqlAlchemyRepository):
                 elapsed_ms=record.elapsed_ms,
                 created_at=record.created_at,
                 request_id=record.request_id,
+                client_ip=record.client_ip,
                 question_id=record.question_id,
                 source_name=record.source_name,
                 source_type=record.source_type,
@@ -348,6 +351,7 @@ class UsageRepository(SqlAlchemyRepository):
             elapsed_ms=float(getattr(entity, "elapsed_ms", 0.0) or 0.0),
             created_at=entity.created_at,
             request_id=str(getattr(entity, "request_id", "") or ""),
+            client_ip=str(getattr(entity, "client_ip", "") or ""),
             question_id=(
                 str(getattr(entity, "question_id", "") or "")
                 if getattr(entity, "question_id", None)

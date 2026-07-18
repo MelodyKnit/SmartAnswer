@@ -6,7 +6,7 @@ from fastapi import APIRouter, Request
 from starlette.responses import JSONResponse
 
 from ....auth import AuthError
-from ....auth.email_verification import EmailVerificationService
+from ....auth.email_verification import EmailVerificationService, normalize_email
 from ...dependencies import get_auth_service, get_settings_service
 from ...security import (
     SESSION_COOKIE,
@@ -49,9 +49,12 @@ def build_auth_router() -> APIRouter:
         try:
             email_code_record = None
             verification = None
+            email = normalize_email(payload.email) if str(payload.email or "").strip() else None
             auth.assert_invite_code_valid(payload.invite_code)
+            if platform.is_registration_email_required() and not email:
+                raise AuthError("EMAIL_REQUIRED", "请填写邮箱", http_status=400)
             if platform.is_email_verification_enabled():
-                if not payload.email or not payload.email_code:
+                if not email or not payload.email_code:
                     raise AuthError(
                         "EMAIL_VERIFICATION_REQUIRED",
                         "请先完成邮箱验证码校验",
@@ -59,14 +62,14 @@ def build_auth_router() -> APIRouter:
                     )
                 verification = email_verification_service(request)
                 email_code_record = verification.verify(
-                    email=payload.email,
+                    email=email,
                     purpose="register",
                     code=payload.email_code,
                 )
             user = auth.register(
                 payload.username,
                 payload.password,
-                payload.email,
+                email,
                 invite_code=payload.invite_code,
                 invite_bonus=platform.get_invite_bonus()
                 if payload.invite_code.strip()
@@ -89,6 +92,14 @@ def build_auth_router() -> APIRouter:
             return auth_error_response(
                 AuthError(
                     "REGISTRATION_DISABLED", "系统已关闭用户注册", http_status=403
+                )
+            )
+        if not platform.is_email_verification_enabled():
+            return auth_error_response(
+                AuthError(
+                    "EMAIL_VERIFICATION_DISABLED",
+                    "当前未启用邮箱验证码注册",
+                    http_status=400,
                 )
             )
         try:
@@ -119,8 +130,9 @@ def build_auth_router() -> APIRouter:
                 "registration_enabled": config_enabled or first_user_allowed,
                 "config_enabled": config_enabled,
                 "first_user_allowed": first_user_allowed,
+                "email_registration_mode": platform.get_registration_email_mode(),
                 "email_verification_enabled": platform.is_email_verification_enabled(),
-                "email_required": platform.is_email_verification_enabled(),
+                "email_required": platform.is_registration_email_required(),
             }
         )
 

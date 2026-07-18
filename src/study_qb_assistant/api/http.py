@@ -31,6 +31,36 @@ def base_url_from_request(request: Request, settings: SettingsService | None = N
         proto = "http"
     return f"{proto}://{host}"
 
+def extract_client_ip(request: Request) -> str:
+    """返回可审计的客户端 IP，仅信任本地反向代理提供的转发头。"""
+
+    peer_ip = normalize_ip_address(request.client.host if request.client else "")
+    if peer_ip and is_local_proxy_address(peer_ip):
+        forwarded = request.headers.get("x-forwarded-for", "")
+        forwarded_ip = normalize_ip_address(forwarded.split(",", maxsplit=1)[0])
+        if forwarded_ip:
+            return forwarded_ip
+        real_ip = normalize_ip_address(request.headers.get("x-real-ip", ""))
+        if real_ip:
+            return real_ip
+    return peer_ip
+
+
+def normalize_ip_address(value: str) -> str:
+    """验证并规范化单个 IPv4 或 IPv6 地址，拒绝非地址转发头内容。"""
+
+    try:
+        return str(ipaddress.ip_address(str(value or "").strip()))
+    except ValueError:
+        return ""
+
+
+def is_local_proxy_address(value: str) -> bool:
+    """判断连接对端是否可能是本机或 Docker 内网中的反向代理。"""
+
+    address = ipaddress.ip_address(value)
+    return address.is_private or address.is_loopback or address.is_link_local
+
 def model_visible_base_url(request: Request, settings: SettingsService | None = None) -> str:
     """返回模型大概率可访问的服务基础 URL；本地地址返回空串触发 data URL 兜底。"""
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** 注册页：用户名/密码/邮箱验证码/邀请码，含实时校验。 */
+/** 注册页：用户名、密码、邮箱策略与邀请码。 */
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { FormInstance, FormItemRule, FormRules } from 'element-plus'
@@ -16,6 +16,7 @@ const route = useRoute()
 const formRef = ref<FormInstance>()
 const loading = ref(false)
 const registrationEnabled = ref(true)
+const emailRegistrationMode = ref<'optional' | 'required' | 'verified'>('optional')
 const emailVerificationEnabled = ref(false)
 const statusLoading = ref(false)
 const sendingEmailCode = ref(false)
@@ -30,9 +31,8 @@ const form = reactive({
   invite_code: '',
 })
 
-const emailPlaceholder = computed(() =>
-  emailVerificationEnabled.value ? '邮箱' : '邮箱（可选）',
-)
+const emailRequired = computed(() => emailRegistrationMode.value !== 'optional')
+const emailPlaceholder = '邮箱'
 const emailCodeButtonText = computed(() => {
   if (emailCountdown.value > 0) return `${emailCountdown.value}s`
   return '发送验证码'
@@ -45,9 +45,11 @@ onMounted(async () => {
   try {
     const status = await authApi.registerStatus()
     registrationEnabled.value = status.registration_enabled
+    emailRegistrationMode.value = status.email_registration_mode
     emailVerificationEnabled.value = status.email_verification_enabled
   } catch {
     registrationEnabled.value = true
+    emailRegistrationMode.value = 'optional'
     emailVerificationEnabled.value = false
   } finally {
     statusLoading.value = false
@@ -64,7 +66,7 @@ const validateConfirm: FormItemRule['validator'] = (_rule, value, callback) => {
 }
 
 const validateEmail: FormItemRule['validator'] = (_rule, value, callback) => {
-  if (emailVerificationEnabled.value && !String(value || '').trim()) {
+  if (emailRequired.value && !String(value || '').trim()) {
     callback(new Error('请输入邮箱'))
     return
   }

@@ -3,20 +3,21 @@ repos:
     hooks:
       - id: ruff-check
         name: ruff check
-        entry: ruff check
+        entry: conda run --no-capture-output -n ai-study-qb python -m ruff check
         language: system
+        require_serial: true
         types_or: [python, pyi]
 
       - id: mypy-backend
         name: mypy backend
-        entry: mypy src/study_qb_assistant
+        entry: conda run --no-capture-output -n ai-study-qb python -m mypy src/study_qb_assistant
         language: system
         pass_filenames: false
         types_or: [python, pyi]
 
       - id: pytest-backend
         name: pytest backend
-        entry: pytest -q
+        entry: conda run --no-capture-output -n ai-study-qb python -m pytest -q
         language: system
         pass_filenames: false
         types_or: [python, pyi]

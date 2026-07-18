@@ -191,7 +191,7 @@ onMounted(load)
 
     <div class="app-card p-1">
       <el-table v-loading="loading" :data="tokens" style="width: 100%">
-        <el-table-column label="描述" min-width="160">
+        <el-table-column label="名称" min-width="160">
           <template #default="{ row }">
             <span class="font-medium text-ink">{{ row.description || '未命名令牌' }}</span>
           </template>
@@ -292,7 +292,7 @@ onMounted(load)
     <!-- 创建弹窗 -->
     <el-dialog v-model="createVisible" title="创建 API Key" width="440px">
       <el-form label-position="top">
-        <el-form-item label="令牌描述">
+        <el-form-item label="API Key 名称">
           <el-input v-model="newDescription" placeholder="例如：宿舍台式机浏览器扩展" maxlength="64" />
         </el-form-item>
         <el-form-item label="额度设置 (-1 表示无限制)">
@@ -321,7 +321,7 @@ onMounted(load)
     <!-- 编辑弹窗 -->
     <el-dialog v-model="editVisible" title="编辑 API Key" width="440px">
       <el-form label-position="top">
-        <el-form-item label="令牌描述">
+        <el-form-item label="API Key 名称">
           <el-input v-model="editForm.description" placeholder="请输入描述" maxlength="64" />
         </el-form-item>
         <el-form-item label="额度设置 (-1 表示无限制)">

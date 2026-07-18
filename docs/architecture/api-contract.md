@@ -195,6 +195,8 @@
 
 公开注册入口受系统配置 `registration_enabled` 控制；当系统已有用户且注册关闭时返回 `403 REGISTRATION_DISABLED`。空库初始化时仍允许创建第一个 `superadmin`。
 
+注册邮箱策略由 `registration_email_mode` 控制：`optional` 为邮箱可选，`required` 为邮箱必填但不验证，`verified` 为邮箱必填且必须通过验证码校验。`verified` 必须先配置完整 SMTP 服务；旧 `email_verification_enabled` 仍可读取，并派生为兼容状态字段。
+
 请求：
 
 ```json
@@ -515,9 +517,10 @@
   - `redeem_code_default_points`
   - `smart_proto_enabled`
   - `custom_proto_header`
-  - `answer_retry_times`
-  - `registration_enabled`
-  - `email_verification_enabled`
+   - `answer_retry_times`
+   - `registration_enabled`
+   - `registration_email_mode`：`optional`、`required` 或 `verified`
+   - `email_verification_enabled`
   - `smtp_host`
   - `smtp_port`
   - `smtp_security`
@@ -535,7 +538,7 @@
 
 - `smtp_password` 是敏感配置，`GET /system-config` 不返回明文，只返回 `smtp_password_configured`。
 - `PATCH /system-config` 中 `smtp_password=""` 表示保持原密码不变。
-- 开启 `email_verification_enabled=true` 时必须先完整配置 SMTP 主机、端口、加密方式、用户名、密码和发件邮箱。
+- 选择 `registration_email_mode=verified` 时必须先完整配置 SMTP 主机、端口、加密方式、用户名、密码和发件邮箱；`required` 不依赖 SMTP。
 - 邮箱域名白名单存储在 `configs/email-domain-whitelist.json`，按文件修改时间轻量缓存，修改后无需重启。
 - Docker 部署会把宿主机 `configs` 目录只读挂载到容器 `/app/configs`，因此生产环境应在宿主机仓库目录维护白名单文件。
 
@@ -859,7 +862,7 @@
 
 ### 4.15 接入管理
 
-接入管理功能已下线，后端不再注册 `/integrations` 系列接口。导入脚本仍通过 `/import-scripts` 管理，普通用户复制 OCS 接入配置使用 `/tokens/import-script`。
+接入管理功能已下线，后端不再注册 `/integrations` 系列接口。导入脚本仍通过 `/import-scripts` 管理，普通用户复制 OCS 接入配置使用 `/tokens/import-script`。复制出的 OCS 题库名称由当前 `site_title` 与 API Key 名称组合生成；API Key 未命名时仅使用掩码末尾四位区分。
 
 ### 4.16 兑换管理
 

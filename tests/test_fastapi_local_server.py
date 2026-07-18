@@ -454,6 +454,71 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(ocs_get.json()["data"]["answer"], "A")
         self.assertEqual(config.json()[0]["data"]["title"], "${title}")
 
+    def test_client_ip_extraction_from_proxies(self) -> None:
+        """测试从 Request header 中提取和记录最真实的客户端 IP。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformServices(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(),
+                    auth_service=auth,
+                    platform_services=platform,
+                    require_auth=False,
+                ),
+                client=("172.17.0.1", 50000),
+            )
+
+            # 注册并登录用户以获得合法 Authorization 头，使 record_usage 正确保存
+            client.post("/auth/register", json={"username": "jack", "password": "password123"})
+            login_res = client.post("/auth/login", json={"username": "jack", "password": "password123"})
+            headers = {"Authorization": f"Bearer {login_res.json()['token']}"}
+
+            # 模拟带代理头部搜题
+            res = client.post(
+                "/query",
+                json={"title": "单选题(1分)中国道路。", "options": ["A", "B"]},
+                headers={
+                    "Authorization": headers["Authorization"],
+                    "X-Forwarded-For": "203.0.113.195, 192.168.1.1"
+                },
+            )
+            self.assertEqual(res.status_code, 200)
+            self.assertNotIn("client_ip", res.json())
+
+            # 检查使用日志数据库中是否真的持久化记录了该真实 IP
+            usage = platform.usage
+            logs = usage.list_usage_logs(limit=1)
+            self.assertEqual(len(logs), 1)
+            self.assertEqual(logs[0]["client_ip"], "203.0.113.195")
+
+            # 直连公网请求不能借由转发头伪造使用记录中的来源地址。
+            direct_client = TestClient(client.app, client=("8.8.8.8", 50001))
+            direct_response = direct_client.post(
+                "/query",
+                json={"title": "单选题(1分)中国道路。", "options": ["A", "B"]},
+                headers={
+                    "Authorization": headers["Authorization"],
+                    "X-Forwarded-For": "203.0.113.196",
+                },
+            )
+            self.assertEqual(direct_response.status_code, 200)
+            self.assertEqual(usage.list_usage_logs(limit=1)[0]["client_ip"], "8.8.8.8")
+
+            # 模拟 OCS 查题真实 IP 注入
+            res_ocs = client.post(
+                "/ocs/query",
+                json={"title": "单选题(1分)中国道路。", "type": "single"},
+                headers={
+                    "Authorization": headers["Authorization"],
+                    "X-Real-IP": "198.51.100.12"
+                },
+            )
+            self.assertEqual(res_ocs.status_code, 200)
+            self.assertNotIn("client_ip", res_ocs.json()["data"]["ai"])
+
     def test_spa_route_fallback_serves_frontend_for_browser_navigation(self) -> None:
         client = TestClient(create_app(_sample_index(), require_auth=True))
 
@@ -655,12 +720,17 @@ class FastAPILocalServerTests(unittest.TestCase):
                 "/users",
                 headers={"Authorization": f"Bearer {login.json()['token']}"},
             )
+            profile = client.get(
+                "/users/me",
+                headers={"Authorization": f"Bearer {login.json()['token']}"},
+            )
 
         self.assertTrue(owner.json()["ok"])
         self.assertTrue(invited.json()["ok"])
         self.assertEqual(invited.json()["user"]["points"], 150)
         owner_record = next(item for item in users.json()["users"] if item["username"] == "owner")
         self.assertEqual(owner_record["points"], 150)
+        self.assertEqual(profile.json()["billing"]["invite_bonus_points"], 50)
 
     def test_register_rejects_unknown_invite_code(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -931,6 +1001,65 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(keep_password.status_code, 200)
         self.assertEqual(raw_password_after_blank_patch, "secret-password")
 
+    def test_registration_email_modes_apply_required_and_verification_rules(self) -> None:
+        """三态邮箱策略分别控制邮箱必填与验证码校验。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformServices(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
+                )
+            )
+            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            login = client.post(
+                "/auth/login", json={"username": "owner", "password": "password123"}
+            )
+            headers = {"Authorization": f"Bearer {login.json()['token']}"}
+
+            optional_status = client.get("/auth/register-status")
+            disabled_code = client.post(
+                "/auth/email-verification-codes",
+                json={"email": "student@example.com", "purpose": "register"},
+            )
+            required_update = client.patch(
+                "/system-config",
+                json={"registration_email_mode": "required"},
+                headers=headers,
+            )
+            required_status = client.get("/auth/register-status")
+            missing_email = client.post(
+                "/auth/register", json={"username": "missing", "password": "password123"}
+            )
+            without_code = client.post(
+                "/auth/register",
+                json={
+                    "username": "required_user",
+                    "password": "password123",
+                    "email": "required@example.com",
+                },
+            )
+            unconfigured_verified = client.patch(
+                "/system-config",
+                json={"registration_email_mode": "verified"},
+                headers=headers,
+            )
+
+        self.assertEqual(optional_status.json()["email_registration_mode"], "optional")
+        self.assertFalse(optional_status.json()["email_required"])
+        self.assertEqual(disabled_code.status_code, 400)
+        self.assertEqual(disabled_code.json()["error"]["code"], "EMAIL_VERIFICATION_DISABLED")
+        self.assertEqual(required_update.status_code, 200)
+        self.assertEqual(required_status.json()["email_registration_mode"], "required")
+        self.assertTrue(required_status.json()["email_required"])
+        self.assertFalse(required_status.json()["email_verification_enabled"])
+        self.assertEqual(missing_email.status_code, 400)
+        self.assertEqual(missing_email.json()["error"]["code"], "EMAIL_REQUIRED")
+        self.assertEqual(without_code.status_code, 200)
+        self.assertEqual(unconfigured_verified.status_code, 400)
+
     def test_email_verification_register_flow_with_domain_whitelist(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
@@ -1007,6 +1136,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
 
         self.assertTrue(status.json()["email_verification_enabled"])
+        self.assertEqual(status.json()["email_registration_mode"], "verified")
         self.assertTrue(status.json()["email_required"])
         self.assertEqual(forbidden_domain.status_code, 400)
         self.assertEqual(forbidden_domain.json()["error"]["code"], "EMAIL_DOMAIN_NOT_ALLOWED")
@@ -2889,6 +3019,20 @@ class FastAPILocalServerTests(unittest.TestCase):
                 params={"token_id": token_b.json()["token_info"]["token_id"]},
                 headers=headers,
             )
+            renamed = client.patch(
+                "/system-config",
+                json={"site_title": "学习平台"},
+                headers=headers,
+            )
+            renamed_direct = client.get(
+                "/tokens/import-script",
+                params={"token_id": token_b.json()["token_info"]["token_id"]},
+                headers=headers,
+            )
+            generic_config = client.get(
+                "/configs/ocs-local-study-bank.json",
+                headers={**headers, "Host": "example.com"},
+            )
 
         self.assertEqual(no_token.status_code, 404)
         self.assertEqual(no_token.json()["error"]["code"], "TOKEN_REQUIRED")
@@ -2902,6 +3046,7 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertIn("/ocs/query", one_token.json()["script"])
         self.assertIsInstance(one_token.json()["ocs_config"], list)
         self.assertEqual(one_token.json()["ocs_config"][0]["type"], "GM_xmlhttpRequest")
+        self.assertEqual(one_token.json()["ocs_config"][0]["name"], "AI题库 · A")
         self.assertIn("/ocs/query", one_token.json()["ocs_config"][0]["url"])
         self.assertEqual(token_b.status_code, 200)
         self.assertEqual(multiple_tokens.json()["mode"], "select_token")
@@ -2911,6 +3056,10 @@ class FastAPILocalServerTests(unittest.TestCase):
             direct.json()["token_id"],
             token_b.json()["token_info"]["token_id"],
         )
+        self.assertEqual(direct.json()["ocs_config"][0]["name"], "AI题库 · B")
+        self.assertEqual(renamed.status_code, 200)
+        self.assertEqual(renamed_direct.json()["ocs_config"][0]["name"], "学习平台 · B")
+        self.assertEqual(generic_config.json()[0]["name"], "学习平台")
 
     def test_image_url_only_requests_are_flagged_as_legacy_transport(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

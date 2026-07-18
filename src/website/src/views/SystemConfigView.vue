@@ -42,7 +42,7 @@ function handleLogoUploadError(err: any) {
 
 /* 表单：明文字段直接编辑；密钥字段为“新值”，留空表示保持不变。 */
 const form = reactive({
-  site_title: 'AI题库',
+  site_title: '',
   site_logo_url: '',
   smart_proto_enabled: 'true',
   custom_proto_header: 'http',
@@ -52,7 +52,7 @@ const form = reactive({
   redeem_code_default_points: 50,
   answer_retry_times: 3,
   registration_enabled: 'true',
-  email_verification_enabled: 'false',
+  registration_email_mode: 'optional',
   smtp_host: '',
   smtp_port: 465,
   smtp_security: 'ssl',
@@ -101,13 +101,18 @@ function smtpConfigurationIssue(): string | null {
   return null
 }
 
-/** 开启邮箱验证前拦截不完整配置；关闭始终允许。 */
-function beforeEmailVerificationChange(): boolean {
-  if (form.email_verification_enabled === 'true') return true
+/** 选择注册邮箱策略；验证码模式要求先完成 SMTP 配置。 */
+function selectRegistrationEmailMode(value: 'optional' | 'required' | 'verified') {
+  if (value !== 'verified') {
+    form.registration_email_mode = value
+    return
+  }
   const issue = smtpConfigurationIssue()
-  if (!issue) return true
+  if (!issue) {
+    form.registration_email_mode = value
+    return
+  }
   ElMessage.warning(`请先完成 SMTP 配置后再开启邮箱验证：${issue}`)
-  return false
 }
 
 async function load() {
@@ -116,7 +121,7 @@ async function load() {
     const res = await systemConfigApi.get()
     const billing = await billingApi.get()
     // 大模型推理、联网搜索和 AI 学习缓存统一在“大模型配置”页维护。
-    form.site_title = (res.config.site_title as string) || 'AI题库'
+    form.site_title = (res.config.site_title as string) || ''
     form.site_logo_url = (res.config.site_logo_url as string) || ''
     form.smart_proto_enabled = (res.config.smart_proto_enabled as string) || 'true'
     form.custom_proto_header = (res.config.custom_proto_header as string) || 'http'
@@ -126,7 +131,7 @@ async function load() {
     form.redeem_code_default_points = Number(res.config.redeem_code_default_points || 50)
     form.answer_retry_times = Number(res.config.answer_retry_times || 3)
     form.registration_enabled = (res.config.registration_enabled as string) || 'true'
-    form.email_verification_enabled = (res.config.email_verification_enabled as string) || 'false'
+    form.registration_email_mode = res.config.registration_email_mode || 'optional'
     form.smtp_host = (res.config.smtp_host as string) || ''
     form.smtp_port = Number(res.config.smtp_port || 465)
     form.smtp_security = (res.config.smtp_security as string) || 'ssl'
@@ -150,7 +155,7 @@ async function load() {
 
 async function save() {
   // 后端仍执行最终校验；这里用于处理直接编辑字段后保存的场景。
-  if (form.email_verification_enabled === 'true') {
+  if (form.registration_email_mode === 'verified') {
     const issue = smtpConfigurationIssue()
     if (issue) {
       ElMessage.warning(`SMTP 配置不完整：${issue}`)
@@ -171,7 +176,7 @@ async function save() {
       redeem_code_default_points: String(form.redeem_code_default_points),
       answer_retry_times: String(form.answer_retry_times),
       registration_enabled: form.registration_enabled,
-      email_verification_enabled: form.email_verification_enabled,
+      registration_email_mode: form.registration_email_mode,
       smtp_host: form.smtp_host,
       smtp_port: String(form.smtp_port),
       smtp_security: form.smtp_security,
@@ -223,7 +228,7 @@ onMounted(load)
         <div class="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_280px]">
           <el-form label-position="top" class="grid grid-cols-1 gap-x-6 md:grid-cols-2">
             <el-form-item label="网站标题">
-              <el-input v-model="form.site_title" maxlength="40" show-word-limit placeholder="AI题库" />
+              <el-input v-model="form.site_title" maxlength="40" show-word-limit placeholder="请输入网站标题" />
             </el-form-item>
             <el-form-item label="网站 Logo">
               <div class="flex flex-col gap-2">
@@ -248,7 +253,7 @@ onMounted(load)
             <div class="flex items-center gap-3">
               <SiteLogo :title="form.site_title" :logo-url="previewLogoUrl" />
               <div class="min-w-0">
-                <div class="truncate text-base font-semibold text-ink">{{ form.site_title || 'AI题库' }}</div>
+                <div class="truncate text-base font-semibold text-ink">{{ form.site_title || '网站标题' }}</div>
                 <div class="truncate text-xs text-ink-muted">{{ form.site_logo_url ? '已配置自定义 Logo' : '使用默认图标' }}</div>
               </div>
             </div>
@@ -297,13 +302,15 @@ onMounted(load)
           <el-form-item label="允许用户注册">
             <el-switch v-model="form.registration_enabled" active-value="true" inactive-value="false" />
           </el-form-item>
-          <el-form-item label="启用邮箱验证码注册">
-            <el-switch
-              v-model="form.email_verification_enabled"
-              active-value="true"
-              inactive-value="false"
-              :before-change="beforeEmailVerificationChange"
-            />
+          <el-form-item label="注册邮箱策略">
+            <el-radio-group
+              :model-value="form.registration_email_mode"
+              @update:model-value="selectRegistrationEmailMode"
+            >
+              <el-radio-button value="optional">邮箱可选</el-radio-button>
+              <el-radio-button value="required">邮箱必填，不验证</el-radio-button>
+              <el-radio-button value="verified">邮箱必填并验证</el-radio-button>
+            </el-radio-group>
           </el-form-item>
           <el-form-item label="SMTP 服务器">
             <el-input v-model="form.smtp_host" placeholder="smtp.example.com" />

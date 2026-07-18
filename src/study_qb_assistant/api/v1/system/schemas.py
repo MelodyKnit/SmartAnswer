@@ -15,6 +15,7 @@ class SystemConfigPayload(BaseModel):
     redeem_code_default_points: str | None = None
     answer_retry_times: str | None = None
     registration_enabled: str | None = None
+    registration_email_mode: str | None = None
     email_verification_enabled: str | None = None
     smtp_host: str | None = None
     smtp_port: str | None = None

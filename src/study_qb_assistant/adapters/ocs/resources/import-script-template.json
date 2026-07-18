@@ -8,7 +8,7 @@
   "tags": ["ocs", "gm_xmlhttpRequest", "local-service", "image-bridge"],
   "config_items": [
     {
-      "name": "Local Study Question Bank",
+      "name": "{{CONFIG_NAME}}",
       "homepage": "{{BASE_URL}}/api/v1/healthz",
       "url": "{{BASE_URL}}/ocs/query",
       "method": "get",

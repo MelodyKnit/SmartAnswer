@@ -57,6 +57,7 @@ export const authApi = {
       registration_enabled: boolean
       config_enabled: boolean
       first_user_allowed: boolean
+      email_registration_mode: 'optional' | 'required' | 'verified'
       email_verification_enabled: boolean
       email_required: boolean
     }>('/auth/register-status'),

@@ -280,6 +280,11 @@ onMounted(() => {
             <span class="font-medium text-success">{{ row.answer || '—' }}</span>
           </template>
         </el-table-column>
+        <el-table-column label="请求 IP" width="130" show-overflow-tooltip align="center">
+          <template #default="{ row }">
+            <span class="text-ink-soft">{{ row.client_ip || '—' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="置信度" width="90" align="center">
           <template #default="{ row }">{{ (row.confidence * 100).toFixed(0) }}%</template>
         </el-table-column>
@@ -378,6 +383,10 @@ onMounted(() => {
           <div v-if="auth.isAdmin" class="flex justify-between border-b border-line pb-2">
             <dt class="text-ink-muted">使用者</dt>
             <dd class="text-ink">{{ detail.username }}</dd>
+          </div>
+          <div class="flex justify-between border-b border-line pb-2">
+            <dt class="text-ink-muted">请求 IP</dt>
+            <dd class="text-ink">{{ detail.client_ip || '—' }}</dd>
           </div>
           <div class="flex justify-between border-b border-line pb-2">
             <dt class="text-ink-muted">使用的 API Key</dt>

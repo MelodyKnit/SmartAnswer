@@ -155,6 +155,9 @@ pre-commit install
 pre-commit run --all-files
 ```
 
+Python hooks explicitly run in the project Conda environment `ai-study-qb`, so these commands
+behave consistently even when they are invoked from another active Conda environment.
+
 Quick API smoke checks:
 
 ```powershell

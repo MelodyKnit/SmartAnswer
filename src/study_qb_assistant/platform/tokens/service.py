@@ -5,6 +5,7 @@ from __future__ import annotations
 import secrets
 import time
 
+from ...adapters.ocs.config import build_ocs_config_name
 from ...auth import AuthError
 from ..base import PlatformDomainService
 from ..import_scripts.templates import get_import_script_template, render_import_script
@@ -54,6 +55,7 @@ class TokenService(PlatformDomainService):
         *,
         user_id: str,
         base_url: str,
+        platform_name: str,
         token_id: str | None = None,
         template_id: str | None = None,
     ) -> dict:
@@ -78,7 +80,15 @@ class TokenService(PlatformDomainService):
         if selected is None:
             raise AuthError("TOKEN_NOT_FOUND", "令牌不存在", http_status=404)
         template = get_import_script_template(template_id)
-        rendered = render_import_script(template, base_url)
+        rendered = render_import_script(
+            template,
+            base_url,
+            config_name=build_ocs_config_name(
+                platform_name,
+                token_description=selected.description,
+                token_key_mask=selected.key_mask,
+            ),
+        )
         return {
             "mode": "direct",
             "token_id": selected.token_id,

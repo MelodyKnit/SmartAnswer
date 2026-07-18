@@ -45,8 +45,12 @@ def build_token_router() -> APIRouter:
             reject_low_confidence=payload.reject_low_confidence,
             min_answer_confidence=payload.min_answer_confidence,
         )
+        settings = get_settings_service(request)
         token_config = build_ocs_config(
-            base_url_from_request(request, get_settings_service(request))
+            base_url_from_request(request, settings),
+            platform_name=str(settings.get_site_config()["site_title"]),
+            token_description=str(token_info["description"]),
+            token_key_mask=str(token_info["key_mask"]),
         )
         token_config[0]["headers"] = {"Authorization": f"Bearer {raw_token}"}
         return JSONResponse(
@@ -110,6 +114,7 @@ def build_token_router() -> APIRouter:
             payload = platform.token_import_script(
                 user_id=str(user["user_id"]),
                 base_url=base_url_from_request(request, get_settings_service(request)),
+                platform_name=str(get_settings_service(request).get_site_config()["site_title"]),
                 token_id=token_id,
                 template_id=template_id,
             )

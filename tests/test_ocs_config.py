@@ -17,6 +17,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from study_qb_assistant.adapters import build_ocs_config  # noqa: E402
+from study_qb_assistant.adapters.ocs.config import build_ocs_config_name  # noqa: E402
 
 
 class OcsConfigTests(unittest.TestCase):
@@ -24,10 +25,11 @@ class OcsConfigTests(unittest.TestCase):
 
     def test_config_uses_base_url_and_required_fields(self) -> None:
         """测试配置生成是否正确应用 Base URL，并包含 OCS 必需字段。"""
-        config = build_ocs_config("http://127.0.0.1:8765/")
+        config = build_ocs_config("http://127.0.0.1:8765/", platform_name="AI题库")
 
         self.assertEqual(len(config), 1)
         item = config[0]
+        self.assertEqual(item["name"], "AI题库")
         self.assertEqual(item["homepage"], "http://127.0.0.1:8765/api/v1/healthz")
         self.assertEqual(item["url"], "http://127.0.0.1:8765/ocs/query")
         self.assertEqual(item["type"], "GM_xmlhttpRequest")
@@ -43,7 +45,26 @@ class OcsConfigTests(unittest.TestCase):
             (PROJECT_ROOT / "configs" / "ocs-local-study-bank.json").read_text(encoding="utf-8")
         )
 
-        self.assertEqual(static_config, build_ocs_config("http://127.0.0.1:8765"))
+        self.assertEqual(
+            static_config,
+            build_ocs_config("http://127.0.0.1:8765", platform_name="AI题库"),
+        )
+
+    def test_config_name_uses_platform_and_token_context(self) -> None:
+        """有令牌上下文的配置使用平台标题与 API Key 名称。"""
+
+        config = build_ocs_config(
+            "http://127.0.0.1:8765",
+            platform_name="学习服务",
+            token_description="宿舍电脑",
+            token_key_mask="sk_stqb_abc...wxyz",
+        )
+
+        self.assertEqual(config[0]["name"], "学习服务 · 宿舍电脑")
+        self.assertEqual(
+            build_ocs_config_name("学习服务", token_key_mask="sk_stqb_abc...wxyz"),
+            "学习服务 · wxyz",
+        )
 
 
 if __name__ == "__main__":

@@ -88,15 +88,22 @@ def get_import_script_template(template_id: str | None = None) -> ImportScriptTe
     return templates[0]
 
 
-def render_import_script(template: ImportScriptTemplate, base_url: str) -> dict[str, Any]:
+def render_import_script(
+    template: ImportScriptTemplate,
+    base_url: str,
+    *,
+    config_name: str,
+) -> dict[str, Any]:
     normalized_base_url = base_url.rstrip("/")
     config_items = [
-        replace_template_placeholders(item, normalized_base_url) for item in template.config_items
+        replace_template_placeholders(item, normalized_base_url, config_name)
+        for item in template.config_items
     ]
     script_template = resolve_script_template_content(template.script_template)
     script_content = replace_string_placeholders(
         script_template,
         base_url=normalized_base_url,
+        config_name=config_name,
         config_json=json.dumps(config_items, ensure_ascii=False, indent=2),
     )
     if script_content.lstrip().startswith("// ==UserScript=="):
@@ -137,22 +144,29 @@ def inject_client_script_defaults(script_content: str, *, base_url: str) -> str:
     return rendered
 
 
-def replace_template_placeholders(value: Any, base_url: str) -> Any:
+def replace_template_placeholders(value: Any, base_url: str, config_name: str) -> Any:
     if isinstance(value, str):
-        return replace_string_placeholders(value, base_url=base_url)
+        return replace_string_placeholders(value, base_url=base_url, config_name=config_name)
     elif isinstance(value, list):
-        return [replace_template_placeholders(item, base_url) for item in value]
+        return [replace_template_placeholders(item, base_url, config_name) for item in value]
     elif isinstance(value, tuple):
-        return tuple(replace_template_placeholders(item, base_url) for item in value)
+        return tuple(replace_template_placeholders(item, base_url, config_name) for item in value)
     elif isinstance(value, dict):
         return {
-            str(key): replace_template_placeholders(item, base_url) for key, item in value.items()
+            str(key): replace_template_placeholders(item, base_url, config_name)
+            for key, item in value.items()
         }
     return value
 
 
-def replace_string_placeholders(value: str, base_url: str, config_json: str | None = None) -> str:
+def replace_string_placeholders(
+    value: str,
+    base_url: str,
+    config_name: str,
+    config_json: str | None = None,
+) -> str:
     rendered = value.replace(PLACEHOLDER_BASE_URL, base_url)
+    rendered = rendered.replace("{{CONFIG_NAME}}", config_name)
     if config_json is not None:
         rendered = rendered.replace(PLACEHOLDER_CONFIG_JSON, config_json)
     return rendered

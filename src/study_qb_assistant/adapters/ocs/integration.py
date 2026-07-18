@@ -32,8 +32,8 @@ class DefaultOcsIntegration:
     ) -> dict[str, object]:
         return to_ocs_low_confidence_response(result, threshold=threshold)
 
-    def build_config(self, base_url: str) -> list[dict[str, Any]]:
-        return build_ocs_config(base_url)
+    def build_config(self, base_url: str, *, platform_name: str) -> list[dict[str, Any]]:
+        return build_ocs_config(base_url, platform_name=platform_name)
 
     def render_client_script(self, base_url: str, *, token: str = "{{TOKEN}}") -> str:
         return render_ocs_client_script(base_url, token=token)

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /** 个人中心：展示账号信息、修改昵称、修改密码、查看邀请码。
  *  通过 tabs 标签页将原本堆积的内容分流，提升界面美感和操作体验。 */
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import type { FormInstance, FormItemRule, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
@@ -41,7 +41,7 @@ const inviteBonusTitle = computed(() =>
 )
 const inviteBonusDescription = computed(() =>
   inviteBonusPoints.value > 0
-    ? `分享您的专属邀请链接或邀请码给好友。当好友通过该邀请码成功注册账号后，系统将立即向您与好友各发放 ${inviteBonusPoints.value} 积分的查题额度作为推广福利。`
+    ? `成功邀请 1 人，您和受邀用户各获得 ${inviteBonusPoints.value} 积分。`
     : '分享您的专属邀请链接或邀请码给好友。当好友通过该邀请码成功注册账号后，系统会记录您的邀请关系。'
 )
 
@@ -138,11 +138,15 @@ async function refreshInviteCode() {
     inviteCodeRefreshing.value = false
   }
 }
+
+onMounted(() => {
+  void auth.refreshProfile()
+})
 </script>
 
 <template>
   <div>
-    <PageHeader title="个人中心" description="查看基本资料，管理安全设置并分享推广邀请以获取额度收益。" />
+    <PageHeader title="个人中心" description="查看基本资料，管理安全设置并分享推广邀请以获得积分奖励。" />
 
     <!-- 侧边导航与内容页相结合的高级 Tab 布局 -->
     <div class="flex flex-col gap-6 lg:flex-row">

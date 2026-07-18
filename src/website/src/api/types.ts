@@ -77,6 +77,7 @@ export interface UsageLog {
   elapsed_ms: number
   created_at: number
   request_id?: string
+  client_ip?: string
   options?: string | string[] | null
   context?: {
     options?: string[]
@@ -318,6 +319,7 @@ export interface SystemConfig {
   redeem_code_default_points?: string
   answer_retry_times?: string
   registration_enabled?: string
+  registration_email_mode?: 'optional' | 'required' | 'verified'
   email_verification_enabled?: string
   smtp_host?: string
   smtp_port?: string

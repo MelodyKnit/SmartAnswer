@@ -96,8 +96,29 @@ class SettingsService(PlatformDomainService):
     def is_email_verification_enabled(self) -> bool:
         """返回注册邮箱验证是否启用。"""
 
-        raw = self.get_system_config().get("email_verification_enabled", "false")
-        return str(raw).strip().lower() not in {"0", "false", "no", "off", "disabled"}
+        return self.get_registration_email_mode() == "verified"
+
+    def is_registration_email_required(self) -> bool:
+        """返回注册时是否必须提供邮箱。"""
+
+        return self.get_registration_email_mode() in {"required", "verified"}
+
+    def get_registration_email_mode(self) -> str:
+        """读取注册邮箱策略，并兼容旧版布尔验证码配置。"""
+
+        raw = self.repository.get_settings("system_config", keys={"registration_email_mode"})
+        configured_mode = str(raw.get("registration_email_mode") or "").strip().lower()
+        if configured_mode in {"optional", "required", "verified"}:
+            return configured_mode
+
+        legacy = self.repository.get_settings(
+            "system_config", keys={"email_verification_enabled"}
+        ).get("email_verification_enabled", "false")
+        return (
+            "verified"
+            if str(legacy).strip().lower() not in {"0", "false", "no", "off", "disabled"}
+            else "optional"
+        )
 
     def get_points_policy(self) -> dict[str, int]:
         """返回前端表单需要展示或预填的积分策略。"""
@@ -124,6 +145,9 @@ class SettingsService(PlatformDomainService):
                     payload[f"{key}_configured"] = bool(str(value).strip())
                 else:
                     payload[key] = value
+            email_mode = self.get_registration_email_mode()
+            payload["registration_email_mode"] = email_mode
+            payload["email_verification_enabled"] = "true" if email_mode == "verified" else "false"
             return payload
 
     def get_site_config(self) -> dict[str, object]:
@@ -241,6 +265,14 @@ class SettingsService(PlatformDomainService):
                     raise AuthError("INVALID_INPUT", "发件人名称格式不正确", http_status=400)
                 if len(text) > 40:
                     raise AuthError("INVALID_INPUT", "发件人名称不能超过 40 个字符", http_status=400)
+            elif key == "registration_email_mode":
+                text = text.lower() or "optional"
+                if text not in {"optional", "required", "verified"}:
+                    raise AuthError(
+                        "INVALID_INPUT",
+                        "注册邮箱策略必须为 optional、required 或 verified",
+                        http_status=400,
+                    )
             elif key in SYSTEM_CONFIG_BOOLEAN_KEYS:
                 text = (
                     "false" if text.lower() in {"0", "false", "no", "off", "disabled"} else "true"
@@ -257,10 +289,21 @@ class SettingsService(PlatformDomainService):
                 text = str(parsed)
             normalized[key] = text
         with self.lock:
+            stored = self.repository.get_settings("system_config", keys=set(SYSTEM_CONFIG_KEYS))
             current = {key: SYSTEM_CONFIG_DEFAULTS.get(key, "") for key in SYSTEM_CONFIG_KEYS}
-            current.update(self.repository.get_settings("system_config", keys=set(SYSTEM_CONFIG_KEYS)))
+            current.update(stored)
             candidate = {**current, **normalized}
-            if str(candidate.get("email_verification_enabled") or "").lower() == "true":
+            if "registration_email_mode" in normalized:
+                candidate_mode = normalized["registration_email_mode"]
+            elif "registration_email_mode" in stored:
+                candidate_mode = str(stored["registration_email_mode"]).lower()
+            else:
+                candidate_mode = (
+                    "verified"
+                    if str(candidate.get("email_verification_enabled") or "").lower() == "true"
+                    else "optional"
+                )
+            if candidate_mode == "verified":
                 host = str(candidate.get("smtp_host") or "").strip()
                 from_email = str(candidate.get("smtp_from_email") or "").strip()
                 username = str(candidate.get("smtp_username") or "").strip()
