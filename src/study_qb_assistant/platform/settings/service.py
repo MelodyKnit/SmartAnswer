@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from threading import RLock
-from typing import Any
+from typing import Any, Literal, TypedDict, cast
 
 from ...auth import AuthError
 from ...auth.email_verification import normalize_email, smtp_settings_from_config
@@ -19,6 +19,19 @@ from ..config import (
     SYSTEM_CONFIG_SECRET_KEYS,
 )
 from .validation import normalize_email_code_policy_value, normalize_site_logo_url
+
+
+InviteRewardMode = Literal["inviter", "invitee", "both"]
+INVITE_REWARD_MODES = frozenset({"inviter", "invitee", "both"})
+
+
+class InviteRewardPolicy(TypedDict):
+    """邀请码注册时各参与方的积分发放策略。"""
+
+    mode: InviteRewardMode
+    points: int
+    inviter_points: int
+    invitee_points: int
 
 
 class SettingsService(PlatformDomainService):
@@ -87,6 +100,29 @@ class SettingsService(PlatformDomainService):
 
         return self.system_points_value("invite_bonus_points")
 
+    def get_invite_reward_mode(self) -> InviteRewardMode:
+        """读取邀请码奖励对象，旧配置默认兼容为双方奖励。"""
+
+        raw = self.repository.get_settings(
+            "system_config", keys={"invite_reward_mode"}
+        ).get("invite_reward_mode", SYSTEM_CONFIG_DEFAULTS["invite_reward_mode"])
+        mode = str(raw or "").strip().lower()
+        if mode in INVITE_REWARD_MODES:
+            return cast(InviteRewardMode, mode)
+        return "both"
+
+    def get_invite_reward_policy(self) -> InviteRewardPolicy:
+        """返回当前邀请码奖励规则及邀请双方各自可获得的积分。"""
+
+        mode = self.get_invite_reward_mode()
+        points = self.get_invite_bonus()
+        return {
+            "mode": mode,
+            "points": points,
+            "inviter_points": points if mode in {"inviter", "both"} else 0,
+            "invitee_points": points if mode in {"invitee", "both"} else 0,
+        }
+
     def is_registration_enabled(self) -> bool:
         """返回公开注册入口是否启用。"""
 
@@ -120,12 +156,13 @@ class SettingsService(PlatformDomainService):
             else "optional"
         )
 
-    def get_points_policy(self) -> dict[str, int]:
+    def get_points_policy(self) -> dict[str, int | InviteRewardMode]:
         """返回前端表单需要展示或预填的积分策略。"""
 
         return {
             "default_user_points": self.get_default_user_points(),
             "invite_bonus_points": self.get_invite_bonus(),
+            "invite_reward_mode": self.get_invite_reward_mode(),
             "manual_grant_default_points": self.system_points_value(
                 "manual_grant_default_points"
             ),
@@ -271,6 +308,14 @@ class SettingsService(PlatformDomainService):
                     raise AuthError(
                         "INVALID_INPUT",
                         "注册邮箱策略必须为 optional、required 或 verified",
+                        http_status=400,
+                    )
+            elif key == "invite_reward_mode":
+                text = text.lower() or SYSTEM_CONFIG_DEFAULTS["invite_reward_mode"]
+                if text not in INVITE_REWARD_MODES:
+                    raise AuthError(
+                        "INVALID_INPUT",
+                        "邀请码奖励对象必须为 inviter、invitee 或 both",
                         http_status=400,
                     )
             elif key in SYSTEM_CONFIG_BOOLEAN_KEYS:

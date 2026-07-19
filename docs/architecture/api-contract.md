@@ -197,6 +197,8 @@
 
 注册邮箱策略由 `registration_email_mode` 控制：`optional` 为邮箱可选，`required` 为邮箱必填但不验证，`verified` 为邮箱必填且必须通过验证码校验。`verified` 必须先配置完整 SMTP 服务；旧 `email_verification_enabled` 仍可读取，并派生为兼容状态字段。
 
+注册请求携带有效邀请码时，系统按当前 `invite_reward_mode` 决定邀请人、受邀用户或双方获得 `invite_bonus_points`；该规则只作用于后续注册，不回溯既有邀请关系与积分余额。
+
 请求：
 
 ```json
@@ -331,6 +333,11 @@
 #### `GET /users/me`
 
 返回当前用户与当前积分计费规则摘要。
+
+`billing` 还包含邀请码奖励展示字段：
+
+- `invite_bonus_points`：每位符合条件用户可获得的积分。
+- `invite_reward_mode`：`inviter`（仅邀请人）、`invitee`（仅受邀用户）或 `both`（双方各得）。
 
 #### `GET /users`
 
@@ -494,6 +501,7 @@
 - 返回前端表单需要展示或预填的积分策略：
   - `default_user_points`
   - `invite_bonus_points`
+  - `invite_reward_mode`：`inviter`、`invitee` 或 `both`
   - `manual_grant_default_points`
   - `redeem_code_default_points`
 
@@ -513,6 +521,7 @@
   - `site_logo_url`
   - `default_user_points`
   - `invite_bonus_points`
+  - `invite_reward_mode`：`inviter`、`invitee` 或 `both`
   - `manual_grant_default_points`
   - `redeem_code_default_points`
   - `smart_proto_enabled`
@@ -556,6 +565,7 @@
     "custom_proto_header": "http",
     "default_user_points": "100",
     "invite_bonus_points": "0",
+    "invite_reward_mode": "both",
     "manual_grant_default_points": "100",
     "redeem_code_default_points": "50",
     "answer_retry_times": "3",
@@ -577,6 +587,8 @@
   "reload_required": false
 }
 ```
+
+邀请码奖励在受邀用户完成注册时读取当前配置。`invite_bonus_points` 表示每位符合条件用户的积分；`both` 表示邀请人与受邀用户各自获得完整积分值。旧配置未保存 `invite_reward_mode` 时按 `both` 处理。
 
 ### 4.6 钱包与积分兑换
 

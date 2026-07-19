@@ -1,6 +1,7 @@
 /** 后端数据契约的 TypeScript 类型定义（与 FastAPI 响应字段严格对齐）。 */
 
 export type Role = 'superadmin' | 'admin' | 'user'
+export type InviteRewardMode = 'inviter' | 'invitee' | 'both'
 
 export interface User {
   user_id: string
@@ -24,11 +25,13 @@ export interface Billing {
   web_search: number
   llm_fallback: number
   invite_bonus_points?: number
+  invite_reward_mode?: InviteRewardMode
 }
 
 export interface PointsPolicy {
   default_user_points: number
   invite_bonus_points: number
+  invite_reward_mode: InviteRewardMode
   manual_grant_default_points: number
   redeem_code_default_points: number
 }
@@ -319,6 +322,7 @@ export interface SystemConfig {
   custom_proto_header?: string
   default_user_points?: string
   invite_bonus_points?: string
+  invite_reward_mode?: InviteRewardMode
   manual_grant_default_points?: string
   redeem_code_default_points?: string
   answer_retry_times?: string

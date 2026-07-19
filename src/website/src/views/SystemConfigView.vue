@@ -10,6 +10,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import SiteLogo from '@/components/SiteLogo.vue'
 import { useSiteStore } from '@/stores/site'
 import { getToken } from '@/api/http'
+import type { InviteRewardMode } from '@/api/types'
 
 const loading = ref(false)
 const saving = ref(false)
@@ -48,6 +49,7 @@ const form = reactive({
   custom_proto_header: 'http',
   default_user_points: 100,
   invite_bonus_points: 0,
+  invite_reward_mode: 'both' as InviteRewardMode,
   manual_grant_default_points: 100,
   redeem_code_default_points: 50,
   answer_retry_times: 3,
@@ -80,6 +82,14 @@ const previewLogoUrl = computed(() => {
   if (value.startsWith('/') && !value.startsWith('//') && !/\s/.test(value)) return value
   if (/^https?:\/\/\S+$/i.test(value)) return value
   return ''
+})
+
+const inviteRewardPolicyHint = computed(() => {
+  const points = Math.max(0, Number(form.invite_bonus_points) || 0)
+  if (points <= 0) return '邀请成功后仅记录邀请关系，不发放额外积分。'
+  if (form.invite_reward_mode === 'inviter') return `邀请成功后，仅邀请人获得 ${points} 积分。`
+  if (form.invite_reward_mode === 'invitee') return `邀请成功后，仅受邀用户获得 ${points} 积分。`
+  return `邀请成功后，邀请人与受邀用户各获得 ${points} 积分。`
 })
 
 /** 返回 SMTP 配置中首个未满足的启用条件。 */
@@ -127,6 +137,7 @@ async function load() {
     form.custom_proto_header = (res.config.custom_proto_header as string) || 'http'
     form.default_user_points = Number(res.config.default_user_points || 100)
     form.invite_bonus_points = Number(res.config.invite_bonus_points || 0)
+    form.invite_reward_mode = res.config.invite_reward_mode || 'both'
     form.manual_grant_default_points = Number(res.config.manual_grant_default_points || 100)
     form.redeem_code_default_points = Number(res.config.redeem_code_default_points || 50)
     form.answer_retry_times = Number(res.config.answer_retry_times || 3)
@@ -172,6 +183,7 @@ async function save() {
       custom_proto_header: form.custom_proto_header,
       default_user_points: String(form.default_user_points),
       invite_bonus_points: String(form.invite_bonus_points),
+      invite_reward_mode: form.invite_reward_mode,
       manual_grant_default_points: String(form.manual_grant_default_points),
       redeem_code_default_points: String(form.redeem_code_default_points),
       answer_retry_times: String(form.answer_retry_times),
@@ -277,9 +289,22 @@ onMounted(load)
           <el-form-item label="新用户初始积分">
             <el-input-number v-model="form.default_user_points" :min="0" class="w-full" />
           </el-form-item>
-          <el-form-item label="邀请码奖励积分">
-            <el-input-number v-model="form.invite_bonus_points" :min="0" class="w-full" />
-          </el-form-item>
+          <div class="rounded-lg border border-line bg-card-soft p-4 md:col-span-3">
+            <p class="mb-4 text-sm font-semibold text-ink">邀请奖励策略</p>
+            <div class="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_220px] md:items-end">
+              <el-form-item label="邀请奖励对象" class="mb-0">
+                <el-radio-group v-model="form.invite_reward_mode">
+                  <el-radio-button value="inviter">邀请人</el-radio-button>
+                  <el-radio-button value="invitee">被邀请人</el-radio-button>
+                  <el-radio-button value="both">双方</el-radio-button>
+                </el-radio-group>
+              </el-form-item>
+              <el-form-item label="每位奖励积分" class="mb-0">
+                <el-input-number v-model="form.invite_bonus_points" :min="0" class="w-full" />
+              </el-form-item>
+            </div>
+            <p class="mt-3 text-xs text-ink-muted">{{ inviteRewardPolicyHint }}</p>
+          </div>
           <el-form-item label="手动发放默认积分">
             <el-input-number v-model="form.manual_grant_default_points" :min="1" class="w-full" />
           </el-form-item>

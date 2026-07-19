@@ -10,6 +10,7 @@ import { useAuthStore } from '@/stores/auth'
 import { ApiException } from '@/api/http'
 import { formatDateTime } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
+import type { InviteRewardMode } from '@/api/types'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -34,16 +35,42 @@ const inviteLink = computed(() => {
   return `${window.location.origin}/register?invite=${code}`
 })
 const inviteBonusPoints = computed(() => auth.billing?.invite_bonus_points ?? 0)
-const inviteBonusTitle = computed(() =>
-  inviteBonusPoints.value > 0
-    ? `邀请新成员加入：各得 ${inviteBonusPoints.value} 积分！`
-    : '邀请新成员加入'
-)
-const inviteBonusDescription = computed(() =>
-  inviteBonusPoints.value > 0
-    ? `成功邀请 1 人，您和受邀用户各获得 ${inviteBonusPoints.value} 积分。`
-    : '分享您的专属邀请链接或邀请码给好友。当好友通过该邀请码成功注册账号后，系统会记录您的邀请关系。'
-)
+const inviteRewardMode = computed<InviteRewardMode>(() => auth.billing?.invite_reward_mode || 'both')
+const inviteRewardRecipients = computed(() => {
+  const points = inviteBonusPoints.value
+  const inviterRewarded = points > 0 && ['inviter', 'both'].includes(inviteRewardMode.value)
+  const inviteeRewarded = points > 0 && ['invitee', 'both'].includes(inviteRewardMode.value)
+  return [
+    {
+      label: '邀请人（您）',
+      reward: inviterRewarded ? `+${points} 积分` : '无额外奖励',
+      rewarded: inviterRewarded,
+    },
+    {
+      label: '受邀用户（好友）',
+      reward: inviteeRewarded ? `+${points} 积分` : '无额外奖励',
+      rewarded: inviteeRewarded,
+    },
+  ]
+})
+const inviteBonusTitle = computed(() => {
+  if (inviteBonusPoints.value <= 0) return '当前未设置积分奖励'
+  if (inviteRewardMode.value === 'inviter') return `邀请成功：您获得 ${inviteBonusPoints.value} 积分`
+  if (inviteRewardMode.value === 'invitee') return `邀请成功：受邀用户获得 ${inviteBonusPoints.value} 积分`
+  return `邀请成功：双方各得 ${inviteBonusPoints.value} 积分`
+})
+const inviteBonusDescription = computed(() => {
+  if (inviteBonusPoints.value <= 0) {
+    return '好友通过您的邀请码完成注册后，系统会记录邀请关系，当前不发放额外积分。'
+  }
+  if (inviteRewardMode.value === 'inviter') {
+    return `好友通过您的邀请码完成注册后，您将获得 ${inviteBonusPoints.value} 积分。`
+  }
+  if (inviteRewardMode.value === 'invitee') {
+    return `好友通过您的邀请码完成注册后，受邀用户将获得 ${inviteBonusPoints.value} 积分；您不获得额外邀请奖励。`
+  }
+  return `好友通过您的邀请码完成注册后，您和受邀用户各获得 ${inviteBonusPoints.value} 积分。`
+})
 
 /* 修改昵称 */
 const nameEditing = ref(false)
@@ -146,7 +173,7 @@ onMounted(() => {
 
 <template>
   <div>
-    <PageHeader title="个人中心" description="查看基本资料，管理安全设置并分享推广邀请以获得积分奖励。" />
+    <PageHeader title="个人中心" description="查看基本资料，管理安全设置并分享推广邀请。" />
 
     <!-- 侧边导航与内容页相结合的高级 Tab 布局 -->
     <div class="flex flex-col gap-6 lg:flex-row">
@@ -284,6 +311,19 @@ onMounted(() => {
                 <p class="mt-1 text-xs text-ink-soft leading-relaxed">
                   {{ inviteBonusDescription }}
                 </p>
+                <div class="mt-3 flex flex-wrap gap-2">
+                  <span
+                    v-for="recipient in inviteRewardRecipients"
+                    :key="recipient.label"
+                    class="inline-flex items-center gap-2 rounded-md border px-2.5 py-1 text-xs"
+                    :class="recipient.rewarded
+                      ? 'border-brand-200 bg-brand-50 text-brand-700 dark:border-brand-700/50 dark:bg-brand-100/10 dark:text-brand-300'
+                      : 'border-line bg-card text-ink-muted'"
+                  >
+                    <span>{{ recipient.label }}</span>
+                    <span class="font-medium">{{ recipient.reward }}</span>
+                  </span>
+                </div>
               </div>
 
               <div class="space-y-6 max-w-xl">

@@ -58,10 +58,11 @@ class AuthService:
         email: str | None = None,
         *,
         invite_code: str = "",
-        invite_bonus: int = 0,
+        inviter_bonus: int = 0,
+        invitee_bonus: int = 0,
         initial_points: int = 100,
     ) -> dict:
-        """注册新用户。首个注册用户自动成为 superadmin。"""
+        """注册新用户并按调用方给出的奖励额发放邀请码积分。"""
         username = (username or "").strip()
         email = (email or "").strip().lower() or None
         self.validate_username(username)
@@ -81,7 +82,8 @@ class AuthService:
             )
             if normalized_invite_code and inviter is None:
                 raise AuthError("INVALID_INVITE_CODE", "邀请码无效", http_status=400)
-            bonus_points = max(0, int(invite_bonus)) if inviter else 0
+            inviter_bonus_points = max(0, int(inviter_bonus)) if inviter else 0
+            invitee_bonus_points = max(0, int(invitee_bonus)) if inviter else 0
             salt = secrets.token_hex(SALT_BYTES)
             user = UserRecord(
                 user_id=secrets.token_hex(16),
@@ -91,14 +93,14 @@ class AuthService:
                 salt=salt,
                 password_hash=hash_password(password, salt),
                 email=email,
-                points=max(0, int(initial_points)) + bonus_points,
+                points=max(0, int(initial_points)) + invitee_bonus_points,
                 created_at=time.time(),
                 invite_code=self.generate_unique_invite_code(),
                 invited_by=inviter.username if inviter else "",
             )
             self.repository.save_user(user)
-            if inviter and bonus_points:
-                inviter.points = max(0, int(inviter.points) + bonus_points)
+            if inviter and inviter_bonus_points:
+                inviter.points = max(0, int(inviter.points) + inviter_bonus_points)
                 self.repository.save_user(inviter)
             return self.public_user_dict(user)
 

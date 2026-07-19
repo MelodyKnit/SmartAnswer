@@ -1,6 +1,6 @@
 [project]
 name = "study-question-bank-assistant"
-version = "0.1.31"
+version = "0.1.32"
 description = "Study-oriented question-bank ingestion and retrieval foundation."
 requires-python = ">=3.13"
 dependencies = [

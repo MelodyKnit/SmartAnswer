@@ -38,13 +38,15 @@ def build_user_router() -> APIRouter:
             return unauthorized_response("请先登录")
         settings = get_settings_service(request)
         wallet_service = get_wallet_service(request)
+        invite_reward = settings.get_invite_reward_policy()
         return JSONResponse(
             {
                 "ok": True,
                 "user": user,
                 "billing": {
                     **settings.get_billing(),
-                    "invite_bonus_points": settings.get_invite_bonus(),
+                    "invite_bonus_points": invite_reward["points"],
+                    "invite_reward_mode": invite_reward["mode"],
                 },
                 "wallet": wallet_service.wallet_summary(
                     user_id=str(user["user_id"]),

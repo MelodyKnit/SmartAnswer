@@ -684,12 +684,73 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(invited.json()["user"]["invited_by"], "owner")
         self.assertEqual(alice["invited_by"], "owner")
 
-    def test_invite_registration_grants_bonus_to_both_users(self) -> None:
+    def test_invite_reward_mode_controls_registration_bonus_recipients(self) -> None:
+        cases = (
+            ("inviter", 50, 150, 100),
+            ("invitee", 50, 100, 150),
+            ("both", 50, 150, 150),
+            ("both", 0, 100, 100),
+        )
+
+        for mode, bonus, expected_inviter_points, expected_invitee_points in cases:
+            with self.subTest(mode=mode, bonus=bonus), tempfile.TemporaryDirectory() as directory:
+                database_path = self._runtime_database_path(directory)
+                auth = AuthService(database_path)
+                platform = PlatformServices(database_path)
+                platform.settings.set_system_config(
+                    {
+                        "invite_bonus_points": str(bonus),
+                        "invite_reward_mode": mode,
+                    }
+                )
+                client = TestClient(
+                    create_app(
+                        _sample_index(),
+                        auth_service=auth,
+                        platform_services=platform,
+                        require_auth=True,
+                    )
+                )
+
+                owner = client.post(
+                    "/api/v1/auth/register",
+                    json={"username": "owner", "password": "password123"},
+                )
+                invite_code = owner.json()["user"]["invite_code"]
+                invited = client.post(
+                    "/api/v1/auth/register",
+                    json={
+                        "username": "alice",
+                        "password": "password123",
+                        "invite_code": invite_code,
+                    },
+                )
+                plain = client.post(
+                    "/api/v1/auth/register",
+                    json={"username": "plain", "password": "password123"},
+                )
+                login = client.post(
+                    "/api/v1/auth/login",
+                    json={"username": "owner", "password": "password123"},
+                )
+                headers = {"Authorization": f"Bearer {login.json()['token']}"}
+                users = client.get("/api/v1/users", headers=headers)
+
+            records = {item["username"]: item for item in users.json()["users"]}
+            self.assertTrue(owner.json()["ok"])
+            self.assertTrue(invited.json()["ok"])
+            self.assertTrue(plain.json()["ok"])
+            self.assertEqual(records["owner"]["points"], expected_inviter_points)
+            self.assertEqual(records["alice"]["points"], expected_invitee_points)
+            self.assertEqual(records["alice"]["invited_by"], "owner")
+            self.assertEqual(records["plain"]["points"], 100)
+            self.assertEqual(records["plain"]["invited_by"], "")
+
+    def test_invite_reward_mode_defaults_validates_and_is_exposed_consistently(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
             platform = PlatformServices(database_path)
-            platform.settings.set_system_config({"invite_bonus_points": "50"})
             client = TestClient(
                 create_app(
                     _sample_index(),
@@ -698,39 +759,39 @@ class FastAPILocalServerTests(unittest.TestCase):
                     require_auth=True,
                 )
             )
-
-            owner = client.post(
-                "/auth/register",
+            client.post(
+                "/api/v1/auth/register",
                 json={"username": "owner", "password": "password123"},
-            )
-            invite_code = owner.json()["user"]["invite_code"]
-            invited = client.post(
-                "/auth/register",
-                json={
-                    "username": "alice",
-                    "password": "password123",
-                    "invite_code": invite_code,
-                },
             )
             login = client.post(
-                "/auth/login",
+                "/api/v1/auth/login",
                 json={"username": "owner", "password": "password123"},
             )
-            users = client.get(
-                "/users",
-                headers={"Authorization": f"Bearer {login.json()['token']}"},
+            headers = {"Authorization": f"Bearer {login.json()['token']}"}
+            default_config = client.get("/api/v1/system-config", headers=headers)
+            saved = client.patch(
+                "/api/v1/system-config",
+                json={"invite_bonus_points": "25", "invite_reward_mode": "invitee"},
+                headers=headers,
             )
-            profile = client.get(
-                "/users/me",
-                headers={"Authorization": f"Bearer {login.json()['token']}"},
+            policy = client.get("/api/v1/points-policy", headers=headers)
+            profile = client.get("/api/v1/users/me", headers=headers)
+            invalid = client.patch(
+                "/api/v1/system-config",
+                json={"invite_reward_mode": "unknown"},
+                headers=headers,
             )
 
-        self.assertTrue(owner.json()["ok"])
-        self.assertTrue(invited.json()["ok"])
-        self.assertEqual(invited.json()["user"]["points"], 150)
-        owner_record = next(item for item in users.json()["users"] if item["username"] == "owner")
-        self.assertEqual(owner_record["points"], 150)
-        self.assertEqual(profile.json()["billing"]["invite_bonus_points"], 50)
+        self.assertEqual(default_config.status_code, 200)
+        self.assertEqual(default_config.json()["config"]["invite_reward_mode"], "both")
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(saved.json()["config"]["invite_reward_mode"], "invitee")
+        self.assertEqual(policy.json()["points_policy"]["invite_reward_mode"], "invitee")
+        self.assertEqual(policy.json()["points_policy"]["invite_bonus_points"], 25)
+        self.assertEqual(profile.json()["billing"]["invite_reward_mode"], "invitee")
+        self.assertEqual(profile.json()["billing"]["invite_bonus_points"], 25)
+        self.assertEqual(invalid.status_code, 400)
+        self.assertEqual(invalid.json()["error"]["code"], "INVALID_INPUT")
 
     def test_register_rejects_unknown_invite_code(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

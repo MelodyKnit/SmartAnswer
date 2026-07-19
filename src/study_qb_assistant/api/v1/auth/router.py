@@ -66,14 +66,15 @@ def build_auth_router() -> APIRouter:
                     purpose="register",
                     code=payload.email_code,
                 )
+            invite_reward = platform.get_invite_reward_policy()
+            has_invite_code = bool(payload.invite_code.strip())
             user = auth.register(
                 payload.username,
                 payload.password,
                 email,
                 invite_code=payload.invite_code,
-                invite_bonus=platform.get_invite_bonus()
-                if payload.invite_code.strip()
-                else 0,
+                inviter_bonus=int(invite_reward["inviter_points"]) if has_invite_code else 0,
+                invitee_bonus=int(invite_reward["invitee_points"]) if has_invite_code else 0,
                 initial_points=platform.get_default_user_points(),
             )
             if verification is not None and email_code_record is not None:

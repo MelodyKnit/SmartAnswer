@@ -11,6 +11,7 @@ class SystemConfigPayload(BaseModel):
     custom_proto_header: str | None = None
     default_user_points: str | None = None
     invite_bonus_points: str | None = None
+    invite_reward_mode: str | None = None
     manual_grant_default_points: str | None = None
     redeem_code_default_points: str | None = None
     answer_retry_times: str | None = None
