@@ -128,6 +128,20 @@ class RemoteReleaseScriptTests(unittest.TestCase):
         self.assertIn('scp "${scp_args[@]}" docker-compose.yaml', workflow)
         self.assertNotIn('scp "${ssh_args[@]}"', workflow)
 
+    def test_release_workflow_retries_transient_npm_install_failures(self) -> None:
+        """前端依赖下载遇到瞬时网络重置时应重试，再进入构建阶段。"""
+
+        workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("Install frontend dependencies", workflow)
+        self.assertIn("for attempt in 1 2 3", workflow)
+        self.assertIn("npm ci --prefer-offline --no-audit --fund=false", workflow)
+        self.assertIn('npm_config_fetch_retries: "5"', workflow)
+        self.assertLess(
+            workflow.index("Install frontend dependencies"),
+            workflow.index("Build frontend"),
+        )
+
     def test_existing_release_workflow_validates_manifest_before_remote_deploy(self) -> None:
         """项目内更新只能调度已发布且经过 manifest 校验的不可变镜像。"""
 

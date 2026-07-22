@@ -98,6 +98,10 @@ the server. Creating a matching `vX.Y.Z` tag runs `.github/workflows/release.yml
 builds and publishes the immutable GHCR image, creates the GitHub Release, then deploys that
 exact image digest through one SSH session.
 
+The frontend dependency step retries transient npm registry connection resets three times and
+uses npm's bounded fetch retry settings. A persistent dependency resolution failure still stops
+the release before any image or server change is attempted.
+
 The first server setup still needs Docker, Docker Compose and an SSH account that can run
 `docker compose`. The project directory must already contain `docker-compose.yaml`,
 `.env.release` and the persistent `deploy-data/` directory. Configure the following values in

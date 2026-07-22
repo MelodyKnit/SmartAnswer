@@ -73,10 +73,31 @@ jobs:
           cache: npm
           cache-dependency-path: src/website/package-lock.json
 
+      - name: Install frontend dependencies
+        working-directory: src/website
+        env:
+          npm_config_fetch_retries: "5"
+          npm_config_fetch_retry_factor: "2"
+          npm_config_fetch_retry_mintimeout: "1000"
+          npm_config_fetch_retry_maxtimeout: "60000"
+          npm_config_fetch_timeout: "120000"
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if npm ci --prefer-offline --no-audit --fund=false; then
+              exit 0
+            fi
+            if [[ "${attempt}" -eq 3 ]]; then
+              echo "npm ci failed after ${attempt} attempts" >&2
+              exit 1
+            fi
+            sleep "$((attempt * 15))"
+          done
+
       - name: Build frontend
         working-directory: src/website
         run: |
-          npm ci
           npm run build
 
       - name: Validate backend
