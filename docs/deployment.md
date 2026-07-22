@@ -91,91 +91,27 @@ not overwritten by later images.
 
 On a brand-new runtime database, the first registered user becomes `superadmin`.
 
-## Private GitHub releases and in-app updates
+## Manual server releases
 
-After the initial Docker deployment, no additional updater process needs to be installed on
-the server. Creating a matching `vX.Y.Z` tag runs `.github/workflows/release.yml`: it tests,
-builds and publishes the immutable GHCR image, creates the GitHub Release, then deploys that
-exact image digest through one SSH session.
+Version tags are release records only. `.github/workflows/release.yml` no longer runs when a
+tag is pushed, and production deployment does not depend on GitHub Actions, a GitHub webhook,
+or an application-held GitHub token.
 
-The frontend dependency step retries transient npm registry connection resets three times and
-uses npm's bounded fetch retry settings. A persistent dependency resolution failure still stops
-the release before any image or server change is attempted.
+For each release, use this controlled sequence from a trusted administrator machine:
 
-The first server setup still needs Docker, Docker Compose and an SSH account that can run
-`docker compose`. The project directory must already contain `docker-compose.yaml`,
-`.env.release` and the persistent `deploy-data/` directory. Configure the following values in
-the GitHub repository, not in application configuration or server `.env` files:
+1. Finish review and validation, update `pyproject.toml`, commit, create the matching `vX.Y.Z`
+   tag, and push the source plus tag.
+2. On the server, create a timestamped backup of the project source and the SQLite runtime
+   database under `deploy-data/backups/`.
+3. Transfer reviewed source files without overwriting `.env.server`, `.env.release`, or
+   `deploy-data/`.
+4. Build a local versioned image with `APP_VERSION` and `BUILD_SHA` build arguments.
+5. Start that image through `docker compose`, then verify `/api/v1/healthz` and
+   `/api/v1/version` before treating the release as complete.
 
-| GitHub repository setting | Required value |
-| --- | --- |
-| Variable `DEPLOY_ENABLED` | `true` to enable automatic deployment; omit or set `false` to publish only |
-| Variable `DEPLOY_HOST` | server host name or IP address |
-| Variable `DEPLOY_PORT` | SSH port, default `22` |
-| Variable `DEPLOY_USER` | server deployment user |
-| Variable `DEPLOY_PATH` | absolute project directory on the server |
-| Variable `DEPLOY_HEALTH_URL` | optional local health base URL, default `http://127.0.0.1:3003` |
-| Secret `DEPLOY_SSH_PRIVATE_KEY` | private key whose public key is authorized for `DEPLOY_USER` |
-| Secret `DEPLOY_KNOWN_HOSTS` | pinned `known_hosts` entry for the deployment host |
-| Secret `GHCR_READ_TOKEN` | classic PAT with only `read:packages` for this private image |
-
-The workflow passes the GHCR token over SSH standard input only. The remote script uses a
-temporary Docker credential directory, pulls the immutable digest, creates a SQLite online
-backup, replaces `.env.release` atomically and verifies `/api/v1/healthz` plus
-`/api/v1/version`. A failed
-start or health check restores the prior image reference and database snapshot. The business
-container never receives Docker or SSH access.
-
-### 从系统配置检查并更新
-
-仓库内的 `.github/workflows/deploy-release.yml` 用于部署**已发布**的版本，不重新构建
-源码。超级管理员可在 **系统配置 > 项目更新** 填写并保存：
-
-| 平台配置项 | 说明 |
-| --- | --- |
-| GitHub 仓库 | 当前部署项目所在仓库，格式 `owner/repository` |
-| 部署工作流 | 默认 `deploy-release.yml`，必须是 `.github/workflows` 下的 YAML 文件名 |
-| GitHub 访问令牌 | 细粒度 PAT，授权该仓库的内容读取和 Actions 工作流调度权限 |
-| 自动检查更新 | 可选；按 1 到 168 小时的周期检查正式 Release，只报告可更新版本 |
-
-保存并启用后，点击“检查更新”会读取最新正式 Release，并验证其
-`release-manifest.json` 中的仓库、标签、版本、提交号、镜像名称和 digest。只有当前
-运行版本更旧且 manifest 全部匹配时，“更新到 vX.Y.Z”才可用。更新请求会触发
-`deploy-release.yml`，该工作流复用上表中的 GitHub Secrets 和变量，通过已有的
-`remote-release.sh` 完成备份、拉取、健康检查与失败回滚。
-
-自动检查只会读取并校验最新 Release，不会自行重启服务或部署镜像。管理员必须在面板中确认
-“更新到 vX.Y.Z”后，系统才会调度 GitHub Actions。若工作流调度后 10 分钟内没有创建对应任务，
-应用会将该操作标记为失败，允许管理员重新发起更新。
-
-### 更新触发模型
-
-项目保留两条职责不同的更新路径：
-
-- **被动发布路径**：受保护的 `vX.Y.Z` 标签触发 `release.yml`。它构建、测试、发布
-  不可变镜像，并在 `DEPLOY_ENABLED=true` 时由 GitHub Actions 通过既有 SSH 通道部署。
-  这是代码发布者主动创建 Release 后的自动化交付，不经过应用内 GitHub 令牌。
-- **主动运维路径**：服务端的轻量巡检按配置周期只读取和校验 GitHub Release；超级管理员
-  在系统配置中确认后，才会触发 `deploy-release.yml` 部署已经发布的不可变镜像。
-
-不增加 GitHub Webhook。Webhook 会为公网服务增加签名校验、重放防护、可用性和密钥轮换
-边界，而现有 GitHub Actions 已是从仓库到服务器的受控推送通道。轮询仅用于发现版本与恢复
-任务状态，不具备自行部署权限。
-
-GitHub 访问令牌只通过管理 API 写入服务器运行配置，读取接口仅返回“已配置”状态，
-且项目日志会脱敏该字段。它仍属于服务器敏感数据：请限制 `deploy-data/` 的系统访问
-权限，并在不再使用时到系统配置中先关闭项目更新、确认没有运行中的任务，再清空该令牌。不要把令牌提交到 `.env.example`
-或仓库文件中。
-
-To obtain the pinned host key without trusting interactive SSH prompts, run this from a trusted
-administrator machine and save the resulting line as `DEPLOY_KNOWN_HOSTS`:
-
-```bash
-ssh-keyscan -H your-server.example.com
-```
-
-Use a dedicated deployment SSH key when possible. The public half belongs in the server user's
-`~/.ssh/authorized_keys`; the private half belongs only in the GitHub Actions secret.
+The repository retains the GitHub workflow files for future operator-led use, but they are not
+part of the current production release path. Any GitHub access token stored in application
+configuration is optional and is not required for manual server deployment.
 
 ## Importing question-bank data
 

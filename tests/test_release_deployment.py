@@ -128,6 +128,14 @@ class RemoteReleaseScriptTests(unittest.TestCase):
         self.assertIn('scp "${scp_args[@]}" docker-compose.yaml', workflow)
         self.assertNotIn('scp "${ssh_args[@]}"', workflow)
 
+    def test_release_workflow_requires_manual_dispatch(self) -> None:
+        """版本标签只负责追踪，不能自动启动 GitHub 发布或服务器部署。"""
+
+        workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("workflow_dispatch:", workflow)
+        self.assertNotIn("push:\n    tags:", workflow)
+
     def test_release_workflow_retries_transient_npm_install_failures(self) -> None:
         """前端依赖下载遇到瞬时网络重置时应重试，再进入构建阶段。"""
 

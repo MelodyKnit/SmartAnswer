@@ -17,6 +17,7 @@ const loading = ref(false)
 const saving = ref(false)
 const route = useRoute()
 const site = useSiteStore()
+const activeTab = ref<'platform' | 'billing' | 'account'>('platform')
 
 const uploadHeaders = computed(() => {
   const token = getToken()
@@ -379,308 +380,323 @@ onMounted(load)
       </template>
     </PageHeader>
 
-    <div class="space-y-4">
-      <!-- 站点外观 -->
-      <div class="app-card p-6">
-        <h3 class="mb-4 text-base font-semibold text-ink">站点外观</h3>
-        <div class="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_280px]">
-          <el-form label-position="top" class="grid grid-cols-1 gap-x-6 md:grid-cols-2">
-            <el-form-item label="网站标题">
-              <el-input v-model="form.site_title" maxlength="40" show-word-limit placeholder="请输入网站标题" />
-            </el-form-item>
-            <el-form-item label="网站 Logo">
-              <div class="flex flex-col gap-2">
-                <el-upload
-                  action="/api/system/logo/upload"
-                  :headers="uploadHeaders"
-                  accept="image/png, image/jpeg, image/jpg, image/webp"
-                  :show-file-list="false"
-                  :on-success="handleLogoUploadSuccess"
-                  :on-error="handleLogoUploadError"
-                >
-                  <el-button type="primary">上传图片修改 Logo</el-button>
-                </el-upload>
-                <div class="text-xs text-ink-muted">
-                  支持 png、jpg、jpeg、webp 格式，文件大小不超过 5MB，将自动裁剪为多分辨率正方形尺寸。
+    <div class="mt-4">
+      <el-tabs v-model="activeTab" class="app-tabs">
+        <!-- 平台设置 -->
+        <el-tab-pane label="平台设置" name="platform">
+          <div class="space-y-4 mt-2">
+            <!-- 站点外观 -->
+            <div class="app-card p-6">
+              <h3 class="mb-4 text-base font-semibold text-ink">站点外观</h3>
+              <div class="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_280px]">
+                <el-form label-position="top" class="grid grid-cols-1 gap-x-6 md:grid-cols-2">
+                  <el-form-item label="网站标题">
+                    <el-input v-model="form.site_title" maxlength="40" show-word-limit placeholder="请输入网站标题" />
+                  </el-form-item>
+                  <el-form-item label="网站 Logo">
+                    <div class="flex flex-col gap-2">
+                      <el-upload
+                        action="/api/system/logo/upload"
+                        :headers="uploadHeaders"
+                        accept="image/png, image/jpeg, image/jpg, image/webp"
+                        :show-file-list="false"
+                        :on-success="handleLogoUploadSuccess"
+                        :on-error="handleLogoUploadError"
+                      >
+                        <el-button type="primary">上传图片修改 Logo</el-button>
+                      </el-upload>
+                      <div class="text-xs text-ink-muted">
+                        支持 png、jpg、jpeg、webp 格式，文件大小不超过 5MB，将自动裁剪为多分辨率正方形尺寸。
+                      </div>
+                    </div>
+                  </el-form-item>
+                </el-form>
+                <div class="rounded-xl border border-line bg-card-soft p-4">
+                  <div class="mb-3 text-xs font-medium text-ink-muted">预览</div>
+                  <div class="flex items-center gap-3">
+                    <SiteLogo :title="form.site_title" :logo-url="previewLogoUrl" />
+                    <div class="min-w-0">
+                      <div class="truncate text-base font-semibold text-ink">{{ form.site_title || '网站标题' }}</div>
+                      <div class="truncate text-xs text-ink-muted">{{ form.site_logo_url ? '已配置自定义 Logo' : '使用默认图标' }}</div>
+                    </div>
+                  </div>
                 </div>
               </div>
-            </el-form-item>
-          </el-form>
-          <div class="rounded-xl border border-line bg-card-soft p-4">
-            <div class="mb-3 text-xs font-medium text-ink-muted">预览</div>
-            <div class="flex items-center gap-3">
-              <SiteLogo :title="form.site_title" :logo-url="previewLogoUrl" />
-              <div class="min-w-0">
-                <div class="truncate text-base font-semibold text-ink">{{ form.site_title || '网站标题' }}</div>
-                <div class="truncate text-xs text-ink-muted">{{ form.site_logo_url ? '已配置自定义 Logo' : '使用默认图标' }}</div>
-              </div>
             </div>
-          </div>
-        </div>
-      </div>
 
-      <!-- 积分策略 -->
-      <div class="app-card p-6">
-        <h3 class="mb-4 text-base font-semibold text-ink">积分策略</h3>
-        <el-form label-position="top" class="grid grid-cols-1 gap-x-6 md:grid-cols-3">
-          <el-form-item label="题库命中扣费">
-            <el-input-number v-model="billingForm.local_hit" :min="0" class="w-full" />
-          </el-form-item>
-          <el-form-item label="联网检索扣费">
-            <el-input-number v-model="billingForm.web_search" :min="0" class="w-full" />
-          </el-form-item>
-          <el-form-item label="大模型兜底扣费">
-            <el-input-number v-model="billingForm.llm_fallback" :min="0" class="w-full" />
-          </el-form-item>
-          <el-form-item label="新用户初始积分">
-            <el-input-number v-model="form.default_user_points" :min="0" class="w-full" />
-          </el-form-item>
-          <div class="rounded-lg border border-line bg-card-soft p-4 md:col-span-3">
-            <p class="mb-4 text-sm font-semibold text-ink">邀请奖励策略</p>
-            <div class="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_220px] md:items-end">
-              <el-form-item label="邀请奖励对象" class="mb-0">
-                <el-radio-group v-model="form.invite_reward_mode">
-                  <el-radio-button value="inviter">邀请人</el-radio-button>
-                  <el-radio-button value="invitee">被邀请人</el-radio-button>
-                  <el-radio-button value="both">双方</el-radio-button>
-                </el-radio-group>
-              </el-form-item>
-              <el-form-item label="每位奖励积分" class="mb-0">
-                <el-input-number v-model="form.invite_bonus_points" :min="0" class="w-full" />
-              </el-form-item>
+            <!-- 服务配置 -->
+            <div class="app-card p-6">
+              <h3 class="mb-4 text-base font-semibold text-ink">服务配置</h3>
+              <el-form label-position="top" class="grid grid-cols-1 gap-x-6 md:grid-cols-2">
+                <el-form-item label="智能检测协议头（优先获取 X-Forwarded-Proto 与 Host）">
+                  <el-switch v-model="form.smart_proto_enabled" active-value="true" inactive-value="false" />
+                </el-form-item>
+                <el-form-item label="手动协议头">
+                  <el-select v-model="form.custom_proto_header" class="w-full" :disabled="form.smart_proto_enabled === 'true'">
+                    <el-option value="http" label="http" />
+                    <el-option value="https" label="https" />
+                  </el-select>
+                </el-form-item>
+              </el-form>
+              <p class="text-xs text-ink-muted">
+                开启智能检测后，系统会自动根据客户端发送的 HTTP/HTTPS 头或穿透网关识别协议。
+              </p>
             </div>
-            <p class="mt-3 text-xs text-ink-muted">{{ inviteRewardPolicyHint }}</p>
-          </div>
-          <el-form-item label="手动发放默认积分">
-            <el-input-number v-model="form.manual_grant_default_points" :min="1" class="w-full" />
-          </el-form-item>
-          <el-form-item label="兑换码默认积分">
-            <el-input-number v-model="form.redeem_code_default_points" :min="1" class="w-full" />
-          </el-form-item>
-          <el-form-item label="答题报错重试次数">
-            <el-input-number v-model="form.answer_retry_times" :min="0" :max="10" class="w-full" />
-          </el-form-item>
-        </el-form>
-        <p class="text-xs text-ink-muted">
-          查题扣费实时影响 OCS/API 调用；默认积分用于后台表单预填和后续注册奖励策略。答题报错重试仅在 AI/联网增强链路抛异常时生效，0 表示不重试。
-        </p>
-      </div>
 
-      <!-- 账户配置 -->
-      <div class="app-card p-6">
-        <h3 class="mb-4 text-base font-semibold text-ink">账户配置</h3>
-        <el-form label-position="top" class="grid grid-cols-1 gap-x-6 md:grid-cols-2">
-          <el-form-item label="允许用户注册">
-            <el-switch v-model="form.registration_enabled" active-value="true" inactive-value="false" />
-          </el-form-item>
-          <el-form-item label="注册邮箱策略">
-            <el-radio-group
-              :model-value="form.registration_email_mode"
-              @update:model-value="selectRegistrationEmailMode"
-            >
-              <el-radio-button value="optional">邮箱可选</el-radio-button>
-              <el-radio-button value="required">邮箱必填，不验证</el-radio-button>
-              <el-radio-button value="verified">邮箱必填并验证</el-radio-button>
-            </el-radio-group>
-          </el-form-item>
-          <div class="rounded-lg border border-line bg-card-soft p-4 md:col-span-2">
-            <div class="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <p class="text-sm font-semibold text-ink">注册邮箱白名单</p>
-                <p class="mt-1 text-xs text-ink-muted">仅“邮箱必填并验证”模式下会限制可注册的邮箱域名。</p>
-              </div>
-              <el-tag :type="isEmailDomainWhitelistActive ? 'success' : 'info'" effect="plain">
-                {{ isEmailDomainWhitelistActive ? '当前生效' : '当前策略下暂不生效' }}
-              </el-tag>
-            </div>
-            <div class="mt-4 flex flex-wrap gap-2">
-              <el-tag
-                v-for="domain in emailDomainWhitelist"
-                :key="domain"
-                closable
-                effect="plain"
-                @close="removeEmailDomain(domain)"
-              >
-                {{ domain }}
-              </el-tag>
-            </div>
-            <div class="mt-4 flex flex-col gap-2 sm:flex-row">
-              <el-input
-                v-model="emailDomainDraft"
-                class="min-w-0 flex-1"
-                placeholder="例如 example.edu.cn"
-                @keyup.enter="addEmailDomain"
-              />
-              <el-button type="primary" class="sm:shrink-0" @click="addEmailDomain">添加域名</el-button>
-            </div>
-            <div class="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-3">
-              <span class="text-xs text-ink-muted">
-                {{ emailDomainWhitelistChanged ? '白名单有未保存修改' : `已允许 ${emailDomainWhitelist.length} 个邮箱域名` }}
-              </span>
-              <div class="flex items-center gap-2">
-                <el-button :disabled="!emailDomainWhitelistChanged" @click="resetEmailDomainWhitelist">还原</el-button>
-                <el-button
-                  type="primary"
-                  :loading="savingEmailDomainWhitelist"
-                  :disabled="!emailDomainWhitelistChanged"
-                  @click="saveEmailDomainWhitelist"
-                >
-                  保存白名单
-                </el-button>
-              </div>
-            </div>
-          </div>
-          <el-form-item label="SMTP 服务器">
-            <el-input v-model="form.smtp_host" placeholder="smtp.example.com" />
-          </el-form-item>
-          <el-form-item label="SMTP 端口">
-            <el-input-number v-model="form.smtp_port" :min="1" :max="65535" class="w-full" />
-          </el-form-item>
-          <el-form-item label="SMTP 加密方式">
-            <el-select v-model="form.smtp_security" class="w-full">
-              <el-option value="ssl" label="SSL" />
-              <el-option value="starttls" label="STARTTLS" />
-              <el-option value="none" label="不加密" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="SMTP 用户名">
-            <el-input v-model="form.smtp_username" placeholder="通常为邮箱账号" />
-          </el-form-item>
-          <el-form-item :label="form.smtp_password_configured ? 'SMTP 密码（已配置）' : 'SMTP 密码'">
-            <el-input
-              v-model="form.smtp_password"
-              type="password"
-              show-password
-              placeholder="留空保持不变"
-            />
-          </el-form-item>
-          <el-form-item label="发件邮箱">
-            <el-input v-model="form.smtp_from_email" placeholder="noreply@example.com" />
-          </el-form-item>
-          <el-form-item label="发件人名称">
-            <el-input v-model="form.smtp_from_name" maxlength="40" placeholder="AI题库" />
-          </el-form-item>
-          <el-form-item label="验证码有效分钟">
-            <el-input-number v-model="form.email_code_ttl_minutes" :min="1" :max="60" class="w-full" />
-          </el-form-item>
-          <el-form-item label="发送冷却秒数">
-            <el-input-number
-              v-model="form.email_code_cooldown_seconds"
-              :min="0"
-              :max="3600"
-              class="w-full"
-            />
-          </el-form-item>
-          <el-form-item label="单邮箱每日上限">
-            <el-input-number v-model="form.email_code_daily_limit" :min="1" :max="100" class="w-full" />
-          </el-form-item>
-          <el-form-item label="单 IP 每小时上限">
-            <el-input-number
-              v-model="form.email_code_ip_hourly_limit"
-              :min="1"
-              :max="500"
-              class="w-full"
-            />
-          </el-form-item>
-          <el-form-item label="验证码最大错误次数">
-            <el-input-number v-model="form.email_code_max_attempts" :min="1" :max="20" class="w-full" />
-          </el-form-item>
-        </el-form>
-        <p class="text-xs text-ink-muted">
-          开启邮箱验证后，新用户注册必须通过白名单邮箱接收验证码；SMTP 密码留空不会覆盖已有配置。
-        </p>
-      </div>
-
-      <!-- 服务配置 -->
-      <div class="app-card p-6">
-        <h3 class="mb-4 text-base font-semibold text-ink">服务配置</h3>
-        <el-form label-position="top" class="grid grid-cols-1 gap-x-6 md:grid-cols-2">
-          <el-form-item label="智能检测协议头（优先获取 X-Forwarded-Proto 与 Host）">
-            <el-switch v-model="form.smart_proto_enabled" active-value="true" inactive-value="false" />
-          </el-form-item>
-          <el-form-item label="手动协议头">
-            <el-select v-model="form.custom_proto_header" class="w-full" :disabled="form.smart_proto_enabled === 'true'">
-              <el-option value="http" label="http" />
-              <el-option value="https" label="https" />
-            </el-select>
-          </el-form-item>
-        </el-form>
-        <p class="text-xs text-ink-muted">
-          开启智能检测后，系统会自动根据客户端发送的 HTTP/HTTPS 头或穿透网关识别协议。
-        </p>
-      </div>
-
-      <!-- 版本更新 -->
-      <div class="app-card p-6">
-        <div class="flex flex-wrap items-center justify-between gap-3">
-          <h3 class="text-base font-semibold text-ink">项目更新</h3>
-          <el-switch
-            :model-value="form.project_update_enabled"
-            active-value="true"
-            inactive-value="false"
-            active-text="启用"
-            inactive-text="关闭"
-            @update:model-value="selectProjectUpdateEnabled"
-          />
-        </div>
-        <el-form label-position="top" class="mt-4 grid grid-cols-1 gap-x-6 md:grid-cols-2">
-          <el-form-item label="GitHub 仓库">
-            <el-input v-model="form.project_update_repository" placeholder="owner/repository" />
-          </el-form-item>
-          <el-form-item label="部署工作流">
-            <el-input v-model="form.project_update_workflow" placeholder="deploy-release.yml" />
-          </el-form-item>
-          <el-form-item label="自动检查更新">
-            <el-switch
-              v-model="form.project_update_auto_check_enabled"
-              active-value="true"
-              inactive-value="false"
-              active-text="开启"
-              inactive-text="关闭"
-            />
-          </el-form-item>
-          <el-form-item label="检查周期（小时）">
-            <el-input-number
-              v-model="form.project_update_check_interval_hours"
-              :min="1"
-              :max="168"
-              :disabled="form.project_update_auto_check_enabled !== 'true'"
-              class="w-full"
-            />
-          </el-form-item>
-          <el-form-item
-            class="md:col-span-2"
-            :label="form.project_update_github_token_configured ? 'GitHub 访问令牌（已配置）' : 'GitHub 访问令牌'"
-          >
-            <div class="flex w-full flex-col gap-2 sm:flex-row">
-              <div class="min-w-0 flex-1">
-                <el-input
-                  v-model="form.project_update_github_token"
-                  class="w-full"
-                  type="password"
-                  show-password
-                  placeholder="留空保持不变；私有仓库需授予 Contents 读取和 Actions 写入权限"
+            <!-- 版本更新 -->
+            <div class="app-card p-6">
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <h3 class="text-base font-semibold text-ink">项目更新</h3>
+                <el-switch
+                  :model-value="form.project_update_enabled"
+                  active-value="true"
+                  inactive-value="false"
+                  active-text="启用"
+                  inactive-text="关闭"
+                  @update:model-value="selectProjectUpdateEnabled"
                 />
               </div>
-              <el-button
-                v-if="form.project_update_github_token_configured"
-                class="sm:shrink-0"
-                :disabled="persistedProjectUpdateEnabled === 'true'"
-                @click="clearProjectUpdateToken"
-              >
-                清除令牌
-              </el-button>
+              <el-form label-position="top" class="mt-4 grid grid-cols-1 gap-x-6 md:grid-cols-2">
+                <el-form-item label="GitHub 仓库">
+                  <el-input v-model="form.project_update_repository" placeholder="owner/repository" />
+                </el-form-item>
+                <el-form-item label="部署工作流">
+                  <el-input v-model="form.project_update_workflow" placeholder="deploy-release.yml" />
+                </el-form-item>
+                <el-form-item label="自动检查更新">
+                  <el-switch
+                    v-model="form.project_update_auto_check_enabled"
+                    active-value="true"
+                    inactive-value="false"
+                    active-text="开启"
+                    inactive-text="关闭"
+                  />
+                </el-form-item>
+                <el-form-item label="检查周期（小时）">
+                  <el-input-number
+                    v-model="form.project_update_check_interval_hours"
+                    :min="1"
+                    :max="168"
+                    :disabled="form.project_update_auto_check_enabled !== 'true'"
+                    class="w-full"
+                  />
+                </el-form-item>
+                <el-form-item
+                  class="md:col-span-2"
+                  :label="form.project_update_github_token_configured ? 'GitHub 访问令牌（已配置）' : 'GitHub 访问令牌'"
+                >
+                  <div class="flex w-full flex-col gap-2 sm:flex-row">
+                    <div class="min-w-0 flex-1">
+                      <el-input
+                        v-model="form.project_update_github_token"
+                        class="w-full"
+                        type="password"
+                        show-password
+                        placeholder="留空保持不变；私有仓库需授予 Contents 读取和 Actions 写入权限"
+                      />
+                    </div>
+                    <el-button
+                      v-if="form.project_update_github_token_configured"
+                      class="sm:shrink-0"
+                      :disabled="persistedProjectUpdateEnabled === 'true'"
+                      @click="clearProjectUpdateToken"
+                    >
+                      清除令牌
+                    </el-button>
+                  </div>
+                </el-form-item>
+              </el-form>
+              <p class="text-xs text-ink-muted">
+                自动检查只发现版本，不会自动部署。更新会校验 GitHub Release manifest 后通过 GitHub Actions 部署不可变镜像；访问令牌仅保存在服务端，不会回显。
+              </p>
+              <p v-if="form.project_update_github_token_configured && persistedProjectUpdateEnabled === 'true'" class="mt-1 text-xs text-ink-muted">
+                如需清除访问令牌，请先关闭并保存项目更新配置。
+              </p>
+              <ProjectUpdatePanel :configuration-version="projectUpdateConfigurationVersion" />
             </div>
-          </el-form-item>
-        </el-form>
-        <p class="text-xs text-ink-muted">
-          自动检查只发现版本，不会自动部署。更新会校验 GitHub Release manifest 后通过 GitHub Actions 部署不可变镜像；访问令牌仅保存在服务端，不会回显。
-        </p>
-        <p v-if="form.project_update_github_token_configured && persistedProjectUpdateEnabled === 'true'" class="mt-1 text-xs text-ink-muted">
-          如需清除访问令牌，请先关闭并保存项目更新配置。
-        </p>
-        <ProjectUpdatePanel :configuration-version="projectUpdateConfigurationVersion" />
-      </div>
+          </div>
+        </el-tab-pane>
+
+        <!-- 积分计费 -->
+        <el-tab-pane label="积分计费" name="billing">
+          <div class="space-y-4 mt-2">
+            <div class="app-card p-6">
+              <h3 class="mb-4 text-base font-semibold text-ink">积分管理</h3>
+              <el-form label-position="top" class="grid grid-cols-1 gap-x-6 md:grid-cols-3">
+                <el-form-item label="题库命中扣费">
+                  <el-input-number v-model="billingForm.local_hit" :min="0" class="w-full" />
+                </el-form-item>
+                <el-form-item label="联网检索扣费">
+                  <el-input-number v-model="billingForm.web_search" :min="0" class="w-full" />
+                </el-form-item>
+                <el-form-item label="大模型兜底扣费">
+                  <el-input-number v-model="billingForm.llm_fallback" :min="0" class="w-full" />
+                </el-form-item>
+                <el-form-item label="新用户初始积分">
+                  <el-input-number v-model="form.default_user_points" :min="0" class="w-full" />
+                </el-form-item>
+                <div class="rounded-lg border border-line bg-card-soft p-4 md:col-span-3">
+                  <p class="mb-4 text-sm font-semibold text-ink">邀请奖励策略</p>
+                  <div class="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,1fr)_220px] md:items-end">
+                    <el-form-item label="邀请奖励对象" class="mb-0">
+                      <el-radio-group v-model="form.invite_reward_mode">
+                        <el-radio-button value="inviter">邀请人</el-radio-button>
+                        <el-radio-button value="invitee">被邀请人</el-radio-button>
+                        <el-radio-button value="both">双方</el-radio-button>
+                      </el-radio-group>
+                    </el-form-item>
+                    <el-form-item label="每位奖励积分" class="mb-0">
+                      <el-input-number v-model="form.invite_bonus_points" :min="0" class="w-full" />
+                    </el-form-item>
+                  </div>
+                  <p class="mt-3 text-xs text-ink-muted">{{ inviteRewardPolicyHint }}</p>
+                </div>
+                <el-form-item label="手动发放默认积分">
+                  <el-input-number v-model="form.manual_grant_default_points" :min="1" class="w-full" />
+                </el-form-item>
+                <el-form-item label="兑换码默认积分">
+                  <el-input-number v-model="form.redeem_code_default_points" :min="1" class="w-full" />
+                </el-form-item>
+                <el-form-item label="答题报错重试次数">
+                  <el-input-number v-model="form.answer_retry_times" :min="0" :max="10" class="w-full" />
+                </el-form-item>
+              </el-form>
+              <p class="text-xs text-ink-muted">
+                查题扣费实时影响 OCS/API 调用；默认积分用于后台表单预填和后续注册奖励策略。答题报错重试仅在 AI/联网增强链路抛异常时生效，0 表示不重试。
+              </p>
+            </div>
+          </div>
+        </el-tab-pane>
+
+        <!-- 账户配置 -->
+        <el-tab-pane label="账户配置" name="account">
+          <div class="space-y-4 mt-2">
+            <div class="app-card p-6">
+              <h3 class="mb-4 text-base font-semibold text-ink">账户与邮件注册配置</h3>
+              <el-form label-position="top" class="grid grid-cols-1 gap-x-6 md:grid-cols-2">
+                <el-form-item label="允许用户注册">
+                  <el-switch v-model="form.registration_enabled" active-value="true" inactive-value="false" />
+                </el-form-item>
+                <el-form-item label="注册邮箱策略">
+                  <el-radio-group
+                    :model-value="form.registration_email_mode"
+                    @update:model-value="selectRegistrationEmailMode"
+                  >
+                    <el-radio-button value="optional">邮箱可选</el-radio-button>
+                    <el-radio-button value="required">邮箱必填，不验证</el-radio-button>
+                    <el-radio-button value="verified">邮箱必填并验证</el-radio-button>
+                  </el-radio-group>
+                </el-form-item>
+                <div class="rounded-lg border border-line bg-card-soft p-4 md:col-span-2">
+                  <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p class="text-sm font-semibold text-ink">注册邮箱白名单</p>
+                      <p class="mt-1 text-xs text-ink-muted">仅“邮箱必填并验证”模式下会限制可注册的邮箱域名。</p>
+                    </div>
+                    <el-tag :type="isEmailDomainWhitelistActive ? 'success' : 'info'" effect="plain">
+                      {{ isEmailDomainWhitelistActive ? '当前生效' : '当前策略下暂不生效' }}
+                    </el-tag>
+                  </div>
+                  <div class="mt-4 flex flex-wrap gap-2">
+                    <el-tag
+                      v-for="domain in emailDomainWhitelist"
+                      :key="domain"
+                      closable
+                      effect="plain"
+                      @close="removeEmailDomain(domain)"
+                    >
+                      {{ domain }}
+                    </el-tag>
+                  </div>
+                  <div class="mt-4 flex flex-wrap gap-2 sm:flex-row">
+                    <el-input
+                      v-model="emailDomainDraft"
+                      class="min-w-0 flex-1"
+                      placeholder="例如 example.edu.cn"
+                      @keyup.enter="addEmailDomain"
+                    />
+                    <el-button type="primary" class="sm:shrink-0" @click="addEmailDomain">添加域名</el-button>
+                  </div>
+                  <div class="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-3">
+                    <span class="text-xs text-ink-muted">
+                      {{ emailDomainWhitelistChanged ? '白名单有未保存修改' : `已允许 ${emailDomainWhitelist.length} 个邮箱域名` }}
+                    </span>
+                    <div class="flex items-center gap-2">
+                      <el-button :disabled="!emailDomainWhitelistChanged" @click="resetEmailDomainWhitelist">还原</el-button>
+                      <el-button
+                        type="primary"
+                        :loading="savingEmailDomainWhitelist"
+                        :disabled="!emailDomainWhitelistChanged"
+                        @click="saveEmailDomainWhitelist"
+                      >
+                        保存白名单
+                      </el-button>
+                    </div>
+                  </div>
+                </div>
+                <el-form-item label="SMTP 服务器">
+                  <el-input v-model="form.smtp_host" placeholder="smtp.example.com" />
+                </el-form-item>
+                <el-form-item label="SMTP 端口">
+                  <el-input-number v-model="form.smtp_port" :min="1" :max="65535" class="w-full" />
+                </el-form-item>
+                <el-form-item label="SMTP 加密方式">
+                  <el-select v-model="form.smtp_security" class="w-full">
+                    <el-option value="ssl" label="SSL" />
+                    <el-option value="starttls" label="STARTTLS" />
+                    <el-option value="none" label="不加密" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="SMTP 用户名">
+                  <el-input v-model="form.smtp_username" placeholder="通常为邮箱账号" />
+                </el-form-item>
+                <el-form-item :label="form.smtp_password_configured ? 'SMTP 密码（已配置）' : 'SMTP 密码'">
+                  <el-input
+                    v-model="form.smtp_password"
+                    type="password"
+                    show-password
+                    placeholder="留空保持不变"
+                  />
+                </el-form-item>
+                <el-form-item label="发件邮箱">
+                  <el-input v-model="form.smtp_from_email" placeholder="noreply@example.com" />
+                </el-form-item>
+                <el-form-item label="发件人名称">
+                  <el-input v-model="form.smtp_from_name" maxlength="40" placeholder="AI题库" />
+                </el-form-item>
+                <el-form-item label="验证码有效分钟">
+                  <el-input-number v-model="form.email_code_ttl_minutes" :min="1" :max="60" class="w-full" />
+                </el-form-item>
+                <el-form-item label="发送冷却秒数">
+                  <el-input-number
+                    v-model="form.email_code_cooldown_seconds"
+                    :min="0"
+                    :max="3600"
+                    class="w-full"
+                  />
+                </el-form-item>
+                <el-form-item label="单邮箱每日上限">
+                  <el-input-number v-model="form.email_code_daily_limit" :min="1" :max="100" class="w-full" />
+                </el-form-item>
+                <el-form-item label="单 IP 每小时上限">
+                  <el-input-number
+                    v-model="form.email_code_ip_hourly_limit"
+                    :min="1"
+                    :max="500"
+                    class="w-full"
+                  />
+                </el-form-item>
+                <el-form-item label="验证码最大错误次数">
+                  <el-input-number v-model="form.email_code_max_attempts" :min="1" :max="20" class="w-full" />
+                </el-form-item>
+              </el-form>
+              <p class="text-xs text-ink-muted">
+                开启邮箱验证后，新用户注册必须通过白名单邮箱接收验证码；SMTP 密码留空不会覆盖已有配置。
+              </p>
+            </div>
+          </div>
+        </el-tab-pane>
+      </el-tabs>
     </div>
   </div>
 </template>
