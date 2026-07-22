@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import secrets
 import smtplib
 import ssl
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 from email.message import EmailMessage
 from pathlib import Path
@@ -21,6 +23,9 @@ from .security import hash_token
 from .service import AuthError
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+EMAIL_DOMAIN_LABEL_RE = re.compile(
+    r"^(?=.{1,63}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+)
 SUPPORTED_PURPOSES = {"register"}
 
 
@@ -134,11 +139,7 @@ class EmailDomainWhitelist:
             domains = payload.get("domains")
             if not isinstance(domains, list):
                 raise ValueError("domains must be a list")
-            parsed = {
-                str(item).strip().lower()
-                for item in domains
-                if str(item).strip() and "@" not in str(item)
-            }
+            parsed = set(normalize_email_domains(domains))
         except Exception as exc:
             log_event("email_domain_whitelist_error", {"error": str(exc)})
             raise AuthError(
@@ -153,10 +154,46 @@ class EmailDomainWhitelist:
         self._domains = parsed
         return set(parsed)
 
+    def list_domains(self) -> list[str]:
+        """返回按字母序排列的当前白名单域名。"""
+
+        return sorted(self.domains())
+
+    def replace_domains(self, domains: Iterable[object]) -> list[str]:
+        """原子替换白名单文件，并立即失效当前实例缓存。"""
+
+        normalized = normalize_email_domains(domains)
+        payload = (
+            json.dumps({"domains": normalized}, ensure_ascii=False, indent=2) + "\n"
+        )
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = self.path.with_name(
+            f".{self.path.name}.{secrets.token_hex(8)}.tmp"
+        )
+        try:
+            temporary_path.write_text(payload, encoding="utf-8")
+            os.replace(temporary_path, self.path)
+        except OSError as exc:
+            raise AuthError(
+                "INTERNAL_ERROR", "邮箱域名白名单保存失败", http_status=500
+            ) from exc
+        finally:
+            if temporary_path.exists():
+                temporary_path.unlink(missing_ok=True)
+
+        self._mtime = None
+        self._domains = set()
+        return normalized
+
     def assert_allowed(self, email: str) -> None:
         """校验邮箱域名是否在白名单内。"""
 
-        domain = email_domain(email)
+        try:
+            domain = normalize_email_domain(email_domain(email))
+        except AuthError as exc:
+            raise AuthError(
+                "EMAIL_DOMAIN_NOT_ALLOWED", "该邮箱域名暂不允许注册", http_status=400
+            ) from exc
         if not domain or domain not in self.domains():
             raise AuthError(
                 "EMAIL_DOMAIN_NOT_ALLOWED", "该邮箱域名暂不允许注册", http_status=400
@@ -378,6 +415,36 @@ def email_domain(value: str | None) -> str:
     if "@" not in text:
         return ""
     return text.rsplit("@", 1)[1]
+
+
+def normalize_email_domain(value: object) -> str:
+    """校验并规范化邮箱域名，支持 Unicode 域名转为 IDNA 格式。"""
+
+    raw = str(value).strip().lower()
+    if not raw or "@" in raw or any(char.isspace() for char in raw):
+        raise AuthError("INVALID_INPUT", "请输入有效的邮箱域名", http_status=400)
+    if "://" in raw or "/" in raw or "\\" in raw:
+        raise AuthError(
+            "INVALID_INPUT", "请输入邮箱域名，不要填写网址", http_status=400
+        )
+    try:
+        domain = raw.encode("idna").decode("ascii")
+    except UnicodeError as exc:
+        raise AuthError("INVALID_INPUT", "邮箱域名格式不正确", http_status=400) from exc
+    if len(domain) > 253 or "." not in domain:
+        raise AuthError("INVALID_INPUT", "邮箱域名格式不正确", http_status=400)
+    if any(not EMAIL_DOMAIN_LABEL_RE.fullmatch(label) for label in domain.split(".")):
+        raise AuthError("INVALID_INPUT", "邮箱域名格式不正确", http_status=400)
+    return domain
+
+
+def normalize_email_domains(values: Iterable[object]) -> list[str]:
+    """归一化白名单域名集合，并阻止空白名单锁死验证码注册。"""
+
+    normalized = sorted({normalize_email_domain(value) for value in values})
+    if not normalized:
+        raise AuthError("INVALID_INPUT", "邮箱域名白名单不能为空", http_status=400)
+    return normalized
 
 
 def normalize_purpose(value: str | None) -> str:

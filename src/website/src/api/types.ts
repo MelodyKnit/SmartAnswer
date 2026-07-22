@@ -326,6 +326,12 @@ export interface SystemConfig {
   manual_grant_default_points?: string
   redeem_code_default_points?: string
   answer_retry_times?: string
+  project_update_enabled?: string
+  project_update_auto_check_enabled?: string
+  project_update_check_interval_hours?: string
+  project_update_repository?: string
+  project_update_workflow?: string
+  project_update_github_token_configured?: boolean
   registration_enabled?: string
   registration_email_mode?: 'optional' | 'required' | 'verified'
   email_verification_enabled?: string
@@ -342,6 +348,66 @@ export interface SystemConfig {
   email_code_ip_hourly_limit?: string
   email_code_max_attempts?: string
   [key: string]: any
+}
+
+export type ProjectUpdateState =
+  | 'disabled'
+  | 'unconfigured'
+  | 'idle'
+  | 'queued'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+
+export interface ProjectUpdateRelease {
+  version: string
+  tag: string
+  name: string
+  body: string
+  published_at: string
+  html_url: string
+  image: string
+  image_digest: string
+  build_sha: string
+}
+
+export interface ProjectUpdateOperation {
+  operation_id: string
+  expected_version: string
+  requested_by: string
+  state: ProjectUpdateState
+  created_at: number
+  updated_at: number
+  workflow_run_id: number
+  workflow_run_url: string
+  last_polled_at: number
+  message: string
+  error: string
+}
+
+export interface ProjectUpdateStatus {
+  configured: boolean
+  enabled: boolean
+  automatic_check_enabled: boolean
+  check_interval_hours: number
+  next_check_at: number
+  repository: string
+  workflow: string
+  current_version: string
+  build_sha: string
+  build_type: string
+  latest_version: string
+  has_update: boolean
+  checked_at: number
+  state: ProjectUpdateState
+  message: string
+  error: string
+  release: ProjectUpdateRelease | null
+  operation: ProjectUpdateOperation | null
+}
+
+export interface EmailDomainWhitelist {
+  domains: string[]
 }
 
 export interface SiteConfig {

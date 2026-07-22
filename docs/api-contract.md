@@ -136,6 +136,43 @@ OCS-compatible `/ocs/query` endpoint, whose path remains stable for imported cli
 - `GET /ocs/query?title=...&options=...&type=...`
 - `POST /ocs/query`
 
+### Project update control plane
+
+The following versioned endpoints are restricted to `superadmin` users with `system:write`.
+They check a validated GitHub Release and dispatch a deployment workflow; they never run Docker
+or SSH commands in the API process.
+
+- `GET /api/v1/project-update/status`
+- `POST /api/v1/project-update/check`
+- `POST /api/v1/project-update/apply` with `{ "expected_version": "X.Y.Z" }`
+- `GET /api/v1/project-update/operations/{operation_id}`
+- `DELETE /api/v1/project-update/token`
+
+The system configuration stores `project_update_enabled`,
+`project_update_auto_check_enabled`, `project_update_check_interval_hours`,
+`project_update_repository`, `project_update_workflow`, and a write-only
+`project_update_github_token`. Automatic checks are limited to one check every 1 to 168 hours
+and only discover verified releases; deployment always needs an explicit `apply` request. The
+token is never included in API responses; a `project_update_github_token_configured` boolean is
+returned instead. `DELETE /api/v1/project-update/token` clears the stored token only after the
+update feature is disabled and no deployment task is active.
+
+### `POST /api/v1/query` 单输入框请求
+
+在线搜题可使用 `raw_text` 提交完整粘贴内容，服务端会在进入检索链路前解析题干和末尾选项：
+
+```json
+{
+  "raw_text": "多选题：下列哪些属于示例？\nA. 选项一\nB、选项二\nC）选项三",
+  "type": "multiple"
+}
+```
+
+- `raw_text` 与结构化 `title`、`options` 互斥，混用返回 `400 INVALID_INPUT`。
+- 仅识别至少两条连续的标准选项行，支持 `A.`、`A、`、`A）`、`(A)` 等标签；无法确认时完整保留原文作为题干。
+- 未传 `type` 时，仅从明确题型标记自动识别；不会根据选项数量猜测单选或多选。
+- 既有 `title`、`options`、`type` 请求和 OCS `/ocs/query` 契约保持不变。
+
 OpenAPI UI is available at `/api/docs`; the schema is served from
 `/api/v1/openapi.json`. Legacy unversioned business routes remain temporarily callable,
 are hidden from OpenAPI, and return `Deprecation: true` plus a successor `Link` header.

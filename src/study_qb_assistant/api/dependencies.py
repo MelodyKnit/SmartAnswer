@@ -19,6 +19,7 @@ from ..platform.notifications import NotificationService
 from ..platform.permissions import PermissionService
 from ..platform.settings import SettingsService
 from ..platform.tokens import TokenService
+from ..platform.updates.service import ProjectUpdateService
 from ..platform.usage import UsageService
 from ..platform.wallet import WalletService
 from ..search import LocalQuestionIndex
@@ -90,6 +91,12 @@ def get_llm_management_service(request: Request) -> LlmManagementService:
     return get_platform_services(request).llm
 
 
+def get_project_update_service(request: Request) -> ProjectUpdateService:
+    """返回当前应用的项目更新控制面服务。"""
+
+    return get_platform_services(request).updates
+
+
 def get_ocs_integration(request: Request) -> OcsIntegrationPort:
     """返回当前应用挂载的 OCS 集成实现。"""
 
@@ -129,6 +136,9 @@ PermissionServiceDep = Annotated[PermissionService, Depends(get_permission_servi
 DashboardServiceDep = Annotated[DashboardService, Depends(get_dashboard_service)]
 LlmManagementServiceDep = Annotated[
     LlmManagementService, Depends(get_llm_management_service)
+]
+ProjectUpdateServiceDep = Annotated[
+    ProjectUpdateService, Depends(get_project_update_service)
 ]
 QuestionRepositoryDep = Annotated[
     IndexQuestionRepository | SqlAlchemyQuestionRepository,

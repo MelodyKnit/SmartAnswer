@@ -5,9 +5,12 @@ import type {
   AnnouncementAudience,
   AnnouncementLevel,
   AnnouncementStatus,
+  EmailDomainWhitelist,
   ApiToken,
   Billing,
   DashboardSummary,
+  ProjectUpdateOperation,
+  ProjectUpdateStatus,
   Feedback,
   ImportScript,
   LlmCallStat,
@@ -92,7 +95,13 @@ export const userApi = {
 
 /* ---------------- 在线搜题 ---------------- */
 export const queryApi = {
-  search: (body: { title: string; options?: string[]; type?: string; image_urls?: string[] }) =>
+  search: (body: {
+    raw_text?: string
+    title?: string
+    options?: string[]
+    type?: string
+    image_urls?: string[]
+  }) =>
     api.post<QueryResultPayload>('/query', body),
 }
 
@@ -285,6 +294,24 @@ export const systemConfigApi = {
   get: () => api.get<{ ok: true; config: SystemConfig }>('/system-config'),
   update: (body: Record<string, string>) =>
     api.patch<{ ok: true; config: SystemConfig; reload_required: boolean }>('/system-config', body),
+  emailDomainWhitelist: () =>
+    api.get<{ ok: true } & EmailDomainWhitelist>('/system/email-domain-whitelist'),
+  updateEmailDomainWhitelist: (domains: string[]) =>
+    api.put<{ ok: true } & EmailDomainWhitelist>('/system/email-domain-whitelist', { domains }),
+}
+
+export const projectUpdateApi = {
+  status: () => api.get<{ ok: true; update: ProjectUpdateStatus }>('/project-update/status'),
+  check: () => api.post<{ ok: true; update: ProjectUpdateStatus }>('/project-update/check'),
+  apply: (expectedVersion: string) =>
+    api.post<{ ok: true; operation: ProjectUpdateOperation }>('/project-update/apply', {
+      expected_version: expectedVersion,
+    }),
+  clearToken: () => api.delete<{ ok: true; config: SystemConfig }>('/project-update/token'),
+  operation: (operationId: string) =>
+    api.get<{ ok: true; operation: ProjectUpdateOperation }>(
+      `/project-update/operations/${encodeURIComponent(operationId)}`,
+    ),
 }
 
 export const siteConfigApi = {

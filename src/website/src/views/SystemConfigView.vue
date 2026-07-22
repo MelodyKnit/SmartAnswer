@@ -3,11 +3,12 @@
  *  敏感项后端只返回 *_configured 标志，不回明文；留空表示不修改。 */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { ElMessage } from 'element-plus'
-import { billingApi, systemConfigApi } from '@/api/endpoints'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { billingApi, projectUpdateApi, systemConfigApi } from '@/api/endpoints'
 import { ApiException } from '@/api/http'
 import PageHeader from '@/components/PageHeader.vue'
 import SiteLogo from '@/components/SiteLogo.vue'
+import ProjectUpdatePanel from '@/components/system/ProjectUpdatePanel.vue'
 import { useSiteStore } from '@/stores/site'
 import { getToken } from '@/api/http'
 import type { InviteRewardMode } from '@/api/types'
@@ -53,6 +54,13 @@ const form = reactive({
   manual_grant_default_points: 100,
   redeem_code_default_points: 50,
   answer_retry_times: 3,
+  project_update_enabled: 'false',
+  project_update_auto_check_enabled: 'true',
+  project_update_check_interval_hours: 24,
+  project_update_repository: '',
+  project_update_workflow: 'deploy-release.yml',
+  project_update_github_token: '',
+  project_update_github_token_configured: false,
   registration_enabled: 'true',
   registration_email_mode: 'optional',
   smtp_host: '',
@@ -76,6 +84,13 @@ const billingForm = reactive({
   llm_fallback: 3,
 })
 
+const emailDomainWhitelist = ref<string[]>([])
+const savedEmailDomainWhitelist = ref<string[]>([])
+const emailDomainDraft = ref('')
+const savingEmailDomainWhitelist = ref(false)
+const projectUpdateConfigurationVersion = ref(0)
+const persistedProjectUpdateEnabled = ref('false')
+
 const previewLogoUrl = computed(() => {
   const value = form.site_logo_url.trim()
   if (!value) return ''
@@ -91,6 +106,14 @@ const inviteRewardPolicyHint = computed(() => {
   if (form.invite_reward_mode === 'invitee') return `邀请成功后，仅受邀用户获得 ${points} 积分。`
   return `邀请成功后，邀请人与受邀用户各获得 ${points} 积分。`
 })
+
+const isEmailDomainWhitelistActive = computed(
+  () => form.registration_email_mode === 'verified',
+)
+
+const emailDomainWhitelistChanged = computed(
+  () => JSON.stringify(emailDomainWhitelist.value) !== JSON.stringify(savedEmailDomainWhitelist.value),
+)
 
 /** 返回 SMTP 配置中首个未满足的启用条件。 */
 function smtpConfigurationIssue(): string | null {
@@ -125,11 +148,109 @@ function selectRegistrationEmailMode(value: 'optional' | 'required' | 'verified'
   ElMessage.warning(`请先完成 SMTP 配置后再开启邮箱验证：${issue}`)
 }
 
+/** 开启更新前先确保本次表单已具备 GitHub 私有仓库所需配置。 */
+function selectProjectUpdateEnabled(value: 'true' | 'false') {
+  if (value === 'false') {
+    form.project_update_enabled = value
+    return
+  }
+  if (!form.project_update_repository.trim()) {
+    ElMessage.warning('请先填写 GitHub 仓库')
+    return
+  }
+  if (!form.project_update_workflow.trim()) {
+    ElMessage.warning('请先填写部署工作流文件名')
+    return
+  }
+  if (!form.project_update_github_token.trim() && !form.project_update_github_token_configured) {
+    ElMessage.warning('请先填写 GitHub 访问令牌')
+    return
+  }
+  form.project_update_enabled = value
+}
+
+async function clearProjectUpdateToken() {
+  try {
+    await ElMessageBox.confirm(
+      '清除后无法继续检查私有仓库或调度部署工作流。请确认项目更新已关闭。',
+      '清除 GitHub 访问令牌',
+      { confirmButtonText: '清除', cancelButtonText: '取消', type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await projectUpdateApi.clearToken()
+    form.project_update_github_token = ''
+    form.project_update_github_token_configured = false
+    projectUpdateConfigurationVersion.value += 1
+    ElMessage.success('GitHub 访问令牌已清除')
+  } catch (err) {
+    ElMessage.error(err instanceof ApiException ? err.message : '清除 GitHub 访问令牌失败')
+  }
+}
+
+function addEmailDomain() {
+  const domain = emailDomainDraft.value.trim().toLowerCase()
+  if (!domain) return
+  if (
+    domain.includes('@') ||
+    domain.includes('://') ||
+    /[\\/\s]/.test(domain) ||
+    !domain.includes('.') ||
+    domain.startsWith('.') ||
+    domain.endsWith('.')
+  ) {
+    ElMessage.warning('请输入类似 example.edu.cn 的邮箱域名')
+    return
+  }
+  if (emailDomainWhitelist.value.includes(domain)) {
+    ElMessage.warning('该邮箱域名已在白名单中')
+    return
+  }
+  emailDomainWhitelist.value = [...emailDomainWhitelist.value, domain].sort()
+  emailDomainDraft.value = ''
+}
+
+function removeEmailDomain(domain: string) {
+  if (emailDomainWhitelist.value.length <= 1) {
+    ElMessage.warning('白名单至少需要保留一个邮箱域名')
+    return
+  }
+  emailDomainWhitelist.value = emailDomainWhitelist.value.filter((item) => item !== domain)
+}
+
+function resetEmailDomainWhitelist() {
+  emailDomainWhitelist.value = [...savedEmailDomainWhitelist.value]
+  emailDomainDraft.value = ''
+}
+
+async function saveEmailDomainWhitelist() {
+  if (!emailDomainWhitelist.value.length) {
+    ElMessage.warning('白名单至少需要保留一个邮箱域名')
+    return
+  }
+  savingEmailDomainWhitelist.value = true
+  try {
+    const result = await systemConfigApi.updateEmailDomainWhitelist(emailDomainWhitelist.value)
+    emailDomainWhitelist.value = [...result.domains]
+    savedEmailDomainWhitelist.value = [...result.domains]
+    ElMessage.success('邮箱白名单已保存并即时生效')
+  } catch (err) {
+    ElMessage.error(err instanceof ApiException ? err.message : '保存邮箱白名单失败')
+  } finally {
+    savingEmailDomainWhitelist.value = false
+  }
+}
+
 async function load() {
   loading.value = true
   try {
-    const res = await systemConfigApi.get()
-    const billing = await billingApi.get()
+    const [res, billing, whitelist] = await Promise.all([
+      systemConfigApi.get(),
+      billingApi.get(),
+      systemConfigApi.emailDomainWhitelist(),
+    ])
     // 大模型推理、联网搜索和 AI 学习缓存统一在“大模型配置”页维护。
     form.site_title = (res.config.site_title as string) || ''
     form.site_logo_url = (res.config.site_logo_url as string) || ''
@@ -141,6 +262,17 @@ async function load() {
     form.manual_grant_default_points = Number(res.config.manual_grant_default_points || 100)
     form.redeem_code_default_points = Number(res.config.redeem_code_default_points || 50)
     form.answer_retry_times = Number(res.config.answer_retry_times || 3)
+    form.project_update_enabled = (res.config.project_update_enabled as string) || 'false'
+    persistedProjectUpdateEnabled.value = form.project_update_enabled
+    form.project_update_auto_check_enabled =
+      (res.config.project_update_auto_check_enabled as string) || 'true'
+    form.project_update_check_interval_hours = Number(
+      res.config.project_update_check_interval_hours || 24,
+    )
+    form.project_update_repository = (res.config.project_update_repository as string) || ''
+    form.project_update_workflow = (res.config.project_update_workflow as string) || 'deploy-release.yml'
+    form.project_update_github_token = ''
+    form.project_update_github_token_configured = Boolean(res.config.project_update_github_token_configured)
     form.registration_enabled = (res.config.registration_enabled as string) || 'true'
     form.registration_email_mode = res.config.registration_email_mode || 'optional'
     form.smtp_host = (res.config.smtp_host as string) || ''
@@ -159,6 +291,12 @@ async function load() {
     billingForm.local_hit = Number(billing.billing.local_hit || 0)
     billingForm.web_search = Number(billing.billing.web_search || 0)
     billingForm.llm_fallback = Number(billing.billing.llm_fallback || 0)
+    emailDomainWhitelist.value = [...whitelist.domains]
+    savedEmailDomainWhitelist.value = [...whitelist.domains]
+    emailDomainDraft.value = ''
+    projectUpdateConfigurationVersion.value += 1
+  } catch (err) {
+    ElMessage.error(err instanceof ApiException ? err.message : '加载系统配置失败')
   } finally {
     loading.value = false
   }
@@ -187,6 +325,11 @@ async function save() {
       manual_grant_default_points: String(form.manual_grant_default_points),
       redeem_code_default_points: String(form.redeem_code_default_points),
       answer_retry_times: String(form.answer_retry_times),
+      project_update_enabled: form.project_update_enabled,
+      project_update_auto_check_enabled: form.project_update_auto_check_enabled,
+      project_update_check_interval_hours: String(form.project_update_check_interval_hours),
+      project_update_repository: form.project_update_repository,
+      project_update_workflow: form.project_update_workflow,
       registration_enabled: form.registration_enabled,
       registration_email_mode: form.registration_email_mode,
       smtp_host: form.smtp_host,
@@ -203,6 +346,9 @@ async function save() {
     }
     if (form.smtp_password.trim()) {
       body.smtp_password = form.smtp_password
+    }
+    if (form.project_update_github_token.trim()) {
+      body.project_update_github_token = form.project_update_github_token
     }
 
     const updated = await systemConfigApi.update(body)
@@ -337,6 +483,53 @@ onMounted(load)
               <el-radio-button value="verified">邮箱必填并验证</el-radio-button>
             </el-radio-group>
           </el-form-item>
+          <div class="rounded-lg border border-line bg-card-soft p-4 md:col-span-2">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p class="text-sm font-semibold text-ink">注册邮箱白名单</p>
+                <p class="mt-1 text-xs text-ink-muted">仅“邮箱必填并验证”模式下会限制可注册的邮箱域名。</p>
+              </div>
+              <el-tag :type="isEmailDomainWhitelistActive ? 'success' : 'info'" effect="plain">
+                {{ isEmailDomainWhitelistActive ? '当前生效' : '当前策略下暂不生效' }}
+              </el-tag>
+            </div>
+            <div class="mt-4 flex flex-wrap gap-2">
+              <el-tag
+                v-for="domain in emailDomainWhitelist"
+                :key="domain"
+                closable
+                effect="plain"
+                @close="removeEmailDomain(domain)"
+              >
+                {{ domain }}
+              </el-tag>
+            </div>
+            <div class="mt-4 flex flex-col gap-2 sm:flex-row">
+              <el-input
+                v-model="emailDomainDraft"
+                class="min-w-0 flex-1"
+                placeholder="例如 example.edu.cn"
+                @keyup.enter="addEmailDomain"
+              />
+              <el-button type="primary" class="sm:shrink-0" @click="addEmailDomain">添加域名</el-button>
+            </div>
+            <div class="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-3">
+              <span class="text-xs text-ink-muted">
+                {{ emailDomainWhitelistChanged ? '白名单有未保存修改' : `已允许 ${emailDomainWhitelist.length} 个邮箱域名` }}
+              </span>
+              <div class="flex items-center gap-2">
+                <el-button :disabled="!emailDomainWhitelistChanged" @click="resetEmailDomainWhitelist">还原</el-button>
+                <el-button
+                  type="primary"
+                  :loading="savingEmailDomainWhitelist"
+                  :disabled="!emailDomainWhitelistChanged"
+                  @click="saveEmailDomainWhitelist"
+                >
+                  保存白名单
+                </el-button>
+              </div>
+            </div>
+          </div>
           <el-form-item label="SMTP 服务器">
             <el-input v-model="form.smtp_host" placeholder="smtp.example.com" />
           </el-form-item>
@@ -415,6 +608,78 @@ onMounted(load)
         <p class="text-xs text-ink-muted">
           开启智能检测后，系统会自动根据客户端发送的 HTTP/HTTPS 头或穿透网关识别协议。
         </p>
+      </div>
+
+      <!-- 版本更新 -->
+      <div class="app-card p-6">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <h3 class="text-base font-semibold text-ink">项目更新</h3>
+          <el-switch
+            :model-value="form.project_update_enabled"
+            active-value="true"
+            inactive-value="false"
+            active-text="启用"
+            inactive-text="关闭"
+            @update:model-value="selectProjectUpdateEnabled"
+          />
+        </div>
+        <el-form label-position="top" class="mt-4 grid grid-cols-1 gap-x-6 md:grid-cols-2">
+          <el-form-item label="GitHub 仓库">
+            <el-input v-model="form.project_update_repository" placeholder="owner/repository" />
+          </el-form-item>
+          <el-form-item label="部署工作流">
+            <el-input v-model="form.project_update_workflow" placeholder="deploy-release.yml" />
+          </el-form-item>
+          <el-form-item label="自动检查更新">
+            <el-switch
+              v-model="form.project_update_auto_check_enabled"
+              active-value="true"
+              inactive-value="false"
+              active-text="开启"
+              inactive-text="关闭"
+            />
+          </el-form-item>
+          <el-form-item label="检查周期（小时）">
+            <el-input-number
+              v-model="form.project_update_check_interval_hours"
+              :min="1"
+              :max="168"
+              :disabled="form.project_update_auto_check_enabled !== 'true'"
+              class="w-full"
+            />
+          </el-form-item>
+          <el-form-item
+            class="md:col-span-2"
+            :label="form.project_update_github_token_configured ? 'GitHub 访问令牌（已配置）' : 'GitHub 访问令牌'"
+          >
+            <div class="flex w-full flex-col gap-2 sm:flex-row">
+              <div class="min-w-0 flex-1">
+                <el-input
+                  v-model="form.project_update_github_token"
+                  class="w-full"
+                  type="password"
+                  show-password
+                  placeholder="留空保持不变；私有仓库需授予 Contents 读取和 Actions 写入权限"
+                />
+              </div>
+              <el-button
+                v-if="form.project_update_github_token_configured"
+                class="sm:shrink-0"
+                :disabled="persistedProjectUpdateEnabled === 'true'"
+                @click="clearProjectUpdateToken"
+              >
+                清除令牌
+              </el-button>
+            </div>
+          </el-form-item>
+        </el-form>
+        <p class="text-xs text-ink-muted">
+          自动检查只发现版本，不会自动部署。更新会校验 GitHub Release manifest 后通过 GitHub Actions 部署不可变镜像；访问令牌仅保存在服务端，不会回显。
+        </p>
+        <p v-if="form.project_update_github_token_configured && persistedProjectUpdateEnabled === 'true'" class="mt-1 text-xs text-ink-muted">
+          如需清除访问令牌，请先关闭并保存项目更新配置。
+        </p>
+        <ProjectUpdatePanel :configuration-version="projectUpdateConfigurationVersion" />
       </div>
     </div>
   </div>

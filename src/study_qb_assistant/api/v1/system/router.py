@@ -7,16 +7,27 @@ from starlette.responses import JSONResponse
 
 from ....answering import AnswerService
 from ....auth import AuthError
+from ....auth.email_verification import EmailDomainWhitelist
 from ....config import get_global_config
 from ....media.brand_images import BrandLogoError, process_and_save_brand_logo
-from ...dependencies import get_lookup_service, get_settings_service
+from ....platform.updates import ProjectUpdateError
+from ...dependencies import (
+    get_lookup_service,
+    get_project_update_service,
+    get_settings_service,
+)
 from ...security import (
     auth_error_response,
+    current_user,
     require_permissions,
     require_roles,
 )
 from ...runtime_config import apply_system_config_to_process
-from .schemas import SystemConfigPayload
+from .schemas import (
+    EmailDomainWhitelistPayload,
+    ProjectUpdateApplyPayload,
+    SystemConfigPayload,
+)
 
 
 def build_system_router() -> APIRouter:
@@ -66,6 +77,123 @@ def build_system_router() -> APIRouter:
 
             refresh_answer_service(lookup)
         return JSONResponse({"ok": True, "config": config, "reload_required": False})
+
+    @router.get("/system/email-domain-whitelist")
+    def email_domain_whitelist_get(request: Request) -> JSONResponse:
+        """读取仅供系统管理员维护的注册邮箱域名白名单。"""
+
+        denied = require_roles(request, {"superadmin"})
+        if denied:
+            return denied
+        denied = require_permissions(request, {"system:write"})
+        if denied:
+            return denied
+        try:
+            domains = EmailDomainWhitelist().list_domains()
+        except AuthError as exc:
+            return auth_error_response(exc)
+        return JSONResponse({"ok": True, "domains": domains})
+
+    @router.put("/system/email-domain-whitelist")
+    def email_domain_whitelist_put(
+        request: Request, payload: EmailDomainWhitelistPayload
+    ) -> JSONResponse:
+        """原子替换注册邮箱域名白名单。"""
+
+        denied = require_roles(request, {"superadmin"})
+        if denied:
+            return denied
+        denied = require_permissions(request, {"system:write"})
+        if denied:
+            return denied
+        try:
+            domains = EmailDomainWhitelist().replace_domains(payload.domains)
+        except AuthError as exc:
+            return auth_error_response(exc)
+        return JSONResponse({"ok": True, "domains": domains})
+
+    @router.get("/project-update/status")
+    def project_update_status(request: Request) -> JSONResponse:
+        """读取当前构建和最近 GitHub Release 检查结果。"""
+
+        denied = require_roles(request, {"superadmin"})
+        if denied:
+            return denied
+        denied = require_permissions(request, {"system:write"})
+        if denied:
+            return denied
+        update_service = get_project_update_service(request)
+        return JSONResponse({"ok": True, "update": update_service.status()})
+
+    @router.post("/project-update/check")
+    def project_update_check(request: Request) -> JSONResponse:
+        """从 GitHub 即时检查一个经过 manifest 验证的 Release。"""
+
+        denied = require_roles(request, {"superadmin"})
+        if denied:
+            return denied
+        denied = require_permissions(request, {"system:write"})
+        if denied:
+            return denied
+        try:
+            update_service = get_project_update_service(request)
+            return JSONResponse({"ok": True, "update": update_service.check()})
+        except ProjectUpdateError as exc:
+            return project_update_error_response(exc)
+
+    @router.post("/project-update/apply")
+    def project_update_apply(
+        request: Request, payload: ProjectUpdateApplyPayload
+    ) -> JSONResponse:
+        """调度 GitHub Actions 部署管理员确认的版本。"""
+
+        denied = require_roles(request, {"superadmin"})
+        if denied:
+            return denied
+        denied = require_permissions(request, {"system:write"})
+        if denied:
+            return denied
+        user = current_user(request)
+        try:
+            operation = get_project_update_service(request).apply(
+                expected_version=payload.expected_version,
+                requested_by=str((user or {}).get("username") or "superadmin"),
+            )
+        except ProjectUpdateError as exc:
+            return project_update_error_response(exc)
+        return JSONResponse({"ok": True, "operation": operation.to_dict()}, status_code=202)
+
+    @router.delete("/project-update/token")
+    def project_update_token_delete(request: Request) -> JSONResponse:
+        """清除已保存的 GitHub 访问令牌。"""
+
+        denied = require_roles(request, {"superadmin"})
+        if denied:
+            return denied
+        denied = require_permissions(request, {"system:write"})
+        if denied:
+            return denied
+        try:
+            config = get_project_update_service(request).clear_access_token()
+        except ProjectUpdateError as exc:
+            return project_update_error_response(exc)
+        return JSONResponse({"ok": True, "config": config})
+
+    @router.get("/project-update/operations/{operation_id}")
+    def project_update_operation(request: Request, operation_id: str) -> JSONResponse:
+        """轮询 GitHub Actions 对应部署任务的最新状态。"""
+
+        denied = require_roles(request, {"superadmin"})
+        if denied:
+            return denied
+        denied = require_permissions(request, {"system:write"})
+        if denied:
+            return denied
+        try:
+            operation = get_project_update_service(request).operation(operation_id)
+        except ProjectUpdateError as exc:
+            return project_update_error_response(exc)
+        return JSONResponse({"ok": True, "operation": operation.to_dict()})
 
     @router.post("/system/logo/upload")
     async def upload_logo(
@@ -151,3 +279,12 @@ def build_system_router() -> APIRouter:
             )
 
     return router
+
+
+def project_update_error_response(exc: ProjectUpdateError) -> JSONResponse:
+    """把项目更新错误映射为统一的 API 响应。"""
+
+    return JSONResponse(
+        {"ok": False, "error": {"code": exc.code, "message": exc.message}},
+        status_code=exc.http_status,
+    )

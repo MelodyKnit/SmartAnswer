@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
+import re
 from typing import Any
 
 from study_qb_assistant.media.inputs import (
@@ -14,6 +16,32 @@ from study_qb_assistant.media.inputs import (
 )
 from .models import QuestionQuery
 from .validation import CHOICE_TYPES, has_placeholder_options
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedPastedQuestion:
+    """保存单输入框粘贴文本解析出的标准题目字段。"""
+
+    title: str
+    options: tuple[str, ...]
+    inferred_question_type: str
+
+
+class QueryInputError(ValueError):
+    """表示查题请求在进入答题链路前存在可提示给用户的输入冲突。"""
+
+
+OPTION_LINE_PATTERN = re.compile(
+    r"^\s*(?:[（(]\s*([A-Z])\s*[）)]|([A-Z])\s*[.．、:：)）])\s*\S.*$",
+    re.IGNORECASE,
+)
+
+QUESTION_TYPE_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("multiple", ("多选", "multiple-choice", "multiple choice", "multi-choice")),
+    ("single", ("单选", "single-choice", "single choice")),
+    ("judgement", ("判断", "true/false", "true false", "judgement", "judgment")),
+    ("completion", ("填空", "fill-in", "fill in", "completion")),
+)
 
 
 def build_query_from_mapping(params: dict[str, list[str]]) -> QuestionQuery:
@@ -54,9 +82,17 @@ def build_query_from_payload(payload: Mapping[str, Any] | Any) -> QuestionQuery:
         if model_dump is None or not callable(model_dump):
             raise TypeError("query payload must be a mapping or support model_dump()")
         payload = model_dump()
-    raw_options = payload.get("options") or ()
-    title = str(payload.get("title") or "")
-    question_type = str(payload.get("type") or payload.get("question_type") or "unknown")
+    raw_text = str(payload.get("raw_text") or "").strip()
+    if raw_text:
+        ensure_raw_text_is_standalone(payload)
+        parsed_question = parse_pasted_question_text(raw_text)
+        raw_options = parsed_question.options
+        title = parsed_question.title
+        question_type = resolve_raw_text_question_type(payload, parsed_question.inferred_question_type)
+    else:
+        raw_options = payload.get("options") or ()
+        title = str(payload.get("title") or "")
+        question_type = str(payload.get("type") or payload.get("question_type") or "unknown")
     image_urls = normalize_image_urls(payload.get("image_urls") or (), (title,))
     image_data_urls = normalize_image_data_urls(payload.get("image_data_urls") or ())
     normalized_title = strip_embedded_image_urls(
@@ -83,6 +119,108 @@ def build_query_from_payload(payload: Mapping[str, Any] | Any) -> QuestionQuery:
             payload.get("option_image_data_urls") or {}
         ),
     )
+
+
+def parse_pasted_question_text(raw_text: str) -> ParsedPastedQuestion:
+    """解析在线搜题单输入框中的题干与末尾选择题选项块。
+
+    只接受至少两条连续、标签严格递增的选项行，避免正文中偶然出现的
+    字母编号被错误拆成选项。无法确认的文本完整保留为题干，由后续模型
+    链路结合原文处理。
+    """
+
+    normalized_text = str(raw_text or "").strip()
+    lines = normalized_text.splitlines()
+    option_block = find_terminal_option_block(lines)
+    if option_block is None:
+        return ParsedPastedQuestion(
+            title=normalized_text,
+            options=(),
+            inferred_question_type=infer_question_type(normalized_text),
+        )
+
+    start, end = option_block
+    if not any(line.strip() for line in lines[:start]):
+        return ParsedPastedQuestion(
+            title=normalized_text,
+            options=(),
+            inferred_question_type=infer_question_type(normalized_text),
+        )
+    title = "\n".join(lines[:start]).strip()
+    options = tuple(line.strip() for line in lines[start:end])
+    return ParsedPastedQuestion(
+        title=title,
+        options=options,
+        inferred_question_type=infer_question_type(title),
+    )
+
+
+def ensure_raw_text_is_standalone(payload: Mapping[str, Any]) -> None:
+    """拒绝原始粘贴文本与结构化题目字段混用，避免请求语义不明确。"""
+
+    if str(payload.get("title") or "").strip() or has_nonempty_raw_options(payload.get("options")):
+        raise QueryInputError("raw_text 不能与 title 或 options 同时提交")
+
+
+def has_nonempty_raw_options(raw_options: object) -> bool:
+    """判断结构化选项字段是否携带非空值，不依赖后续选项清洗规则。"""
+
+    if isinstance(raw_options, str):
+        return bool(raw_options.strip())
+    if isinstance(raw_options, (list, tuple)):
+        return any(str(option or "").strip() for option in raw_options)
+    return bool(str(raw_options or "").strip())
+
+
+def resolve_raw_text_question_type(payload: Mapping[str, Any], inferred_type: str) -> str:
+    """让显式题型覆盖自动识别；unknown 保持自动识别语义。"""
+
+    explicit_type = str(payload.get("type") or payload.get("question_type") or "").strip()
+    if explicit_type and explicit_type.lower() != "unknown":
+        return explicit_type
+    return inferred_type
+
+
+def find_terminal_option_block(lines: list[str]) -> tuple[int, int] | None:
+    """定位末尾连续的标准选项行，返回左闭右开区间。"""
+
+    for start, line in enumerate(lines):
+        previous_label = option_label_from_line(line)
+        if previous_label is None:
+            continue
+
+        end = start + 1
+        while end < len(lines):
+            current_label = option_label_from_line(lines[end])
+            if current_label is None or ord(current_label) != ord(previous_label) + 1:
+                break
+            previous_label = current_label
+            end += 1
+
+        if end - start < 2:
+            continue
+        if all(not line.strip() for line in lines[end:]):
+            return start, end
+    return None
+
+
+def option_label_from_line(line: str) -> str | None:
+    """读取一行标准选项开头的字母标签。"""
+
+    match = OPTION_LINE_PATTERN.match(line)
+    if match is None:
+        return None
+    return (match.group(1) or match.group(2) or "").upper() or None
+
+
+def infer_question_type(title: str) -> str:
+    """仅从明确题型标记推断题型，不以选项数量猜测。"""
+
+    normalized_title = str(title or "").casefold()
+    for question_type, markers in QUESTION_TYPE_MARKERS:
+        if any(marker in normalized_title for marker in markers):
+            return question_type
+    return "unknown"
 
 
 def options_from_raw(raw_options: str | list[str] | tuple[str, ...] | Any) -> tuple[str, ...]:

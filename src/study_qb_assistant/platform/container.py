@@ -25,6 +25,7 @@ from .notifications import NotificationService
 from .permissions import PermissionService
 from .settings import SettingsService
 from .tokens import TokenService
+from .updates.service import ProjectUpdateService
 from .usage import UsageService
 from .wallet import WalletService
 
@@ -66,6 +67,7 @@ class PlatformServices:
         )
         self.permissions = PermissionService(permission_repository, lock)
         self.llm = LlmManagementService(llm_repository, lock)
+        self.updates = ProjectUpdateService(settings_repository, self.settings, lock)
         self.dashboard = DashboardService(
             usage=self.usage,
             notifications=self.notifications,

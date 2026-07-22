@@ -15,6 +15,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RELEASE_SCRIPT = PROJECT_ROOT / "deploy" / "remote-release.sh"
 RELEASE_WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "release.yml"
+UPDATE_WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "deploy-release.yml"
 with (PROJECT_ROOT / "pyproject.toml").open("rb") as project_file:
     OLD_VERSION = str(tomllib.load(project_file)["project"]["version"])
 major, minor, patch = (int(part) for part in OLD_VERSION.split("."))
@@ -127,6 +128,17 @@ class RemoteReleaseScriptTests(unittest.TestCase):
         self.assertIn('scp "${scp_args[@]}" docker-compose.yaml', workflow)
         self.assertNotIn('scp "${ssh_args[@]}"', workflow)
 
+    def test_existing_release_workflow_validates_manifest_before_remote_deploy(self) -> None:
+        """项目内更新只能调度已发布且经过 manifest 校验的不可变镜像。"""
+
+        workflow = UPDATE_WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("workflow_dispatch", workflow)
+        self.assertIn("release-manifest.json", workflow)
+        self.assertIn("Release manifest validation failed", workflow)
+        self.assertIn('scp_args=(-P "$DEPLOY_PORT"', workflow)
+        self.assertIn("remote-release.sh", workflow)
+
     def test_first_release_failure_restores_original_files(self) -> None:
         """首次发布无法启动时不应在服务器留下候选发布配置。"""
 
@@ -164,6 +176,7 @@ class RemoteReleaseScriptTests(unittest.TestCase):
             NEW_VERSION,
             NEW_SHA,
             "http://127.0.0.1:3003",
+            "MelodyKnit",
         ]
         process = subprocess.Popen(
             command,

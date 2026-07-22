@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import Depends, FastAPI
 
 from .. import __version__
@@ -31,6 +33,7 @@ def create_app(
     platform_services: PlatformServices | None = None,
     ocs_integration: OcsIntegrationPort | None = None,
     require_auth: bool | None = None,
+    lifespan: Any = None,
 ) -> FastAPI:
     """构建本地 FastAPI 应用。"""
     configured_database = get_global_config().database_locator
@@ -72,6 +75,7 @@ def create_app(
         docs_url="/api/docs",
         openapi_url="/api/v1/openapi.json",
         redoc_url=None,
+        lifespan=lifespan,
     )
     app.state.lookup = lookup
     app.state.auth = auth

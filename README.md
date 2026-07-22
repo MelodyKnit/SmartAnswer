@@ -141,9 +141,16 @@ The Docker image builds the frontend and backend together. Runtime data is writt
 required and are not copied into the image.
 Tagged releases publish a private GHCR image and `release-manifest.json`. When the GitHub
 deployment variables and secrets are configured, the same tag workflow updates the existing
-Docker deployment over SSH. No updater service, Docker socket, or GitHub credential is added
-to the application container; see [docs/deployment.md](docs/deployment.md) for the one-time
-GitHub repository setup.
+Docker deployment over SSH. The **系统配置 > 项目更新** panel can check an existing GitHub
+Release and dispatch its verified deployment workflow; the application never receives Docker
+or SSH permissions. The release pipeline is the passive path: a protected `vX.Y.Z` tag can
+deploy its own verified image when `DEPLOY_ENABLED=true`. The application control plane is the
+active path: its optional periodic check only discovers releases, and an administrator must
+confirm any deployment started from the panel. A GitHub Webhook is intentionally unnecessary:
+the repository workflow already owns the trusted server deployment channel. For private
+repositories, configure a least-privilege GitHub access token there and protect the server
+runtime data directory. See [docs/deployment.md](docs/deployment.md) for the one-time GitHub
+repository setup.
 For production vision-question support, set `STQB_PUBLIC_BASE_URL` to the public HTTPS
 origin of the service. OCS question images are stored under `deploy-data/images/ocs/`
 and exposed as `/api/v1/media/ocs/images/<sha256>.<ext>` for vision models.

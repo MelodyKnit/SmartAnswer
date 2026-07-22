@@ -23,7 +23,8 @@ if str(SRC_ROOT) not in sys.path:
 from study_qb_assistant.answering import AnswerService  # noqa: E402
 from study_qb_assistant import __version__  # noqa: E402
 from study_qb_assistant.api.app import create_app  # noqa: E402
-from study_qb_assistant.auth import AuthService  # noqa: E402
+from study_qb_assistant.auth import AuthError, AuthService  # noqa: E402
+from study_qb_assistant.auth.email_verification import EmailDomainWhitelist  # noqa: E402
 from study_qb_assistant.logger import log_path  # noqa: E402
 from study_qb_assistant.questions.models import (  # noqa: E402
     CanonicalQuestionRecord,
@@ -391,14 +392,16 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertGreaterEqual(read_all.json()["count"], 1)
         self.assertEqual(after_read_all.json()["items"], [])
 
-    def test_legacy_project_update_routes_are_not_exposed(self) -> None:
-        """部署动作改由 GitHub Actions 执行，应用不再提供更新命令接口。"""
+    def test_project_update_routes_are_versioned_and_admin_only(self) -> None:
+        """项目更新控制面必须走 v1 API，且始终要求管理员会话。"""
 
         client = TestClient(create_app(_sample_index(), require_auth=False))
 
         self.assertEqual(client.get("/version").status_code, 200)
-        self.assertEqual(client.get("/project-update/status").status_code, 404)
-        self.assertEqual(client.post("/project-update/check").status_code, 405)
+        self.assertEqual(client.get("/api/v1/project-update/status").status_code, 401)
+        legacy = client.get("/project-update/status")
+        self.assertEqual(legacy.status_code, 401)
+        self.assertEqual(legacy.headers["Deprecation"], "true")
 
     def test_query_and_ocs_routes_keep_existing_wire_shape(self) -> None:
         import os
@@ -422,6 +425,20 @@ class FastAPILocalServerTests(unittest.TestCase):
                     "type": "single",
                     "request_id": "route-test",
                 },
+                headers=key_headers,
+            )
+            raw_text_query = client.post(
+                "/api/v1/query",
+                json={
+                    "raw_text": "示例题\nA. 正确项\nB. 干扰项",
+                    "type": "single",
+                    "request_id": "raw-text-test",
+                },
+                headers=key_headers,
+            )
+            ambiguous_query = client.post(
+                "/api/v1/query",
+                json={"raw_text": "示例题", "title": "重复题干"},
                 headers=key_headers,
             )
             ocs_get = client.get(
@@ -450,6 +467,12 @@ class FastAPILocalServerTests(unittest.TestCase):
         )
         self.assertEqual(query_get.json()["result"]["candidate_answer"], "A")
         self.assertEqual(query_post.json()["request_id"], "route-test")
+        self.assertEqual(raw_text_query.json()["request_id"], "raw-text-test")
+        self.assertEqual(raw_text_query.json()["query"]["title"], "示例题")
+        self.assertEqual(raw_text_query.json()["query"]["options"], ["A. 正确项", "B. 干扰项"])
+        self.assertEqual(raw_text_query.json()["result"]["candidate_answer"], "A")
+        self.assertEqual(ambiguous_query.status_code, 400)
+        self.assertEqual(ambiguous_query.json()["error"]["code"], "INVALID_INPUT")
         self.assertEqual(ocs_get.json()["code"], 0)
         self.assertEqual(ocs_get.json()["data"]["answer"], "A")
         self.assertEqual(config.json()[0]["data"]["title"], "${title}")
@@ -3707,6 +3730,154 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertTrue(patch.json()["ok"])
         self.assertEqual(patch.json()["config"]["answer_retry_times"], "3")
         self.assertEqual(lookup.answer_retry_times, 3)
+
+    def test_email_domain_whitelist_normalizes_and_rejects_invalid_entries(self) -> None:
+        """运行时白名单应稳定归一化，并阻止空或非域名数据写入。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "configs" / "email-domain-whitelist.json"
+            whitelist = EmailDomainWhitelist(path)
+
+            saved = whitelist.replace_domains(
+                [
+                    " QQ.COM ",
+                    "campus.example.edu",
+                    "qq.com",
+                    "Example.EDU.CN",
+                    "例子.公司",
+                ]
+            )
+            payload = json.loads(path.read_text(encoding="utf-8"))
+
+            self.assertEqual(
+                saved,
+                [
+                    "campus.example.edu",
+                    "example.edu.cn",
+                    "qq.com",
+                    "xn--fsqu00a.xn--55qx5d",
+                ],
+            )
+            self.assertEqual(payload["domains"], saved)
+            self.assertEqual(whitelist.list_domains(), saved)
+            whitelist.assert_allowed("learner@例子.公司")
+            self.assertFalse(list(path.parent.glob("*.tmp")))
+
+            with self.assertRaises(AuthError) as empty_error:
+                whitelist.replace_domains([])
+            with self.assertRaises(AuthError) as email_error:
+                whitelist.replace_domains(["owner@example.edu.cn"])
+            with self.assertRaises(AuthError) as url_error:
+                whitelist.replace_domains(["https://example.edu.cn"])
+
+        self.assertEqual(empty_error.exception.code, "INVALID_INPUT")
+        self.assertEqual(email_error.exception.code, "INVALID_INPUT")
+        self.assertEqual(url_error.exception.code, "INVALID_INPUT")
+
+    def test_email_domain_whitelist_api_updates_verified_registration_without_restart(self) -> None:
+        """白名单接口应受权限保护，并立即影响验证码注册流程。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            whitelist_path = Path(directory) / "configs" / "email-domain-whitelist.json"
+            with mock.patch.dict(
+                "os.environ",
+                {"STQB_EMAIL_DOMAIN_WHITELIST_PATH": str(whitelist_path)},
+                clear=False,
+            ):
+                auth = AuthService(database_path)
+                platform = PlatformServices(database_path)
+                client = TestClient(
+                    create_app(
+                        _sample_index(),
+                        auth_service=auth,
+                        platform_services=platform,
+                        require_auth=True,
+                    )
+                )
+                client.post(
+                    "/api/v1/auth/register",
+                    json={"username": "owner", "password": "password123"},
+                )
+                owner_login = client.post(
+                    "/api/v1/auth/login",
+                    json={"username": "owner", "password": "password123"},
+                )
+                owner_headers = {"Authorization": f"Bearer {owner_login.json()['token']}"}
+                client.post(
+                    "/api/v1/auth/register",
+                    json={"username": "member", "password": "password123"},
+                )
+                member_login = client.post(
+                    "/api/v1/auth/login",
+                    json={"username": "member", "password": "password123"},
+                )
+                member_headers = {"Authorization": f"Bearer {member_login.json()['token']}"}
+                client.cookies.clear()
+
+                unauthenticated = client.get("/api/v1/system/email-domain-whitelist")
+                forbidden = client.get(
+                    "/api/v1/system/email-domain-whitelist", headers=member_headers
+                )
+                initial = client.get(
+                    "/api/v1/system/email-domain-whitelist", headers=owner_headers
+                )
+                replaced = client.put(
+                    "/api/v1/system/email-domain-whitelist",
+                    json={"domains": ["Campus.Example.edu", "campus.example.edu"]},
+                    headers=owner_headers,
+                )
+                rejected = client.put(
+                    "/api/v1/system/email-domain-whitelist",
+                    json={"domains": []},
+                    headers=owner_headers,
+                )
+                configured = client.patch(
+                    "/api/v1/system-config",
+                    json={
+                        "registration_email_mode": "verified",
+                        "smtp_host": "smtp.example.com",
+                        "smtp_port": "465",
+                        "smtp_security": "ssl",
+                        "smtp_username": "noreply@example.com",
+                        "smtp_password": "secret-password",
+                        "smtp_from_email": "noreply@example.com",
+                    },
+                    headers=owner_headers,
+                )
+                sender = FakeEmailSender()
+                client.app.state.email_sender = sender
+                blocked = client.post(
+                    "/api/v1/auth/email-verification-codes",
+                    json={"email": "blocked@qq.com", "purpose": "register"},
+                )
+                sent = client.post(
+                    "/api/v1/auth/email-verification-codes",
+                    json={"email": "learner@campus.example.edu", "purpose": "register"},
+                )
+                registered = client.post(
+                    "/api/v1/auth/register",
+                    json={
+                        "username": "learner",
+                        "password": "password123",
+                        "email": "learner@campus.example.edu",
+                        "email_code": str(sender.sent[-1]["code"]),
+                    },
+                )
+
+        self.assertEqual(unauthenticated.status_code, 401)
+        self.assertEqual(forbidden.status_code, 403)
+        self.assertEqual(initial.status_code, 200)
+        self.assertTrue(initial.json()["domains"])
+        self.assertEqual(replaced.status_code, 200)
+        self.assertEqual(replaced.json()["domains"], ["campus.example.edu"])
+        self.assertEqual(rejected.status_code, 400)
+        self.assertEqual(rejected.json()["error"]["code"], "INVALID_INPUT")
+        self.assertEqual(configured.status_code, 200)
+        self.assertEqual(blocked.status_code, 400)
+        self.assertEqual(blocked.json()["error"]["code"], "EMAIL_DOMAIN_NOT_ALLOWED")
+        self.assertEqual(sent.status_code, 200)
+        self.assertEqual(registered.status_code, 200)
 
 
 def _sample_index() -> LocalQuestionIndex:

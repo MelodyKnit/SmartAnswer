@@ -1,6 +1,6 @@
 # API 契约
 
-更新时间：`2026-07-07`
+更新时间：`2026-07-19`
 
 ## 1. 目的
 
@@ -213,7 +213,7 @@
 说明：
 
 - 邮箱验证默认关闭，关闭时 `email` 与 `email_code` 仍按旧逻辑可选。
-- 开启邮箱验证后，`email` 与 `email_code` 必填；邮箱域名必须命中 `configs/email-domain-whitelist.json`。
+- 开启邮箱验证后，`email` 与 `email_code` 必填；邮箱域名必须命中运行时白名单。
 - 验证码只用于注册用途，成功注册后立即消费，不能重复使用。
 
 响应：
@@ -526,10 +526,16 @@
   - `redeem_code_default_points`
   - `smart_proto_enabled`
   - `custom_proto_header`
-   - `answer_retry_times`
-   - `registration_enabled`
-   - `registration_email_mode`：`optional`、`required` 或 `verified`
-   - `email_verification_enabled`
+  - `answer_retry_times`
+  - `project_update_enabled`
+  - `project_update_auto_check_enabled`
+  - `project_update_check_interval_hours`：`1` 到 `168` 小时
+  - `project_update_repository`
+  - `project_update_workflow`
+  - `project_update_github_token`：写入后不回显
+  - `registration_enabled`
+  - `registration_email_mode`：`optional`、`required` 或 `verified`
+  - `email_verification_enabled`
   - `smtp_host`
   - `smtp_port`
   - `smtp_security`
@@ -548,8 +554,69 @@
 - `smtp_password` 是敏感配置，`GET /system-config` 不返回明文，只返回 `smtp_password_configured`。
 - `PATCH /system-config` 中 `smtp_password=""` 表示保持原密码不变。
 - 选择 `registration_email_mode=verified` 时必须先完整配置 SMTP 主机、端口、加密方式、用户名、密码和发件邮箱；`required` 不依赖 SMTP。
-- 邮箱域名白名单存储在 `configs/email-domain-whitelist.json`，按文件修改时间轻量缓存，修改后无需重启。
-- Docker 部署会把宿主机 `configs` 目录只读挂载到容器 `/app/configs`，因此生产环境应在宿主机仓库目录维护白名单文件。
+- 邮箱域名白名单存储在 `data/configs/email-domain-whitelist.json`，按文件修改时间轻量缓存，修改后无需重启。
+- Docker 部署中该路径对应宿主机的 `deploy-data/configs/email-domain-whitelist.json`，应通过系统配置页维护，不会在镜像更新时被覆盖。
+- `project_update_enabled=true` 前必须填写 GitHub 仓库、部署工作流和 GitHub 访问令牌；令牌只返回 `project_update_github_token_configured` 标记。
+- `project_update_auto_check_enabled=true` 时，运行时巡检仅按配置周期读取并校验最新 Release；它不会自动部署。
+
+### `GET /system/email-domain-whitelist`
+
+读取注册邮箱域名白名单。需要 `superadmin` 角色和 `system:write` 权限，白名单不会暴露给公开注册接口。
+
+响应：
+
+```json
+{
+  "ok": true,
+  "domains": ["example.edu.cn", "qq.com"]
+}
+```
+
+### `PUT /system/email-domain-whitelist`
+
+原子替换注册邮箱域名白名单。需要 `superadmin` 角色和 `system:write` 权限；域名会统一小写、去重并排序。白名单不能为空，不能传入完整邮箱、URL 或非法域名。
+
+请求：
+
+```json
+{
+  "domains": ["example.edu.cn", "qq.com"]
+}
+```
+
+保存完成后仅在 `registration_email_mode=verified` 时影响验证码发送与注册校验，无需重启服务。
+
+### `GET /project-update/status`
+
+读取当前构建、最近一次 GitHub Release 检查缓存和最后一个部署任务状态。仅
+`superadmin + system:write` 可用，不会主动访问 GitHub 或返回访问令牌。
+
+### `POST /project-update/check`
+
+立即读取最新正式 GitHub Release，并验证 `release-manifest.json` 的仓库、标签、版本、
+提交号、镜像名称和 digest。校验通过后返回 `latest_version` 与 `has_update`。
+
+### `POST /project-update/apply`
+
+仅接受管理员确认后的版本：
+
+```json
+{ "expected_version": "0.1.33" }
+```
+
+服务端会再次检查 Release；只有版本仍是最新且高于当前发布构建时，才会调度配置的
+GitHub Actions 工作流。响应为 `202` 和可轮询的更新任务。
+
+### `GET /project-update/operations/{operation_id}`
+
+轮询 GitHub Actions 对应任务。状态包括 `queued`、`running`、`succeeded` 和 `failed`。
+部署脚本的远端健康检查和自动回滚仍由 GitHub Actions 调用的 `remote-release.sh` 负责。
+若 GitHub 在 10 分钟内未创建对应工作流，任务会标记为失败，管理员可重新检查并发起更新。
+
+### `DELETE /project-update/token`
+
+清除已保存的 GitHub 访问令牌。仅 `superadmin + system:write` 可用；项目更新必须先关闭，且不能存在
+`queued` 或 `running` 的部署任务。成功后仅返回脱敏后的系统配置。
 
 大模型推理、联网搜索和 LLM 学习缓存配置统一通过 `/llm-runtime-config` 维护，系统配置页不再展示这些字段。
 
@@ -963,6 +1030,10 @@
 - `POST /query`
 - `GET /ocs/query?title=...&options=...&type=...`
 - `POST /ocs/query`
+
+`POST /api/v1/query` 支持可选 `raw_text` 字段，用于在线搜题的单输入框粘贴内容。该字段与
+`title`、`options` 互斥；服务端只对末尾至少两行连续的标准选项标签进行拆分，无法可靠
+识别时保留完整原文。未显式指定 `type` 时，仅识别明确题型标记，不会按选项数量推断单选或多选。
 
 ## 7. 版本 1 验证规则
 

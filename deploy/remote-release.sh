@@ -11,6 +11,7 @@ image_ref="${2:-}"
 version="${3:-}"
 build_sha="${4:-}"
 health_base_url="${5:-}"
+ghcr_username="${6:-}"
 compose_file=""
 candidate_compose_file=""
 
@@ -21,10 +22,11 @@ fail() {
 
 validate_arguments() {
   [[ "$project_dir" =~ ^/[A-Za-z0-9._/-]+$ ]] || fail "invalid project directory"
-  [[ "$image_ref" =~ ^ghcr\.io/melodyknit/smartanswer@sha256:[a-f0-9]{64}$ ]] || fail "invalid image reference"
+  [[ "$image_ref" =~ ^ghcr\.io/[a-z0-9_.-]+/[a-z0-9_.-]+@sha256:[a-f0-9]{64}$ ]] || fail "invalid image reference"
   [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "invalid release version"
   [[ "$build_sha" =~ ^[a-f0-9]{40}$ ]] || fail "invalid build revision"
   [[ "$health_base_url" =~ ^https?://127\.0\.0\.1:[1-9][0-9]{0,4}$ ]] || fail "invalid health URL"
+  [[ "$ghcr_username" =~ ^[A-Za-z0-9_.-]+$ ]] || fail "invalid GHCR username"
   compose_file="$project_dir/docker-compose.yaml"
   candidate_compose_file="$project_dir/deploy/docker-compose.release.yaml"
   [[ -f "$compose_file" ]] || fail "docker-compose.yaml is missing"
@@ -145,7 +147,7 @@ if [[ -f "$release_env" ]]; then
 fi
 cp "$compose_file" "$previous_compose"
 
-printf '%s' "$ghcr_read_token" | docker --config "$docker_config" login ghcr.io -u MelodyKnit --password-stdin >/dev/null
+printf '%s' "$ghcr_read_token" | docker --config "$docker_config" login ghcr.io -u "$ghcr_username" --password-stdin >/dev/null
 docker --config "$docker_config" pull "$image_ref"
 docker --config "$docker_config" logout ghcr.io >/dev/null 2>&1 || true
 unset ghcr_read_token

@@ -8,6 +8,7 @@ class QueryPayload(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
+    raw_text: str = ""
     title: str = ""
     options: str | list[str] | tuple[str, ...] = ()
     type: str | None = None

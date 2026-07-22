@@ -9,6 +9,7 @@ from ...auth import AuthError
 from ...auth.email_verification import normalize_email, smtp_settings_from_config
 from ...llm.config import service as llm_config_service
 from ..base import PlatformDomainService
+from ..updates.contracts import normalize_github_repository, normalize_workflow_file
 from ..config import (
     LLM_RUNTIME_CONFIG_KEYS,
     LLM_RUNTIME_ENV_MAP,
@@ -310,6 +311,38 @@ class SettingsService(PlatformDomainService):
                         "注册邮箱策略必须为 optional、required 或 verified",
                         http_status=400,
                     )
+            elif key == "project_update_check_interval_hours":
+                try:
+                    parsed_interval = int(text or SYSTEM_CONFIG_DEFAULTS[key])
+                except ValueError as exc:
+                    raise AuthError(
+                        "INVALID_INPUT", "自动检查周期必须为有效整数", http_status=400
+                    ) from exc
+                if parsed_interval < 1 or parsed_interval > 168:
+                    raise AuthError(
+                        "INVALID_INPUT", "自动检查周期必须在 1 到 168 小时之间", http_status=400
+                    )
+                text = str(parsed_interval)
+            elif key == "project_update_repository":
+                if text:
+                    try:
+                        text = normalize_github_repository(text)
+                    except ValueError as exc:
+                        raise AuthError("INVALID_INPUT", str(exc), http_status=400) from exc
+            elif key == "project_update_workflow":
+                try:
+                    text = normalize_workflow_file(
+                        text or SYSTEM_CONFIG_DEFAULTS["project_update_workflow"]
+                    )
+                except ValueError as exc:
+                    raise AuthError("INVALID_INPUT", str(exc), http_status=400) from exc
+            elif key == "project_update_github_token" and text:
+                if any(character in text for character in "\r\n") or len(text) > 500:
+                    raise AuthError(
+                        "INVALID_INPUT",
+                        "GitHub 访问令牌格式不正确",
+                        http_status=400,
+                    )
             elif key == "invite_reward_mode":
                 text = text.lower() or SYSTEM_CONFIG_DEFAULTS["invite_reward_mode"]
                 if text not in INVITE_REWARD_MODES:
@@ -362,7 +395,29 @@ class SettingsService(PlatformDomainService):
                     raise AuthError("INVALID_INPUT", "启用的邮箱验证码注册前，请先输入 SMTP 密码", http_status=400)
 
                 smtp_settings_from_config(candidate)
+            project_update_enabled = str(
+                candidate.get("project_update_enabled") or ""
+            ).lower() not in {"", "0", "false", "no", "off", "disabled"}
+            if project_update_enabled:
+                repository = str(candidate.get("project_update_repository") or "").strip()
+                workflow = str(candidate.get("project_update_workflow") or "").strip()
+                github_token = str(candidate.get("project_update_github_token") or "").strip()
+                if not repository or not workflow or not github_token:
+                    raise AuthError(
+                        "INVALID_INPUT",
+                        "启用项目更新前，请先填写 GitHub 仓库、访问令牌和部署工作流",
+                        http_status=400,
+                    )
             self.repository.set_settings("system_config", normalized)
+        return self.get_system_config()
+
+    def clear_system_secret(self, key: str) -> dict:
+        """清除一个可写入但不会回显的系统敏感配置。"""
+
+        if key not in SYSTEM_CONFIG_SECRET_KEYS:
+            raise AuthError("INVALID_INPUT", f"不是可清除的敏感配置: {key}", http_status=400)
+        with self.lock:
+            self.repository.set_settings("system_config", {key: ""})
         return self.get_system_config()
 
     def runtime_env(self) -> dict[str, str]:

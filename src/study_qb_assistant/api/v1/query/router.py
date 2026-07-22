@@ -20,6 +20,7 @@ from ...security import (
     require_roles,
 )
 from study_qb_assistant.questions.parsing import (
+    QueryInputError,
     build_query_from_payload,
     sanitize_query_options,
     split_options,
@@ -162,6 +163,19 @@ def build_query_router() -> APIRouter:
         denied = guard_protected_request(request)
         if denied:
             return denied
+        try:
+            query = build_query_from_payload(payload)
+        except QueryInputError as exc:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": {
+                        "code": "INVALID_INPUT",
+                        "message": str(exc),
+                    },
+                },
+                status_code=400,
+            )
         return run_lookup(
             get_lookup_service(request),
             get_usage_service(request),
@@ -171,7 +185,7 @@ def build_query_router() -> APIRouter:
             request,
             "/query",
             "POST",
-            build_query_from_payload(payload),
+            query,
         )
 
     return router

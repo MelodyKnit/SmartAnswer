@@ -222,7 +222,7 @@ const debugEntries = computed(() => Object.entries(props.result?.debug ?? {}))
           </div>
           <h4 class="mt-4 text-lg font-semibold text-ink">等待输入题目</h4>
           <p class="mt-2 text-sm leading-6 text-ink-soft">
-            在左侧粘贴题干和选项后开始搜题，答案、来源和置信度会在这里集中展示。
+            在左侧粘贴题干，选项可一并粘贴；答案、来源和置信度会在这里集中展示。
           </p>
         </div>
       </div>
