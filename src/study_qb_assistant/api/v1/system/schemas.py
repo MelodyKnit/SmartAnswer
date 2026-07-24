@@ -15,6 +15,10 @@ class SystemConfigPayload(BaseModel):
     manual_grant_default_points: str | None = None
     redeem_code_default_points: str | None = None
     answer_retry_times: str | None = None
+    image_generation_points: str | None = None
+    image_generation_max_active_jobs: str | None = None
+    image_generation_daily_limit: str | None = None
+    image_generation_retention_days: str | None = None
     project_update_enabled: str | None = None
     project_update_auto_check_enabled: str | None = None
     project_update_check_interval_hours: str | None = None

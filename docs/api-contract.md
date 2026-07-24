@@ -1,6 +1,6 @@
 # API Contract
 
-Updated: `2026-06-07`
+Updated: `2026-07-24`
 
 ## 1. Purpose
 
@@ -216,4 +216,56 @@ Current behavior:
 - optional OpenAI-compatible model fallback
 - provenance required for successful responses
 - no external model provider required by default
+
+## 10. Image Generation
+
+文本生图是独立于查题与 OCS 图片资源的私有功能。它使用兼容 OpenAI Images 的
+`/images/generations` 协议，并且不会复用题目 `usage_logs` 或 OCS 公共图床。
+
+### User endpoints
+
+- `GET /api/v1/image-generation-capabilities`
+- `POST /api/v1/image-generations`
+- `GET /api/v1/image-generations`
+- `GET /api/v1/image-generations/{job_id}`
+- `GET /api/v1/image-generations/{job_id}/assets/{asset_id}/content`
+- `DELETE /api/v1/image-generations/{job_id}`
+
+创建请求示例：
+
+```json
+{
+  "prompt": "雨后城市街道，水彩插画风格，暖色灯光",
+  "size": "1024x1024",
+  "idempotency_key": "optional-client-key"
+}
+```
+
+`Idempotency-Key` 请求头优先于请求体字段。创建成功时返回 `202`；相同用户和幂等键
+重复提交时返回原任务和 `idempotent_replay: true`，不会重复预扣积分。
+
+任务状态为 `queued`、`running`、`succeeded`、`failed`、`rejected`、`cancelled` 或
+`deleted`。提交时预扣单张积分，成功保存至少一个合格资产后确认扣费；模型拒绝、超时、
+下载或图片校验失败时自动退款。系统不会对已经提交给供应商的任务自动重试或切换模型，
+用户需要显式创建新的任务。
+
+资产内容接口必须携带登录 JWT。所有者和管理员可以读取，其他用户返回 `403`；响应携带
+`Cache-Control: private, no-store`，不提供第三方图片 URL 或公开直链。
+
+### Management endpoints
+
+- `GET|POST /api/v1/image-generation-models`
+- `PATCH|DELETE /api/v1/image-generation-models/{model_id}`
+- `POST /api/v1/image-generation-models/{model_id}/test`
+- `GET /api/v1/image-generation-stats`
+- `GET /api/v1/image-generation-traces`
+
+模型配置支持 `openai-images`（`/images/generations`）和 `openai-chat-image`（`/chat/completions` 返回图片）
+两种提供商。`api_key` 只接受写入，任何读取接口只返回
+`api_key_configured`；调用追溯不保存提示词、图片字节、Base64 或供应商密钥。首版同一时间
+仅有一个可用于新任务的启用模型，启用新模型会停用之前的模型，避免请求被隐式分流。
+
+系统配置的 `image_generation_points`、`image_generation_max_active_jobs`、
+`image_generation_daily_limit` 和 `image_generation_retention_days` 控制计费、限流和保留期。
+保留期为 `0` 表示永久保留；其他值按天计算，过期资产会撤销访问并清理本地文件。
 

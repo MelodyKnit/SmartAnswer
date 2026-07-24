@@ -55,6 +55,16 @@ class SettingsService(PlatformDomainService):
             stored = self.repository.get_settings("billing", keys=set(defaults.keys()))
             return {key: max(0, int(stored.get(key, default))) for key, default in defaults.items()}
 
+    def get_image_generation_policy(self) -> dict[str, int]:
+        """返回文本生图的积分、限流与资产保留策略。"""
+
+        return {
+            "points": self.system_points_value("image_generation_points"),
+            "max_active_jobs": max(1, self.system_points_value("image_generation_max_active_jobs")),
+            "daily_limit": self.system_points_value("image_generation_daily_limit"),
+            "retention_days": self.system_points_value("image_generation_retention_days"),
+        }
+
     def set_billing(self, values: dict[str, int]) -> dict:
         """更新积分计费配置。"""
         current = self.get_billing()
@@ -355,7 +365,12 @@ class SettingsService(PlatformDomainService):
                 text = (
                     "false" if text.lower() in {"0", "false", "no", "off", "disabled"} else "true"
                 )
-            elif key.endswith("_points") or key == "answer_retry_times":
+            elif key.endswith("_points") or key in {
+                "answer_retry_times",
+                "image_generation_max_active_jobs",
+                "image_generation_daily_limit",
+                "image_generation_retention_days",
+            }:
                 try:
                     parsed = max(0, int(text or "0"))
                 except ValueError as exc:
@@ -364,6 +379,20 @@ class SettingsService(PlatformDomainService):
                     ) from exc
                 if key == "answer_retry_times":
                     parsed = min(parsed, 10)
+                elif key == "image_generation_max_active_jobs":
+                    if parsed < 1 or parsed > 10:
+                        raise AuthError(
+                            "INVALID_INPUT", "单用户活动生图任务数必须在 1 到 10 之间", http_status=400
+                        )
+                elif key == "image_generation_daily_limit":
+                    if parsed > 1000:
+                        raise AuthError(
+                            "INVALID_INPUT", "每日生图上限不能超过 1000", http_status=400
+                        )
+                elif key == "image_generation_retention_days" and parsed > 3650:
+                    raise AuthError(
+                        "INVALID_INPUT", "生图保留天数不能超过 3650", http_status=400
+                    )
                 text = str(parsed)
             normalized[key] = text
         with self.lock:

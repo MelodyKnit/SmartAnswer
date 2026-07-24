@@ -15,6 +15,7 @@ from ..platform.announcements import AnnouncementService
 from ..platform.dashboard import DashboardService
 from ..platform.feedback import FeedbackService
 from ..platform.import_scripts import ImportScriptService
+from ..platform.image_generation.service import ImageGenerationService
 from ..platform.notifications import NotificationService
 from ..platform.permissions import PermissionService
 from ..platform.settings import SettingsService
@@ -91,6 +92,12 @@ def get_llm_management_service(request: Request) -> LlmManagementService:
     return get_platform_services(request).llm
 
 
+def get_image_generation_service(request: Request) -> ImageGenerationService:
+    """返回当前应用的生图任务领域服务。"""
+
+    return get_platform_services(request).image_generation
+
+
 def get_project_update_service(request: Request) -> ProjectUpdateService:
     """返回当前应用的项目更新控制面服务。"""
 
@@ -136,6 +143,9 @@ PermissionServiceDep = Annotated[PermissionService, Depends(get_permission_servi
 DashboardServiceDep = Annotated[DashboardService, Depends(get_dashboard_service)]
 LlmManagementServiceDep = Annotated[
     LlmManagementService, Depends(get_llm_management_service)
+]
+ImageGenerationServiceDep = Annotated[
+    ImageGenerationService, Depends(get_image_generation_service)
 ]
 ProjectUpdateServiceDep = Annotated[
     ProjectUpdateService, Depends(get_project_update_service)

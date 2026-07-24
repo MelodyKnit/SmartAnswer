@@ -48,6 +48,12 @@ const routes: RouteRecordRaw[] = [
         meta: { access: 'user', title: '在线搜题' },
       },
       {
+        path: 'image-generation',
+        name: 'image-generation',
+        component: () => import('@/views/ImageGenerationView.vue'),
+        meta: { access: 'user', title: 'AI 生图' },
+      },
+      {
         path: 'profile',
         name: 'profile',
         component: () => import('@/views/ProfileView.vue'),

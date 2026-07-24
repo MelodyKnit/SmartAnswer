@@ -10,6 +10,7 @@ from ..storage.database import get_session_factory
 from ..storage.repositories.announcements import AnnouncementRepository
 from ..storage.repositories.feedback import FeedbackRepository
 from ..storage.repositories.import_scripts import ImportScriptRepository
+from ..storage.repositories.image_generation import ImageGenerationRepository
 from ..storage.repositories.llm import LlmRepository
 from ..storage.repositories.notifications import NotificationRepository
 from ..storage.repositories.permissions import PermissionRepository
@@ -21,6 +22,7 @@ from .announcements import AnnouncementService
 from .dashboard import DashboardService
 from .feedback import FeedbackService
 from .import_scripts import ImportScriptService
+from .image_generation.service import ImageGenerationService
 from .notifications import NotificationService
 from .permissions import PermissionService
 from .settings import SettingsService
@@ -48,6 +50,7 @@ class PlatformServices:
         import_script_repository = ImportScriptRepository(session_factory)
         permission_repository = PermissionRepository(settings_repository)
         llm_repository = LlmRepository(session_factory, settings_repository)
+        image_generation_repository = ImageGenerationRepository(session_factory)
 
         self.tokens = TokenService(token_repository, lock)
         self.settings = SettingsService(settings_repository, llm_repository, lock)
@@ -66,7 +69,13 @@ class PlatformServices:
             lock,
         )
         self.permissions = PermissionService(permission_repository, lock)
+        self.permissions.ensure_image_generation_permission_defaults()
         self.llm = LlmManagementService(llm_repository, lock)
+        self.image_generation = ImageGenerationService(
+            image_generation_repository,
+            self.settings,
+            lock,
+        )
         self.updates = ProjectUpdateService(settings_repository, self.settings, lock)
         self.dashboard = DashboardService(
             usage=self.usage,

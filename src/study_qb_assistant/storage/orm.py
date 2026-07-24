@@ -338,3 +338,90 @@ class LlmCallTraceEntity(Base):
     error: Mapped[str] = mapped_column(Text, default="")
     elapsed_ms: Mapped[float] = mapped_column(Float, default=0.0)
     created_at: Mapped[float] = mapped_column(Float, index=True)
+
+
+class ImageGenerationModelEntity(Base):
+    """独立于聊天模型的生图模型配置表。"""
+
+    __tablename__ = "image_generation_models"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    model_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), index=True)
+    provider: Mapped[str] = mapped_column(String(64), default="openai-images")
+    base_url: Mapped[str] = mapped_column(String(512), default="")
+    model: Mapped[str] = mapped_column(String(255), default="")
+    api_key: Mapped[str] = mapped_column(Text, default="")
+    timeout_seconds: Mapped[float] = mapped_column(Float, default=60.0)
+    status: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    capabilities: Mapped[str] = mapped_column(Text, default="text-to-image,1024x1024")
+    created_at: Mapped[float] = mapped_column(Float, index=True)
+    updated_at: Mapped[float] = mapped_column(Float, index=True)
+
+
+class ImageGenerationJobEntity(Base):
+    """用户文本生图任务表。"""
+
+    __tablename__ = "image_generation_jobs"
+    __table_args__ = (
+        UniqueConstraint("user_id", "idempotency_key", name="uq_image_generation_job_idempotency"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    job_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    username: Mapped[str] = mapped_column(String(64), index=True)
+    prompt: Mapped[str] = mapped_column(Text, default="")
+    size: Mapped[str] = mapped_column(String(32), default="1024x1024")
+    model_id: Mapped[str] = mapped_column(String(64), index=True)
+    model_name: Mapped[str] = mapped_column(String(255), default="")
+    model_snapshot: Mapped[str] = mapped_column(Text, default="{}")
+    status: Mapped[str] = mapped_column(String(32), default="queued", index=True)
+    points_cost: Mapped[int] = mapped_column(Integer, default=0)
+    reservation_order_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(128), default="")
+    error_code: Mapped[str] = mapped_column(String(64), default="")
+    error_message: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[float] = mapped_column(Float, index=True)
+    started_at: Mapped[float] = mapped_column(Float, default=0.0, index=True)
+    completed_at: Mapped[float] = mapped_column(Float, default=0.0, index=True)
+    updated_at: Mapped[float] = mapped_column(Float, index=True)
+    expires_at: Mapped[float] = mapped_column(Float, default=0.0, index=True)
+
+
+class ImageGenerationAssetEntity(Base):
+    """生图任务输出资产表。"""
+
+    __tablename__ = "image_generation_assets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    asset_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    job_id: Mapped[str] = mapped_column(String(64), index=True)
+    storage_key: Mapped[str] = mapped_column(String(255), unique=True)
+    content_hash: Mapped[str] = mapped_column(String(64), index=True)
+    mime_type: Mapped[str] = mapped_column(String(64), default="image/png")
+    width: Mapped[int] = mapped_column(Integer, default=0)
+    height: Mapped[int] = mapped_column(Integer, default=0)
+    byte_size: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[float] = mapped_column(Float, index=True)
+    deleted_at: Mapped[float] = mapped_column(Float, default=0.0, index=True)
+
+
+class ImageGenerationTraceEntity(Base):
+    """生图供应商调用追溯表。"""
+
+    __tablename__ = "image_generation_traces"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    trace_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    job_id: Mapped[str] = mapped_column(String(64), index=True)
+    model_id: Mapped[str] = mapped_column(String(64), index=True)
+    model_name: Mapped[str] = mapped_column(String(255), default="")
+    provider: Mapped[str] = mapped_column(String(64), default="")
+    phase: Mapped[str] = mapped_column(String(64), default="generate", index=True)
+    provider_request_id: Mapped[str] = mapped_column(String(255), default="")
+    ok: Mapped[int] = mapped_column(Integer, default=1)
+    elapsed_ms: Mapped[float] = mapped_column(Float, default=0.0)
+    error_code: Mapped[str] = mapped_column(String(64), default="")
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[float] = mapped_column(Float, index=True)

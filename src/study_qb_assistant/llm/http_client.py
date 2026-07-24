@@ -64,6 +64,60 @@ def request_text(
         raise HttpClientError(str(exc)) from exc
 
 
+def request_bytes(
+    method: str,
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    json_body: Any | None = None,
+    params: dict[str, str] | None = None,
+    timeout: float,
+    proxy_env: str,
+    max_bytes: int | None = None,
+) -> tuple[bytes, str]:
+    """发送请求并返回受限长度的二进制响应与 Content-Type。"""
+
+    try:
+        with httpx.stream(
+            method,
+            normalize_container_loopback_url(url),
+            headers=headers,
+            json=json_body,
+            params=params,
+            timeout=timeout,
+            proxy=_proxy_from_env(proxy_env),
+            follow_redirects=True,
+        ) as response:
+            if response.is_error:
+                error_chunks: list[bytes] = []
+                error_size = 0
+                for chunk in response.iter_bytes():
+                    remaining = 1_000 - error_size
+                    if remaining <= 0:
+                        break
+                    error_chunks.append(chunk[:remaining])
+                    error_size += min(len(chunk), remaining)
+                body = b"".join(error_chunks).decode("utf-8", errors="replace")
+                raise HttpClientError(
+                    f"HTTP {response.status_code}: {response.reason_phrase}; body={body}",
+                    status_code=response.status_code,
+                    response_body=body,
+                )
+            declared_size = response.headers.get("content-length", "")
+            if max_bytes is not None and declared_size.isdigit() and int(declared_size) > max_bytes:
+                raise HttpClientError("Response body exceeds the configured size limit")
+            chunks: list[bytes] = []
+            total = 0
+            for chunk in response.iter_bytes():
+                total += len(chunk)
+                if max_bytes is not None and total > max_bytes:
+                    raise HttpClientError("Response body exceeds the configured size limit")
+                chunks.append(chunk)
+            return b"".join(chunks), str(response.headers.get("content-type") or "")
+    except httpx.HTTPError as exc:
+        raise HttpClientError(str(exc)) from exc
+
+
 def get_json(
     url: str,
     *,

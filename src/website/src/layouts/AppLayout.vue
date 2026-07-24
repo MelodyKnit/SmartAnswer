@@ -35,6 +35,7 @@ const allGroups: MenuGroup[] = [
     items: [
       { index: '/', label: '工作台', icon: 'HomeFilled', access: 'user' },
       { index: '/search', label: '在线搜题', icon: 'Search', access: 'user' },
+      { index: '/image-generation', label: 'AI 生图', icon: 'Picture', access: 'user' },
       { index: '/usage-logs', label: '使用记录', icon: 'Tickets', access: 'user' },
       { index: '/feedback', label: '反馈中心', icon: 'ChatDotRound', access: 'user' },
     ],

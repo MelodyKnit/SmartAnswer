@@ -15,15 +15,19 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, tuple[str, ...]] = {
         "wallet:changes:read", "wallet:changes:write", "import-scripts:read",
         "import-scripts:write", "questions:read", "questions:write",
         "llm:read", "llm:write", "announcements:read", "announcements:write",
+        "image-generation:use",
     ),
     "admin": (
         "dashboard:all", "users:write", "roles:read", "billing:read",
         "wallet:changes:read", "wallet:changes:write", "import-scripts:read",
         "import-scripts:write", "questions:read", "questions:write",
         "llm:read", "announcements:read", "announcements:write",
+        "image-generation:use",
     ),
-    "user": ("dashboard:self", "tokens:self", "feedback:self"),
+    "user": ("dashboard:self", "tokens:self", "feedback:self", "image-generation:use"),
 }
+
+IMAGE_GENERATION_PERMISSION_MIGRATION_KEY = "image_generation_default_granted_v1"
 
 
 class PermissionService(PlatformDomainService):
@@ -50,6 +54,35 @@ class PermissionService(PlatformDomainService):
                     )
                 )
             return [item.to_dict() for item in result]
+
+    def ensure_image_generation_permission_defaults(self) -> None:
+        """为已有角色一次性补齐生图使用权限，不覆盖后续人工调整。"""
+
+        with self.lock:
+            migration = self.repository.settings.get_settings(
+                "permission_migrations",
+                keys={IMAGE_GENERATION_PERMISSION_MIGRATION_KEY},
+            )
+            if migration.get(IMAGE_GENERATION_PERMISSION_MIGRATION_KEY) == "true":
+                return
+
+            existing = {
+                item.role_id: item for item in self.repository.get_role_permissions()
+            }
+            now = time.time()
+            for role_id in DEFAULT_ROLE_PERMISSIONS:
+                record = existing.get(role_id)
+                if record is None or "image-generation:use" in record.permissions:
+                    continue
+                self.repository.set_role_permissions(
+                    role_id,
+                    tuple((*record.permissions, "image-generation:use")),
+                    now,
+                )
+            self.repository.settings.set_settings(
+                "permission_migrations",
+                {IMAGE_GENERATION_PERMISSION_MIGRATION_KEY: "true"},
+            )
 
     @staticmethod
     def allowed_role_permissions() -> set[str]:

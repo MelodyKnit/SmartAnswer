@@ -325,6 +325,10 @@ export interface SystemConfig {
   invite_reward_mode?: InviteRewardMode
   manual_grant_default_points?: string
   redeem_code_default_points?: string
+  image_generation_points?: string
+  image_generation_max_active_jobs?: string
+  image_generation_daily_limit?: string
+  image_generation_retention_days?: string
   answer_retry_times?: string
   project_update_enabled?: string
   project_update_auto_check_enabled?: string
@@ -508,6 +512,99 @@ export interface LlmCallTrace {
   response_text?: string | null
   evidence?: LlmCallTraceEvidence[]
   created_at: number
+}
+
+/** 文本生图模型、任务、资产与调用追溯的数据契约。 */
+export type ImageGenerationJobStatus =
+  | 'queued'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'rejected'
+  | 'cancelled'
+  | 'deleted'
+
+export interface ImageGenerationModel {
+  model_id: string
+  name: string
+  provider: 'openai-images' | 'openai-chat-image' | string
+  base_url: string
+  model: string
+  api_key_configured: boolean
+  timeout_seconds: number
+  status: 'active' | 'inactive' | string
+  capabilities: string[]
+  created_at: number
+  updated_at: number
+}
+
+export interface ImageGenerationAsset {
+  asset_id: string
+  job_id: string
+  mime_type: string
+  width: number
+  height: number
+  byte_size: number
+  created_at: number
+  deleted_at: number
+}
+
+export interface ImageGenerationJob {
+  job_id: string
+  user_id: string
+  username: string
+  prompt: string
+  size: string
+  model_id: string
+  model_name: string
+  status: ImageGenerationJobStatus
+  points_cost: number
+  error_code: string
+  error_message: string
+  created_at: number
+  started_at: number
+  completed_at: number
+  updated_at: number
+  expires_at: number
+  assets: ImageGenerationAsset[]
+}
+
+export interface ImageGenerationCapabilities {
+  available: boolean
+  model_name: string
+  sizes: string[]
+  points_per_image: number
+  max_active_jobs: number
+  daily_limit: number
+  retention_days: number
+  balance: number
+}
+
+export interface ImageGenerationTrace {
+  trace_id: string
+  job_id: string
+  model_id: string
+  model_name: string
+  provider: string
+  phase: string
+  provider_request_id: string
+  ok: boolean
+  elapsed_ms: number
+  error_code: string
+  error: string
+  created_at: number
+}
+
+export interface ImageGenerationStats {
+  total_jobs: number
+  queued_jobs: number
+  running_jobs: number
+  succeeded_jobs: number
+  failed_jobs: number
+  rejected_jobs: number
+  cancelled_jobs: number
+  deleted_jobs: number
+  avg_elapsed_ms: number
 }
 
 /** /query 在线搜题的成功结果。 */

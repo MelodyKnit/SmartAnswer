@@ -178,6 +178,12 @@ class GlobalConfig(BaseModel):
         return self.data_dir / "images" / "ocs"
 
     @property
+    def generated_images_dir(self) -> Path:
+        """返回私有生图资产运行时存储目录。"""
+
+        return self.data_dir / "images" / "generations"
+
+    @property
     def brand_images_dir(self) -> Path:
         """上传品牌Logo等资源的本地存储物理路径。"""
         return self.data_dir / "images" / "brand"

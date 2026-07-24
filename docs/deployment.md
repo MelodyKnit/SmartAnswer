@@ -27,6 +27,7 @@ Production paths are split into three categories:
   - `deploy-data/logs/`
   - `deploy-data/normalized/`
   - `deploy-data/images/ocs/`
+  - `deploy-data/images/generations/`
   - any later runtime cache files under `deploy-data/`
 - Optional import assets:
   - manually uploaded or generated question-bank files after deployment
@@ -58,6 +59,12 @@ Vision questions store readable OCS images under `deploy-data/images/ocs/` and s
 model a URL under `/api/v1/media/ocs/images/`. Configure `STQB_PUBLIC_BASE_URL` to the public
 HTTPS origin that the model provider can reach; otherwise local loopback requests fall
 back to inline data URLs for development.
+
+Text-to-image output is stored separately under `deploy-data/images/generations/`. Generated
+assets are private: they are served only through authenticated `/api/v1/image-generations/.../content`
+requests and are never exposed through the OCS public image route. The directory is part of the
+same `/app/data` volume, so generated images survive a container rebuild. Their retention period
+is managed by **系统配置 > 积分策略**; `0` means permanent retention.
 
 The compose file does not require `.env.server` to exist. You can boot the site first,
 create the first `superadmin`, and then configure model/search providers from the admin UI.

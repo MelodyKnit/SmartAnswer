@@ -11,6 +11,7 @@ from .auth import build_auth_router
 from .dashboard import build_dashboard_router
 from .feedback import build_feedback_router
 from .import_scripts import build_import_script_router
+from .image_generation import build_image_generation_router
 from .llm import build_llm_router
 from .media import build_media_router
 from .notifications import build_notification_router
@@ -39,6 +40,7 @@ ROUTER_FACTORIES: tuple[RouterFactory, ...] = (
     build_permission_router,
     build_question_router,
     build_import_script_router,
+    build_image_generation_router,
     build_llm_router,
     build_media_router,
     build_system_router,

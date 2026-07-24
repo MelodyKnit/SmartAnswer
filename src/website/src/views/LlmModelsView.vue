@@ -23,11 +23,15 @@ import LlmCallStatsTable from '@/components/llm/LlmCallStatsTable.vue'
 import LlmTraceDetailDrawer from '@/components/llm/LlmTraceDetailDrawer.vue'
 import LlmTraceTable from '@/components/llm/LlmTraceTable.vue'
 import LlmTraceFlow from '@/components/llm/LlmTraceFlow.vue'
+import ImageGenerationModelsPanel from '@/components/llm/ImageGenerationModelsPanel.vue'
+import ImageGenerationTracePanel from '@/components/llm/ImageGenerationTracePanel.vue'
 import { DEFAULT_PAGE_SIZE, SYSTEM_DEFAULTS } from '@/config/constants'
 
 // === 1. 概览状态 ===
 const auth = useAuthStore()
-const activeTab = ref<'runtime' | 'websearch' | 'models' | 'stats' | 'traces'>('runtime')
+const activeTab = ref<
+  'runtime' | 'websearch' | 'models' | 'image-models' | 'stats' | 'traces' | 'image-traces'
+>('runtime')
 
 /* ---------------- 运行配置 ---------------- */
 const runtimeLoading = ref(false)
@@ -891,6 +895,10 @@ onMounted(async () => {
         </div>
       </el-tab-pane>
 
+      <el-tab-pane label="生图模型" name="image-models">
+        <ImageGenerationModelsPanel :can-manage="auth.isSuperAdmin" />
+      </el-tab-pane>
+
       <el-tab-pane label="调用统计" name="stats">
         <div class="mb-3 flex justify-end">
           <el-button :icon="'Refresh'" @click="loadStats">刷新统计</el-button>
@@ -964,6 +972,10 @@ onMounted(async () => {
             @current-change="onTracePageChange"
           />
         </div>
+      </el-tab-pane>
+
+      <el-tab-pane label="生图调用" name="image-traces">
+        <ImageGenerationTracePanel />
       </el-tab-pane>
     </el-tabs>
 

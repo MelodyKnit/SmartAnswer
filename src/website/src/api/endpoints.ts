@@ -1,5 +1,5 @@
 /** 平台业务接口封装。所有函数返回已解包的数据片段。 */
-import { api } from './http'
+import http, { api } from './http'
 import type {
   Announcement,
   AnnouncementAudience,
@@ -13,6 +13,11 @@ import type {
   ProjectUpdateStatus,
   Feedback,
   ImportScript,
+  ImageGenerationCapabilities,
+  ImageGenerationJob,
+  ImageGenerationModel,
+  ImageGenerationStats,
+  ImageGenerationTrace,
   LlmCallStat,
   LlmCallTrace,
   LlmModel,
@@ -468,4 +473,55 @@ export const llmApi = {
     limit?: number
   } = {}) =>
     api.get<{ ok: true; traces: LlmCallTrace[]; total: number }>('/llm-traces', params),
+}
+
+/* ---------------- 文本生图 ---------------- */
+export const imageGenerationApi = {
+  capabilities: () =>
+    api.get<{ ok: true; capabilities: ImageGenerationCapabilities }>('/image-generation-capabilities'),
+  create: (body: { prompt: string; size?: string; idempotency_key: string }) =>
+    api.post<{ ok: true; job: ImageGenerationJob; idempotent_replay: boolean }>(
+      '/image-generations',
+      body,
+    ),
+  list: (params: { status?: string; page?: number; limit?: number; user_id?: string } = {}) =>
+    api.get<{ ok: true; jobs: ImageGenerationJob[]; total: number; page: number; limit: number }>(
+      '/image-generations',
+      params,
+    ),
+  detail: (jobId: string) =>
+    api.get<{ ok: true; job: ImageGenerationJob }>(
+      `/image-generations/${encodeURIComponent(jobId)}`,
+    ),
+  delete: (jobId: string) =>
+    api.delete<{ ok: true; job: ImageGenerationJob }>(
+      `/image-generations/${encodeURIComponent(jobId)}`,
+    ),
+  assetContent: async (jobId: string, assetId: string): Promise<Blob> => {
+    const response = await http.get<Blob>(
+      `/image-generations/${encodeURIComponent(jobId)}/assets/${encodeURIComponent(assetId)}/content`,
+      { responseType: 'blob' },
+    )
+    return response.data
+  },
+  models: () => api.get<{ ok: true; models: ImageGenerationModel[] }>('/image-generation-models'),
+  createModel: (body: Record<string, unknown>) =>
+    api.post<{ ok: true; model: ImageGenerationModel }>('/image-generation-models', body),
+  updateModel: (modelId: string, body: Record<string, unknown>) =>
+    api.patch<{ ok: true; model: ImageGenerationModel }>(
+      `/image-generation-models/${encodeURIComponent(modelId)}`,
+      body,
+    ),
+  deleteModel: (modelId: string) =>
+    api.delete<{ ok: true }>(`/image-generation-models/${encodeURIComponent(modelId)}`),
+  testModel: (modelId: string) =>
+    api.post<{ ok: boolean; elapsed_ms: number; error?: string }>(
+      `/image-generation-models/${encodeURIComponent(modelId)}/test`,
+    ),
+  stats: () => api.get<{ ok: true; stats: ImageGenerationStats }>('/image-generation-stats'),
+  traces: (params: { job_id?: string; model_id?: string; page?: number; limit?: number } = {}) =>
+    api.get<{ ok: true; traces: ImageGenerationTrace[]; total: number; page: number; limit: number }>(
+      '/image-generation-traces',
+      params,
+    ),
 }

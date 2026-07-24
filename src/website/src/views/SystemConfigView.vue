@@ -54,6 +54,10 @@ const form = reactive({
   invite_reward_mode: 'both' as InviteRewardMode,
   manual_grant_default_points: 100,
   redeem_code_default_points: 50,
+  image_generation_points: 0,
+  image_generation_max_active_jobs: 1,
+  image_generation_daily_limit: 20,
+  image_generation_retention_days: 30,
   answer_retry_times: 3,
   project_update_enabled: 'false',
   project_update_auto_check_enabled: 'true',
@@ -262,6 +266,10 @@ async function load() {
     form.invite_reward_mode = res.config.invite_reward_mode || 'both'
     form.manual_grant_default_points = Number(res.config.manual_grant_default_points || 100)
     form.redeem_code_default_points = Number(res.config.redeem_code_default_points || 50)
+    form.image_generation_points = Number(res.config.image_generation_points || 0)
+    form.image_generation_max_active_jobs = Number(res.config.image_generation_max_active_jobs || 1)
+    form.image_generation_daily_limit = Number(res.config.image_generation_daily_limit || 20)
+    form.image_generation_retention_days = Number(res.config.image_generation_retention_days || 30)
     form.answer_retry_times = Number(res.config.answer_retry_times || 3)
     form.project_update_enabled = (res.config.project_update_enabled as string) || 'false'
     persistedProjectUpdateEnabled.value = form.project_update_enabled
@@ -325,6 +333,10 @@ async function save() {
       invite_reward_mode: form.invite_reward_mode,
       manual_grant_default_points: String(form.manual_grant_default_points),
       redeem_code_default_points: String(form.redeem_code_default_points),
+      image_generation_points: String(form.image_generation_points),
+      image_generation_max_active_jobs: String(form.image_generation_max_active_jobs),
+      image_generation_daily_limit: String(form.image_generation_daily_limit),
+      image_generation_retention_days: String(form.image_generation_retention_days),
       answer_retry_times: String(form.answer_retry_times),
       project_update_enabled: form.project_update_enabled,
       project_update_auto_check_enabled: form.project_update_auto_check_enabled,
@@ -563,6 +575,26 @@ onMounted(load)
               </el-form>
               <p class="text-xs text-ink-muted">
                 查题扣费实时影响 OCS/API 调用；默认积分用于后台表单预填和后续注册奖励策略。答题报错重试仅在 AI/联网增强链路抛异常时生效，0 表示不重试。
+              </p>
+            </div>
+            <div class="app-card p-6">
+              <h3 class="mb-4 text-base font-semibold text-ink">AI 生图策略</h3>
+              <el-form label-position="top" class="grid grid-cols-1 gap-x-6 md:grid-cols-2 xl:grid-cols-4">
+                <el-form-item label="单张扣费">
+                  <el-input-number v-model="form.image_generation_points" :min="0" class="w-full" />
+                </el-form-item>
+                <el-form-item label="每用户活动任务数">
+                  <el-input-number v-model="form.image_generation_max_active_jobs" :min="1" :max="10" class="w-full" />
+                </el-form-item>
+                <el-form-item label="每日生成上限">
+                  <el-input-number v-model="form.image_generation_daily_limit" :min="0" :max="1000" class="w-full" />
+                </el-form-item>
+                <el-form-item label="图片保留天数">
+                  <el-input-number v-model="form.image_generation_retention_days" :min="0" :max="3650" class="w-full" />
+                </el-form-item>
+              </el-form>
+              <p class="text-xs text-ink-muted">
+                生图任务提交时预扣积分，成功后确认，模型拒绝、超时或存储失败会自动退款。每日上限或保留天数设为 0 分别表示不限制和永久保留。
               </p>
             </div>
           </div>
