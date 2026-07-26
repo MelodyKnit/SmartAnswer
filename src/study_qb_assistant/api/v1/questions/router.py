@@ -10,7 +10,7 @@ from ....questions.models import CanonicalQuestionRecord
 from ....platform.usage.time_ranges import local_day_window_from_dates
 from ....storage.repositories.questions import question_record_is_indexable, question_record_status
 from ...dependencies import get_lookup_service, get_question_repository
-from ...security import require_permissions, require_roles
+from ...security import require_permissions
 from .schemas import QuestionUpdatePayload
 
 
@@ -32,9 +32,6 @@ def build_question_router() -> APIRouter:
         updated_start_date: str | None = None,
         updated_end_date: str | None = None,
     ) -> JSONResponse:
-        denied = require_roles(request, {"admin", "superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"questions:read"})
         if denied:
             return denied
@@ -86,9 +83,6 @@ def build_question_router() -> APIRouter:
         question_id: str,
         payload: QuestionUpdatePayload,
     ) -> JSONResponse:
-        denied = require_roles(request, {"admin", "superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"questions:write"})
         if denied:
             return denied
@@ -144,9 +138,6 @@ def build_question_router() -> APIRouter:
     def question_delete(request: Request, question_id: str) -> JSONResponse:
         """软删除题库记录，并从当前运行时索引移除。"""
 
-        denied = require_roles(request, {"admin", "superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"questions:write"})
         if denied:
             return denied
@@ -174,9 +165,6 @@ def build_question_router() -> APIRouter:
     def questions_reindex(request: Request) -> JSONResponse:
         """按数据库中的可信题库记录重建当前进程内存索引。"""
 
-        denied = require_roles(request, {"admin", "superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"questions:write"})
         if denied:
             return denied

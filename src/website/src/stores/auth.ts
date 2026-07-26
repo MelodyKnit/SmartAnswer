@@ -1,4 +1,4 @@
-/** 全局会话状态：当前用户、登录态、角色边界。 */
+/** 全局会话状态：当前用户、动态角色与实时权限集合。 */
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { authApi, userApi } from '@/api/endpoints'
@@ -13,15 +13,22 @@ export const useAuthStore = defineStore('auth', () => {
 
   const isLoggedIn = computed(() => user.value !== null)
   const role = computed<Role | null>(() => user.value?.role ?? null)
-  const isAdmin = computed(() => role.value === 'admin' || role.value === 'superadmin')
   const isSuperAdmin = computed(() => role.value === 'superadmin')
+  const permissions = computed(() => new Set(user.value?.permissions ?? []))
 
-  /** 是否拥有某一访问级别。 */
-  function hasAccess(level: 'user' | 'admin' | 'superadmin'): boolean {
-    if (!user.value) return false
-    if (level === 'user') return true
-    if (level === 'admin') return isAdmin.value
-    return isSuperAdmin.value
+  /** 判断是否拥有单项后端声明的能力。 */
+  function hasPermission(permission: string): boolean {
+    return isSuperAdmin.value || permissions.value.has(permission)
+  }
+
+  /** 判断是否同时拥有所有指定能力。 */
+  function hasAllPermissions(required: string[]): boolean {
+    return required.every((permission) => hasPermission(permission))
+  }
+
+  /** 判断是否至少拥有一个指定能力。 */
+  function hasAnyPermission(required: string[]): boolean {
+    return required.some((permission) => hasPermission(permission))
   }
 
   async function login(username: string, password: string, remember: boolean): Promise<void> {
@@ -104,9 +111,11 @@ export const useAuthStore = defineStore('auth', () => {
     initialized,
     isLoggedIn,
     role,
-    isAdmin,
+    permissions,
     isSuperAdmin,
-    hasAccess,
+    hasPermission,
+    hasAllPermissions,
+    hasAnyPermission,
     login,
     register,
     fetchSession,

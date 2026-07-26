@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /** 站内搜题：用户输入题目，系统调用内部检索与 AI 链路返回候选答案。 */
 import { computed, reactive, ref } from 'vue'
-import { DocumentChecked, Search } from '@element-plus/icons-vue'
+import { DocumentChecked, Search, QuestionFilled } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { ApiException } from '@/api/http'
 import { queryApi } from '@/api/endpoints'
@@ -84,19 +84,39 @@ function reset() {
               </p>
               <h3 class="mt-1 flex items-center gap-2 text-lg font-semibold text-ink">
                 <el-icon class="text-brand-500"><Search /></el-icon>
-                输入题目
+                <span>输入题目</span>
+                <el-tooltip
+                  content="直接粘贴题干即可搜索；选择题可将选项一并粘贴，系统会优先检索本地题库，未命中时才进入 AI 与联网增强链路。"
+                  placement="top"
+                  :show-after="100"
+                >
+                  <el-icon class="text-ink-muted/60 hover:text-brand-500 cursor-help transition-colors text-sm">
+                    <QuestionFilled />
+                  </el-icon>
+                </el-tooltip>
               </h3>
             </div>
             <el-tag type="info" effect="plain">每次 {{ localHitCost }} 积分</el-tag>
           </div>
-          <p class="mt-2 text-xs leading-5 text-ink-soft">
-            直接粘贴题干即可搜索；选择题可将选项一并粘贴，系统会优先检索本地题库，未命中时才进入 AI 与联网增强链路。
-          </p>
         </div>
 
         <div class="space-y-5 p-5">
           <el-form label-position="top" @submit.prevent>
-            <el-form-item label="题目内容" required>
+            <el-form-item required>
+              <template #label>
+                <span class="flex items-center gap-1">
+                  <span>题目内容</span>
+                  <el-tooltip
+                    content="选项请按行保留 A.、B、或 (C) 等标签；无法可靠识别时，系统会完整保留原文进行检索。"
+                    placement="top"
+                    :show-after="100"
+                  >
+                    <el-icon class="text-ink-muted/60 hover:text-brand-500 cursor-help transition-colors text-sm">
+                      <QuestionFilled />
+                    </el-icon>
+                  </el-tooltip>
+                </span>
+              </template>
               <el-input
                 v-model="form.rawText"
                 type="textarea"
@@ -105,9 +125,6 @@ function reset() {
                 show-word-limit
                 :placeholder="inputPlaceholder"
               />
-              <p class="mt-2 text-xs leading-5 text-ink-muted">
-                选项请按行保留 A.、B、或 (C) 等标签；无法可靠识别时，系统会完整保留原文进行检索。
-              </p>
             </el-form-item>
 
             <el-collapse v-model="activeAdvancedSections" class="online-search-advanced">

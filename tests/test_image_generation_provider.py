@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from study_qb_assistant.llm.http_client import HttpClientError
 from study_qb_assistant.llm.image_generation import (
+    GeminiNativeImageGenerationProvider,
     ImageGenerationProviderError,
     ImageGenerationRequest,
     OpenAIChatImageGenerationProvider,
@@ -218,6 +219,150 @@ class OpenAIChatImageGenerationProviderTests(unittest.TestCase):
         self.assertIsInstance(
             build_image_generation_provider(record), OpenAIChatImageGenerationProvider
         )
+
+
+class GeminiNativeImageGenerationProviderTests(unittest.TestCase):
+    """验证 Gemini 原生协议不依赖 OpenAI 网关的请求字段。"""
+
+    def test_inline_data_response_uses_image_config_and_bearer_auth(self) -> None:
+        """Gemini 应传递画幅/像素档位，并读取 candidates 内联图片。"""
+
+        provider = GeminiNativeImageGenerationProvider(
+            base_url="https://images.example.test/v1beta",
+            model="gemini-image-model",
+            api_key="test-secret-key",
+            auth_mode="bearer",
+        )
+        request = ImageGenerationRequest(
+            prompt="一只蓝色纸飞机",
+            size="16:9 · 2K",
+            request_id="gemini-request",
+            output_options={"aspect_ratio": "16:9", "image_size": "2K"},
+        )
+        content = b"gemini-image-content"
+        response_body = json.dumps(
+            {
+                "responseId": "gemini-request-1",
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [
+                                {
+                                    "inlineData": {
+                                        "mimeType": "image/png",
+                                        "data": base64.b64encode(content).decode("ascii"),
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ],
+            }
+        )
+        with patch(
+            "study_qb_assistant.llm.image_generation.gemini_native.request_text",
+            return_value=response_body,
+        ) as request_text:
+            result = provider.generate(request)
+
+        self.assertEqual(result.content, content)
+        self.assertEqual(result.mime_type, "image/png")
+        self.assertEqual(result.provider_request_id, "gemini-request-1")
+        _, url = request_text.call_args.args[:2]
+        self.assertEqual(
+            url,
+            "https://images.example.test/v1beta/models/gemini-image-model:generateContent",
+        )
+        headers = request_text.call_args.kwargs["headers"]
+        self.assertEqual(headers["Authorization"], "Bearer test-secret-key")
+        self.assertNotIn("x-goog-api-key", headers)
+        payload = request_text.call_args.kwargs["json_body"]
+        self.assertEqual(payload["generationConfig"]["responseModalities"], ["TEXT", "IMAGE"])
+        self.assertEqual(payload["generationConfig"]["imageConfig"], {"aspectRatio": "16:9", "imageSize": "2K"})
+
+    def test_x_goog_api_key_authentication_is_supported(self) -> None:
+        """原生 API Key 鉴权必须使用 x-goog-api-key，而不是拼接到 URL。"""
+
+        provider = GeminiNativeImageGenerationProvider(
+            base_url="https://images.example.test/v1beta",
+            model="gemini-image-model",
+            api_key="test-secret-key",
+        )
+        response_body = json.dumps(
+            {
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [
+                                {
+                                    "inlineData": {
+                                        "mimeType": "image/png",
+                                        "data": base64.b64encode(b"image").decode("ascii"),
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        )
+        with patch(
+            "study_qb_assistant.llm.image_generation.gemini_native.request_text",
+            return_value=response_body,
+        ) as request_text:
+            provider.generate(
+                ImageGenerationRequest(prompt="测试", size="1:1 · 1K", request_id="gemini-key")
+            )
+
+        headers = request_text.call_args.kwargs["headers"]
+        self.assertEqual(headers["x-goog-api-key"], "test-secret-key")
+        self.assertNotIn("Authorization", headers)
+
+    def test_provider_factory_supports_gemini_and_compatible_images(self) -> None:
+        """协议选择只依赖显式配置，不根据模型名称或地址猜测。"""
+
+        gemini_record = ImageGenerationModelRecord(
+            model_id="gemini-image-model",
+            name="Gemini 生图",
+            provider="gemini-native",
+            base_url="https://images.example.test/v1beta",
+            model="gemini-image-model",
+            api_key="test-secret-key",
+            timeout_seconds=30,
+            status="active",
+            capabilities="text-to-image",
+            created_at=0,
+            updated_at=0,
+            protocol_config=json.dumps(
+                {
+                    "auth_mode": "bearer",
+                    "aspect_ratios": ["1:1"],
+                    "image_sizes": ["1K"],
+                }
+            ),
+        )
+        compatible_record = ImageGenerationModelRecord(
+            model_id="compatible-image-model",
+            name="兼容生图",
+            provider="openai-compatible-images",
+            base_url="https://images.example.test/v1",
+            model="any-compatible-image-model",
+            api_key="test-secret-key",
+            timeout_seconds=30,
+            status="active",
+            capabilities="text-to-image,1024x1024",
+            created_at=0,
+            updated_at=0,
+            protocol_config=json.dumps({"preset_sizes": ["1024x1024"]}),
+        )
+
+        self.assertIsInstance(
+            build_image_generation_provider(gemini_record),
+            GeminiNativeImageGenerationProvider,
+        )
+        compatible_provider = build_image_generation_provider(compatible_record)
+        self.assertIsInstance(compatible_provider, OpenAIImageGenerationProvider)
+        self.assertEqual(compatible_provider.provider_name, "openai-compatible-images")
 
 
 if __name__ == "__main__":

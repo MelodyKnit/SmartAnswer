@@ -17,7 +17,6 @@ from ...dependencies import (
 from ...security import (
     guard_protected_request,
     require_permissions,
-    require_roles,
 )
 from study_qb_assistant.questions.parsing import (
     QueryInputError,
@@ -62,9 +61,6 @@ def build_query_router() -> APIRouter:
         denied = guard_protected_request(request)
         if denied:
             return denied
-        denied = require_roles(request, {"admin", "superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"system:read"})
         if denied:
             return denied
@@ -86,9 +82,6 @@ def build_query_router() -> APIRouter:
     @router.get("/debug/usage-audit")
     def debug_usage_audit(request: Request, date: str = "") -> JSONResponse:
         denied = guard_protected_request(request)
-        if denied:
-            return denied
-        denied = require_roles(request, {"admin", "superadmin"})
         if denied:
             return denied
         denied = require_permissions(request, {"system:read"})

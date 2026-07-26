@@ -1,16 +1,16 @@
 # 文本生图服务
 
-更新时间：`2026-07-24`
+更新时间：`2026-07-25`
 
 ## 目标与边界
 
 文本生图是一个独立的用户能力，不复用聊天模型、查题使用记录或 OCS 图片图床。首版只支持
-单张文本生图和兼容 OpenAI 的图片协议提供商；不支持图生图、批量生成、
+单张文本生图和受控的图片协议提供商；不支持图生图、批量生成、
 公开分享或通过 OCS/API Key 调用。
 
 实现边界：
 
-- `llm/image_generation/`：供应商契约、OpenAI Images 与 OpenAI 兼容聊天生图协议适配器。
+- `llm/image_generation/`：供应商契约、Gemini 原生、OpenAI Images、通用兼容 Images 与旧聊天生图协议适配器。
 - `platform/image_generation/`：模型配置、任务状态、积分结算、恢复和清理编排。
 - `storage/repositories/image_generation.py`：模型、任务、资产、追溯和积分预扣事务。
 - `media/generated_images.py`：图片内容校验、私有文件存储和删除。
@@ -37,17 +37,21 @@
 
 ## 模型与密钥
 
-管理员在“大模型配置 > 生图模型”中维护模型。模型保存提供商、Base URL、模型标识、超时和能力
-集；API Key 只能写入，读取接口只返回是否已配置。启用新模型会停用旧模型，后续新任务只使用
-当前启用模型。
+管理员在“大模型配置 > 生图模型”中维护模型。模型保存提供商、Base URL、模型标识、超时和受控
+`protocol_config`；API Key 只能写入，读取接口只返回是否已配置。启用新模型会停用旧模型，后续新任务
+只使用当前启用模型。
 
-`openai-images` 使用 `/images/generations`；`openai-chat-image` 使用 `/chat/completions`，从返回的
-Markdown/data URL 或内容块中读取图片。后者适用于将图片作为聊天补全结果返回的兼容模型，尺寸由上游
-模型能力决定，平台最终保存并展示实际生成尺寸。
+`gemini-native` 使用 `POST /models/{model}:generateContent`，按配置使用 `x-goog-api-key` 或 Bearer
+鉴权，并传递 `imageConfig.aspectRatio` 与 `imageConfig.imageSize`；它从 `inlineData` 读取图片。
+`openai-images` 使用 `/images/generations`，可使用预设尺寸，或在管理员明确声明约束后使用自定义尺寸。
+`openai-compatible-images` 同样调用 `/images/generations`，但只允许管理员声明的预设尺寸。旧
+`openai-chat-image` 使用 `/chat/completions`，从返回的 Markdown/data URL 或内容块中读取图片，尺寸由
+上游模型决定，不推荐用于新配置。
 
-任务创建时保存非敏感的模型参数快照。后台执行仍从受控模型记录读取当前 API Key，因此密钥不会
-复制到任务快照、调用追溯、日志或 API 响应。管理员之后切换模型或修改模型地址不会把已排队
-任务隐式切换到另一套提供商参数。
+任务创建时保存非敏感模型参数与归一化输出参数快照，任务响应中的 `size` 显示请求的输出选择，
+`assets[].width/height` 显示实际输出尺寸。后台执行仍从受控模型记录读取当前 API Key，因此密钥不会
+复制到任务快照、调用追溯、日志或 API 响应。管理员之后切换模型或修改模型地址不会把已排队任务
+隐式切换到另一套提供商参数。
 
 ## 资产、隐私与保留期
 

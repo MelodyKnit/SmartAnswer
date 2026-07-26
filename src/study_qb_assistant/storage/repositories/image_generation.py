@@ -99,6 +99,7 @@ class ImageGenerationRepository(SqlAlchemyRepository):
             entity.timeout_seconds = record.timeout_seconds
             entity.status = record.status
             entity.capabilities = record.capabilities
+            entity.protocol_config = record.protocol_config
             entity.updated_at = record.updated_at
             if record.status == "active":
                 # 首版仅支持单模型执行，启用当前模型时自动停用其它模型，避免任务被隐式分流。
@@ -605,6 +606,7 @@ def image_model_record(entity: ImageGenerationModelEntity) -> ImageGenerationMod
         capabilities=entity.capabilities or "text-to-image,1024x1024",
         created_at=float(entity.created_at or 0.0),
         updated_at=float(entity.updated_at or 0.0),
+        protocol_config=getattr(entity, "protocol_config", "{}") or "{}",
     )
 
 
@@ -617,6 +619,7 @@ def image_job_entity(record: ImageGenerationJobRecord) -> ImageGenerationJobEnti
         username=record.username,
         prompt=record.prompt,
         size=record.size,
+        output_options=record.output_options,
         model_id=record.model_id,
         model_name=record.model_name,
         model_snapshot=record.model_snapshot,
@@ -643,6 +646,7 @@ def image_job_record(entity: ImageGenerationJobEntity) -> ImageGenerationJobReco
         username=entity.username,
         prompt=entity.prompt or "",
         size=entity.size or "1024x1024",
+        output_options=getattr(entity, "output_options", "{}") or "{}",
         model_id=entity.model_id or "",
         model_name=entity.model_name or "",
         model_snapshot=entity.model_snapshot or "{}",

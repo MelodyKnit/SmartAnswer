@@ -2,7 +2,7 @@
 /** 主框架布局：左侧导航 + 顶栏 + 内容区。
  *  - 桌面：固定侧边栏；移动端：抽屉式侧边栏 + 顶栏汉堡按钮。
  *  - 顶栏含主题切换（亮/暗/跟随系统）、通知铃、用户菜单。
- *  - 菜单按角色过滤。 */
+ *  - 菜单按后端权限目录过滤。 */
 import { computed, ref, watch } from 'vue'
 import { RouterView, useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
@@ -17,11 +17,19 @@ const theme = useThemeStore()
 const route = useRoute()
 const router = useRouter()
 
+/* 侧边栏折叠状态，优先从 localStorage 读取以保持用户偏好 */
+const isCollapsed = ref(localStorage.getItem('sidebar_collapsed') === 'true')
+function toggleCollapse() {
+  isCollapsed.value = !isCollapsed.value
+  localStorage.setItem('sidebar_collapsed', String(isCollapsed.value))
+}
+
 interface MenuEntry {
   index: string
   label: string
   icon: string
-  access: 'user' | 'admin' | 'superadmin'
+  requiredPermissions?: string[]
+  requireAnyPermission?: boolean
 }
 
 interface MenuGroup {
@@ -33,54 +41,53 @@ const allGroups: MenuGroup[] = [
   {
     title: '控制台',
     items: [
-      { index: '/', label: '工作台', icon: 'HomeFilled', access: 'user' },
-      { index: '/search', label: '在线搜题', icon: 'Search', access: 'user' },
-      { index: '/image-generation', label: 'AI 生图', icon: 'Picture', access: 'user' },
-      { index: '/usage-logs', label: '使用记录', icon: 'Tickets', access: 'user' },
-      { index: '/feedback', label: '反馈中心', icon: 'ChatDotRound', access: 'user' },
+      { index: '/', label: '工作台', icon: 'HomeFilled', requiredPermissions: ['dashboard:self', 'dashboard:all'], requireAnyPermission: true },
+      { index: '/search', label: '在线搜题', icon: 'Search' },
+      { index: '/image-generation', label: 'AI 生图', icon: 'Picture', requiredPermissions: ['image-generation:use'] },
+      { index: '/usage-logs', label: '使用记录', icon: 'Tickets' },
+      { index: '/feedback', label: '反馈中心', icon: 'ChatDotRound', requiredPermissions: ['feedback:self', 'feedback:manage'], requireAnyPermission: true },
     ],
   },
   {
     title: '个人中心',
     items: [
-      { index: '/profile', label: '个人资料', icon: 'User', access: 'user' },
-      { index: '/tokens', label: 'API Key 管理', icon: 'Key', access: 'user' },
-      { index: '/wallet', label: '我的钱包', icon: 'Wallet', access: 'user' },
+      { index: '/profile', label: '个人资料', icon: 'User' },
+      { index: '/tokens', label: 'API Key 管理', icon: 'Key', requiredPermissions: ['tokens:self'] },
+      { index: '/wallet', label: '我的钱包', icon: 'Wallet' },
     ],
   },
   {
     title: '管理',
     items: [
-      { index: '/import-scripts', label: '复制导入', icon: 'Document', access: 'admin' },
-      { index: '/redeem-management', label: '兑换管理', icon: 'Coin', access: 'admin' },
-      { index: '/llm-models', label: '大模型配置', icon: 'Cpu', access: 'admin' },
-      { index: '/questions', label: '题库管理', icon: 'Notebook', access: 'admin' },
-      { index: '/announcements', label: '公告管理', icon: 'BellFilled', access: 'admin' },
-      { index: '/users', label: '用户管理', icon: 'UserFilled', access: 'admin' },
-      { index: '/roles', label: '角色权限', icon: 'Lock', access: 'admin' },
-      { index: '/system-logs', label: '系统日志', icon: 'Monitor', access: 'admin' },
-      { index: '/system-config', label: '系统配置', icon: 'Setting', access: 'superadmin' },
+      { index: '/import-scripts', label: '复制导入', icon: 'Document', requiredPermissions: ['import-scripts:read'] },
+      { index: '/redeem-management', label: '兑换管理', icon: 'Coin', requiredPermissions: ['wallet:changes:write'] },
+      { index: '/llm-models', label: '大模型配置', icon: 'Cpu', requiredPermissions: ['llm:read'] },
+      { index: '/questions', label: '题库管理', icon: 'Notebook', requiredPermissions: ['questions:read'] },
+      { index: '/announcements', label: '公告管理', icon: 'BellFilled', requiredPermissions: ['announcements:read'] },
+      { index: '/users', label: '用户管理', icon: 'UserFilled', requiredPermissions: ['users:write'] },
+      { index: '/roles', label: '角色权限', icon: 'Lock', requiredPermissions: ['roles:read'] },
+      { index: '/system-logs', label: '系统日志', icon: 'Monitor', requiredPermissions: ['system:read'] },
+      { index: '/system-config', label: '系统配置', icon: 'Setting', requiredPermissions: ['system:write'] },
     ],
   },
 ]
 
 const menuGroups = computed(() =>
   allGroups
-    .map((g) => ({ title: g.title, items: g.items.filter((m) => auth.hasAccess(m.access)) }))
+    .map((group) => ({
+      title: group.title,
+      items: group.items.filter((item) => {
+        const required = item.requiredPermissions ?? []
+        return item.requireAnyPermission
+          ? auth.hasAnyPermission(required)
+          : auth.hasAllPermissions(required)
+      }),
+    }))
     .filter((g) => g.items.length > 0),
 )
 const activeIndex = computed(() => route.path)
 
-const roleLabel = computed(() => {
-  switch (auth.role) {
-    case 'superadmin':
-      return '超级管理员'
-    case 'admin':
-      return '管理员'
-    default:
-      return '普通用户'
-  }
-})
+const roleLabel = computed(() => auth.user?.role_name || auth.user?.role || '—')
 
 /* 移动端抽屉 */
 const drawerOpen = ref(false)
@@ -122,10 +129,13 @@ async function handleLogout() {
   <div class="flex h-full">
     <!-- 侧边导航：桌面常驻，移动端抽屉 -->
     <SidebarNav
-      class="hidden w-60 shrink-0 lg:flex"
+      class="hidden shrink-0 lg:flex transition-[width] duration-300 ease-in-out"
+      :class="isCollapsed ? 'w-18' : 'w-60'"
       :groups="menuGroups"
       :active="activeIndex"
+      :collapsed="isCollapsed"
       @select="handleSelect"
+      @toggle-collapse="toggleCollapse"
     />
 
     <!-- 移动端抽屉 -->

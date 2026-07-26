@@ -1,6 +1,7 @@
 /** 后端数据契约的 TypeScript 类型定义（与 FastAPI 响应字段严格对齐）。 */
 
-export type Role = 'superadmin' | 'admin' | 'user'
+/** 角色标识由后端角色目录动态维护，系统内置角色只是其中三个记录。 */
+export type Role = string
 export type InviteRewardMode = 'inviter' | 'invitee' | 'both'
 
 export interface User {
@@ -8,6 +9,9 @@ export interface User {
   username: string
   display_name: string
   role: Role
+  role_name?: string
+  role_is_system?: boolean
+  permissions?: string[]
   status: string
   email: string | null
   points: number
@@ -190,9 +194,22 @@ export interface ImportScript {
   ocs_config?: OcsConfig
 }
 
+export interface PermissionDefinition {
+  key: string
+  group: string
+  group_label: string
+  label: string
+  description: string
+  icon: string
+}
+
 export interface RolePermission {
   role_id: string
+  name: string
+  description: string
   permissions: string[]
+  is_system: boolean
+  created_at: number
   updated_at: number
 }
 
@@ -224,8 +241,14 @@ export interface NotificationCenterItem {
 }
 
 export type AnnouncementLevel = 'info' | 'success' | 'warning' | 'danger'
-export type AnnouncementAudience = 'all' | 'user' | 'admin' | 'superadmin'
+/** 公告受众为 all 或后端角色目录中的任意稳定角色标识。 */
+export type AnnouncementAudience = string
 export type AnnouncementStatus = 'draft' | 'published' | 'archived'
+
+export interface AnnouncementAudienceOption {
+  value: AnnouncementAudience
+  label: string
+}
 
 export interface Announcement {
   announcement_id: string
@@ -262,7 +285,7 @@ export interface Workbench {
     label: string
     path: string
     action: 'navigate' | 'copy_import_script'
-    requires_role: Role
+    requires_permissions: string[]
   }[]
   overview: {
     today_calls: number
@@ -524,16 +547,57 @@ export type ImageGenerationJobStatus =
   | 'cancelled'
   | 'deleted'
 
+export type ImageGenerationProvider =
+  | 'gemini-native'
+  | 'openai-images'
+  | 'openai-compatible-images'
+  | 'openai-chat-image'
+
+export interface ImageGenerationOutputOptions {
+  size?: string
+  aspect_ratio?: string
+  image_size?: string
+  mode?: 'model-controlled'
+}
+
+export type ImageGenerationOutputCapabilities =
+  | {
+      kind: 'gemini'
+      aspect_ratios: string[]
+      image_sizes: string[]
+    }
+  | {
+      kind: 'openai-images'
+      preset_sizes: string[]
+      allow_custom_size: boolean
+      custom_size_constraints: {
+        min_width: number
+        max_width: number
+        min_height: number
+        max_height: number
+        step: number
+        min_pixels: number
+        max_pixels: number
+      }
+    }
+  | {
+      kind: 'compatible-images'
+      preset_sizes: string[]
+      allow_custom_size: false
+    }
+  | { kind: 'model-controlled' | 'unavailable' }
+
 export interface ImageGenerationModel {
   model_id: string
   name: string
-  provider: 'openai-images' | 'openai-chat-image' | string
+  provider: ImageGenerationProvider | string
   base_url: string
   model: string
   api_key_configured: boolean
   timeout_seconds: number
   status: 'active' | 'inactive' | string
   capabilities: string[]
+  protocol_config: Record<string, unknown>
   created_at: number
   updated_at: number
 }
@@ -555,6 +619,7 @@ export interface ImageGenerationJob {
   username: string
   prompt: string
   size: string
+  output: ImageGenerationOutputOptions
   model_id: string
   model_name: string
   status: ImageGenerationJobStatus
@@ -572,7 +637,9 @@ export interface ImageGenerationJob {
 export interface ImageGenerationCapabilities {
   available: boolean
   model_name: string
+  provider: ImageGenerationProvider | ''
   sizes: string[]
+  output: ImageGenerationOutputCapabilities
   points_per_image: number
   max_active_jobs: number
   daily_limit: number

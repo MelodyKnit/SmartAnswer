@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from ...llm.management import LlmManagementService
 from ..notifications import NotificationService
 from ..settings import SettingsService
@@ -37,6 +39,7 @@ class DashboardService:
         username: str,
         role: str = "user",
         scope: str = "self",
+        permissions: set[str] | None = None,
     ) -> list[dict]:
         """构造工作台排行统计。"""
         start_time, end_time = recent_day_range(days)
@@ -46,6 +49,7 @@ class DashboardService:
             username=username,
             role=role,
             scope=scope,
+            can_view_global=can_view_global(role, permissions),
             start_time=start_time,
             end_time=end_time,
             limit=max(1, min(limit, 50)),
@@ -63,11 +67,16 @@ class DashboardService:
         points: int,
         role: str = "user",
         scope: str = "self",
+        permissions: set[str] | None = None,
     ) -> dict:
         """构造工作台首页聚合数据。"""
         today_start, today_end = current_local_day_range()
+        can_view_all = can_view_global(role, permissions)
         effective_scope, _ = self.usage.usage_scope(
-            username=username, role=role, scope=scope
+            username=username,
+            role=role,
+            scope=scope,
+            can_view_global=can_view_all,
         )
         overview = self.usage.usage_overview(
             username=username,
@@ -75,6 +84,7 @@ class DashboardService:
             scope=effective_scope,
             start_time=today_start,
             end_time=today_end,
+            can_view_global=can_view_all,
         )
         total_count = int(overview["total_count"])
         success_rate = (
@@ -92,13 +102,13 @@ class DashboardService:
                 scope=effective_scope,
                 start_time=today_start,
                 end_time=today_end,
+                can_view_global=can_view_all,
             )
         }
         notifications = self.notifications.list_notifications(user_id=user_id, limit=5)
         wallet = self.wallet.wallet_summary(
             user_id=user_id, username=username, points=points
         )
-        is_admin = role in {"admin", "superadmin"}
         ranking_preview = self.dashboard_rankings(
             days=1,
             limit=5,
@@ -106,70 +116,57 @@ class DashboardService:
             username=username,
             role=role,
             scope=effective_scope,
+            permissions=permissions,
         )
-        quick_actions = (
-            [
-                {
-                    "key": "create_api_key",
-                    "label": "创建API Key",
-                    "path": "/tokens",
-                    "action": "navigate",
-                    "requires_role": "user",
-                },
-                {
-                    "key": "copy_import_script",
-                    "label": "复制导入脚本",
-                    "path": "/tokens",
-                    "action": "copy_import_script",
-                    "requires_role": "user",
-                },
-                {
-                    "key": "interface_status",
-                    "label": "接口状态",
-                    "path": "/status",
-                    "action": "navigate",
-                    "requires_role": "user",
-                },
-                {
-                    "key": "usage_logs",
-                    "label": "使用记录",
-                    "path": "/usage-logs",
-                    "action": "navigate",
-                    "requires_role": "user",
-                },
-                {
-                    "key": "wallet",
-                    "label": "我的钱包",
-                    "path": "/wallet",
-                    "action": "navigate",
-                    "requires_role": "user",
-                },
-            ]
-            if not is_admin
-            else [
-                {
-                    "key": "create_api_key",
-                    "label": "创建API Key",
-                    "path": "/tokens",
-                    "action": "navigate",
-                    "requires_role": "user",
-                },
-                {
-                    "key": "generate_script",
-                    "label": "生成导入脚本",
-                    "path": "/import-scripts",
-                    "action": "navigate",
-                    "requires_role": "admin",
-                },
-                {
-                    "key": "interface_status",
-                    "label": "接口状态",
-                    "path": "/status",
-                    "action": "navigate",
-                    "requires_role": "user",
-                },
-            ]
-        )
+        quick_actions = [
+            {
+                "key": "create_api_key",
+                "label": "创建 API Key",
+                "path": "/tokens",
+                "action": "navigate",
+                "requires_permissions": ["tokens:self"],
+            },
+            {
+                "key": "copy_import_script",
+                "label": "复制导入脚本",
+                "path": "/tokens",
+                "action": "copy_import_script",
+                "requires_permissions": ["tokens:self"],
+            },
+            {
+                "key": "interface_status",
+                "label": "接口状态",
+                "path": "/status",
+                "action": "navigate",
+                "requires_permissions": [],
+            },
+            {
+                "key": "usage_logs",
+                "label": "使用记录",
+                "path": "/usage-logs",
+                "action": "navigate",
+                "requires_permissions": [],
+            },
+            {
+                "key": "wallet",
+                "label": "我的钱包",
+                "path": "/wallet",
+                "action": "navigate",
+                "requires_permissions": [],
+            },
+            {
+                "key": "generate_script",
+                "label": "生成导入脚本",
+                "path": "/import-scripts",
+                "action": "navigate",
+                "requires_permissions": ["import-scripts:read"],
+            },
+        ]
+        quick_actions = [
+            action
+            for action in quick_actions
+            if has_permissions(role, permissions, action["requires_permissions"])
+        ]
         site_title = self.settings.get_site_config()["site_title"]
         return {
             "scope": effective_scope,
@@ -187,7 +184,13 @@ class DashboardService:
             },
             "trend": {
                 "days": 7,
-                "items": self.usage.usage_trend(username, role, effective_scope, 7),
+                "items": self.usage.usage_trend(
+                    username,
+                    role,
+                    effective_scope,
+                    7,
+                    can_view_global=can_view_all,
+                ),
             },
             "question_distribution": distribution,
             "ranking_preview": ranking_preview,
@@ -202,6 +205,7 @@ class DashboardService:
         role: str,
         scope: str,
         days: int = 30,
+        permissions: set[str] | None = None,
     ) -> dict:
         """返回工作台摘要统计。"""
 
@@ -212,6 +216,7 @@ class DashboardService:
             scope=scope,
             start_time=start_time,
             end_time=end_time,
+            can_view_global=can_view_global(role, permissions),
         )
         effective_scope = str(overview["scope"])
         return {
@@ -228,10 +233,15 @@ class DashboardService:
                     scope=effective_scope,
                     start_time=start_time,
                     end_time=end_time,
+                    can_view_global=can_view_global(role, permissions),
                 )
             },
             "trend": self.usage.usage_summary_trend(
-                username, role, effective_scope, days
+                username,
+                role,
+                effective_scope,
+                days,
+                can_view_global=can_view_global(role, permissions),
             ),
         }
 
@@ -256,3 +266,21 @@ def normalize_ranking_dimension(value: str) -> str:
     if normalized in {"provider", "question_type", "username"}:
         return normalized
     return "provider"
+
+
+def can_view_global(role: str, permissions: set[str] | None) -> bool:
+    """判断当前角色是否可读取全站看板统计。"""
+
+    if permissions is None:
+        return role == "superadmin"
+    return role == "superadmin" or "dashboard:all" in set(permissions or ())
+
+
+def has_permissions(role: str, permissions: set[str] | None, required: Sequence[str]) -> bool:
+    """判断工作台快捷项所需权限，超级管理员始终可见。"""
+
+    if role == "superadmin":
+        return True
+    if permissions is None:
+        return False
+    return set(required).issubset(set(permissions))

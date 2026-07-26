@@ -10,7 +10,6 @@ from ..base import PlatformDomainService
 from .records import AnnouncementRecord
 
 ANNOUNCEMENT_LEVELS = {"info", "success", "warning", "danger"}
-ANNOUNCEMENT_AUDIENCES = {"all", "user", "admin", "superadmin"}
 ANNOUNCEMENT_STATUSES = {"draft", "published", "archived"}
 
 
@@ -29,6 +28,7 @@ class AnnouncementService(PlatformDomainService):
         starts_at: float = 0.0,
         ends_at: float = 0.0,
         created_by: str = "",
+        valid_role_ids: set[str],
     ) -> dict:
         """创建系统公告。"""
 
@@ -41,6 +41,7 @@ class AnnouncementService(PlatformDomainService):
             status=status,
             starts_at=starts_at,
             ends_at=ends_at,
+            valid_role_ids=valid_role_ids,
         )
         record = AnnouncementRecord(
             announcement_id=secrets.token_hex(12),
@@ -72,6 +73,7 @@ class AnnouncementService(PlatformDomainService):
         pinned: bool | None = None,
         starts_at: float | None = None,
         ends_at: float | None = None,
+        valid_role_ids: set[str],
     ) -> dict:
         """更新系统公告。"""
 
@@ -87,6 +89,8 @@ class AnnouncementService(PlatformDomainService):
                 status=record.status if status is None else status,
                 starts_at=record.starts_at if starts_at is None else starts_at,
                 ends_at=record.ends_at if ends_at is None else ends_at,
+                # 已删除角色可能仍被历史公告引用；允许继续编辑并改投其他角色。
+                valid_role_ids={*valid_role_ids, record.audience},
             )
             published_at = record.published_at
             if normalized["status"] == "published" and published_at <= 0:
@@ -108,10 +112,16 @@ class AnnouncementService(PlatformDomainService):
             )
             return self.repository.save_announcement(updated).to_dict()
 
-    def archive_announcement(self, announcement_id: str) -> dict:
+    def archive_announcement(
+        self, announcement_id: str, *, valid_role_ids: set[str]
+    ) -> dict:
         """归档公告，不物理删除。"""
 
-        return self.update_announcement(announcement_id, status="archived")
+        return self.update_announcement(
+            announcement_id,
+            status="archived",
+            valid_role_ids=valid_role_ids,
+        )
 
     def list_announcements(
         self,
@@ -171,6 +181,7 @@ class AnnouncementService(PlatformDomainService):
         status: str,
         starts_at: float,
         ends_at: float,
+        valid_role_ids: set[str],
     ) -> dict:
         """校验并规范化公告输入。"""
 
@@ -190,7 +201,7 @@ class AnnouncementService(PlatformDomainService):
         normalized_status = (status or "draft").strip()
         if normalized_level not in ANNOUNCEMENT_LEVELS:
             raise AuthError("INVALID_INPUT", "公告等级不支持", http_status=400)
-        if normalized_audience not in ANNOUNCEMENT_AUDIENCES:
+        if normalized_audience not in {"all", *valid_role_ids}:
             raise AuthError("INVALID_INPUT", "公告投放范围不支持", http_status=400)
         if normalized_status not in ANNOUNCEMENT_STATUSES:
             raise AuthError("INVALID_INPUT", "公告状态不支持", http_status=400)

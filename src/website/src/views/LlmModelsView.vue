@@ -29,6 +29,7 @@ import { DEFAULT_PAGE_SIZE, SYSTEM_DEFAULTS } from '@/config/constants'
 
 // === 1. 概览状态 ===
 const auth = useAuthStore()
+const canManageLlm = computed(() => auth.hasPermission('llm:write'))
 const activeTab = ref<
   'runtime' | 'websearch' | 'models' | 'image-models' | 'stats' | 'traces' | 'image-traces'
 >('runtime')
@@ -634,7 +635,7 @@ onMounted(async () => {
     <PageHeader title="大模型配置" description="统一维护 AI 答题运行配置、模型链和调用追溯。">
       <template #actions>
         <el-button
-          v-if="auth.isSuperAdmin && (activeTab === 'runtime' || activeTab === 'websearch')"
+          v-if="canManageLlm && (activeTab === 'runtime' || activeTab === 'websearch')"
           type="primary"
           :loading="runtimeSaving"
           @click="saveRuntimeConfig"
@@ -642,7 +643,7 @@ onMounted(async () => {
           保存运行配置
         </el-button>
         <el-button
-          v-if="auth.isSuperAdmin && activeTab === 'models'"
+          v-if="canManageLlm && activeTab === 'models'"
           type="primary"
           :icon="'Plus'"
           @click="openCreate"
@@ -663,7 +664,7 @@ onMounted(async () => {
                   v-model="runtimeForm.llm_fallback"
                   active-value="true"
                   inactive-value="false"
-                  :disabled="!auth.isSuperAdmin"
+                  :disabled="!canManageLlm"
                 />
               </el-form-item>
               <el-form-item label="为本地命中生成 AI 解析">
@@ -671,7 +672,7 @@ onMounted(async () => {
                   v-model="runtimeForm.llm_explain"
                   active-value="true"
                   inactive-value="false"
-                  :disabled="!auth.isSuperAdmin"
+                  :disabled="!canManageLlm"
                 />
               </el-form-item>
               <el-form-item label="启用本地规则">
@@ -679,7 +680,7 @@ onMounted(async () => {
                   v-model="runtimeForm.allow_known_rules"
                   active-value="true"
                   inactive-value="false"
-                  :disabled="!auth.isSuperAdmin"
+                  :disabled="!canManageLlm"
                 />
               </el-form-item>
               <el-form-item label="无本地题库模式">
@@ -687,7 +688,7 @@ onMounted(async () => {
                   v-model="runtimeForm.no_local_bank_mode"
                   active-value="true"
                   inactive-value="false"
-                  :disabled="!auth.isSuperAdmin"
+                  :disabled="!canManageLlm"
                 />
               </el-form-item>
               <el-form-item label="优先联网搜索">
@@ -695,7 +696,7 @@ onMounted(async () => {
                   v-model="runtimeForm.search_first"
                   active-value="true"
                   inactive-value="false"
-                  :disabled="!auth.isSuperAdmin"
+                  :disabled="!canManageLlm"
                 />
               </el-form-item>
               <el-form-item label="自一致性重复次数">
@@ -704,14 +705,14 @@ onMounted(async () => {
                   :min="1"
                   :max="10"
                   class="w-full"
-                  :disabled="!auth.isSuperAdmin"
+                  :disabled="!canManageLlm"
                 />
               </el-form-item>
               <el-form-item label="全局模型代理">
                 <el-input
                   v-model="runtimeForm.llm_proxy"
                   placeholder="http://127.0.0.1:7890"
-                  :disabled="!auth.isSuperAdmin"
+                  :disabled="!canManageLlm"
                 />
               </el-form-item>
             </el-form>
@@ -725,14 +726,14 @@ onMounted(async () => {
                   v-model="runtimeForm.llm_cache_enabled"
                   active-value="true"
                   inactive-value="false"
-                  :disabled="!auth.isSuperAdmin"
+                  :disabled="!canManageLlm"
                 />
               </el-form-item>
               <el-form-item label="最低置信度">
-                <el-input v-model="runtimeForm.llm_cache_min_confidence" placeholder="0.95" :disabled="!auth.isSuperAdmin" />
+                <el-input v-model="runtimeForm.llm_cache_min_confidence" placeholder="0.95" :disabled="!canManageLlm" />
               </el-form-item>
               <el-form-item label="最少确认次数">
-                <el-input v-model="runtimeForm.llm_cache_min_confirmations" placeholder="2" :disabled="!auth.isSuperAdmin" />
+                <el-input v-model="runtimeForm.llm_cache_min_confirmations" placeholder="2" :disabled="!canManageLlm" />
               </el-form-item>
             </el-form>
           </div>
@@ -751,7 +752,7 @@ onMounted(async () => {
                 </p>
               </div>
               <el-button
-                v-if="auth.isSuperAdmin"
+                v-if="canManageLlm"
                 type="primary"
                 size="small"
                 icon="Plus"
@@ -803,7 +804,7 @@ onMounted(async () => {
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column v-if="auth.isSuperAdmin" label="排序/操作" width="220" align="right">
+              <el-table-column v-if="canManageLlm" label="排序/操作" width="220" align="right">
                 <template #default="{ row, $index }">
                   <span v-if="row.builtin" class="text-xs text-ink-muted">
                     默认启用，无需配置
@@ -841,7 +842,7 @@ onMounted(async () => {
                 <el-input
                   v-model="runtimeForm.search_proxy"
                   placeholder="http://127.0.0.1:7890 (若引擎未配置独立代理，则会以此代理发起网络请求)"
-                  :disabled="!auth.isSuperAdmin"
+                  :disabled="!canManageLlm"
                 />
               </el-form-item>
             </el-form>
@@ -881,7 +882,7 @@ onMounted(async () => {
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column v-if="auth.isSuperAdmin" label="操作" width="180" align="right">
+            <el-table-column v-if="canManageLlm" label="操作" width="180" align="right">
               <template #default="{ row }">
                 <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
                 <el-button link type="warning" :loading="testingModelId === row.model_id" @click="handleTestModel(row)">测试</el-button>
@@ -896,7 +897,7 @@ onMounted(async () => {
       </el-tab-pane>
 
       <el-tab-pane label="生图模型" name="image-models">
-        <ImageGenerationModelsPanel :can-manage="auth.isSuperAdmin" />
+        <ImageGenerationModelsPanel :can-manage="canManageLlm" />
       </el-tab-pane>
 
       <el-tab-pane label="调用统计" name="stats">

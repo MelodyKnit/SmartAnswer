@@ -18,6 +18,7 @@ import { useAuthStore } from '@/stores/auth'
 
 const auth = useAuthStore()
 const route = useRoute()
+const canViewAllUsage = computed(() => auth.hasPermission('dashboard:all'))
 const loading = ref(false)
 const logs = ref<UsageLog[]>([])
 const tokens = ref<ApiToken[]>([])
@@ -48,7 +49,7 @@ async function load() {
       limit: filters.limit,
       page: page.value,
     }
-    if (auth.isAdmin && filters.username.trim()) params.username = filters.username.trim()
+    if (canViewAllUsage.value && filters.username.trim()) params.username = filters.username.trim()
     if (filters.token_id) params.token_id = filters.token_id
     if (filters.dateRange && filters.dateRange.length === 2) {
       params.start_date = filters.dateRange[0]
@@ -198,7 +199,7 @@ onMounted(() => {
 
     <div class="app-card mb-4 flex flex-wrap items-center gap-3 p-4">
       <el-input
-        v-if="auth.isAdmin"
+        v-if="canViewAllUsage"
         v-model="filters.username"
         placeholder="按用户名筛选"
         clearable
@@ -255,7 +256,7 @@ onMounted(() => {
             <span class="text-ink">{{ row.title || '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column v-if="auth.isAdmin" label="用户" width="120" prop="username" align="center" />
+        <el-table-column v-if="canViewAllUsage" label="用户" width="120" prop="username" align="center" />
         <el-table-column label="令牌" width="150" show-overflow-tooltip align="center">
           <template #default="{ row }">
             <span class="text-ink-soft" :title="tokenTooltip(row)">
@@ -380,7 +381,7 @@ onMounted(() => {
             <dt class="text-ink-muted">准确率（置信度）</dt>
             <dd class="text-ink">{{ (detail.confidence * 100).toFixed(0) }}%</dd>
           </div>
-          <div v-if="auth.isAdmin" class="flex justify-between border-b border-line pb-2">
+          <div v-if="canViewAllUsage" class="flex justify-between border-b border-line pb-2">
             <dt class="text-ink-muted">使用者</dt>
             <dd class="text-ink">{{ detail.username }}</dd>
           </div>

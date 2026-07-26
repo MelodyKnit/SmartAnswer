@@ -16,7 +16,7 @@ const auth = useAuthStore()
 const loading = ref(true)
 const data = ref<Workbench | null>(null)
 const importScriptDialog = ref<InstanceType<typeof ImportScriptCopyDialog>>()
-const scope = ref<'self' | 'global'>(auth.isAdmin ? 'global' : 'self')
+const scope = ref<'self' | 'global'>(auth.hasPermission('dashboard:all') ? 'global' : 'self')
 
 const QUICK_ICONS: Record<string, string> = {
   create_api_key: 'Key',
@@ -44,7 +44,7 @@ async function load() {
 }
 
 async function handleQuickAction(action: Workbench['quick_actions'][number]) {
-  if (action.requires_role && !auth.hasAccess(action.requires_role)) {
+  if (!auth.hasAllPermissions(action.requires_permissions)) {
     return
   }
   if (action.action === 'copy_import_script') {
@@ -65,7 +65,7 @@ const overviewCards = computed(() => {
   ]
 })
 
-const canSwitchScope = computed(() => auth.isAdmin)
+const canSwitchScope = computed(() => auth.hasPermission('dashboard:all'))
 const scopeLabel = computed(() => (scope.value === 'global' ? '全站' : '我的'))
 
 const trendOption = computed<EChartsOption>(() => {
@@ -142,9 +142,9 @@ onMounted(() => {
 })
 
 watch(
-  () => auth.isAdmin,
-  (isAdmin) => {
-    scope.value = isAdmin ? 'global' : 'self'
+  canSwitchScope,
+  (canViewGlobal) => {
+    scope.value = canViewGlobal ? 'global' : 'self'
   },
 )
 
@@ -181,7 +181,7 @@ watch(scope, (_value, oldValue) => {
         <h3 class="mb-4 text-base font-semibold text-ink">常用功能</h3>
         <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
           <button
-            v-for="q in data.quick_actions.filter((item) => auth.hasAccess(item.requires_role))"
+            v-for="q in data.quick_actions.filter((item) => auth.hasAllPermissions(item.requires_permissions))"
             :key="q.key"
             class="flex flex-col items-center gap-2 rounded-xl border border-line bg-canvas/60 p-4 transition hover:border-brand-300 hover:bg-brand-50"
             @click="handleQuickAction(q)"

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /** AI 生图：提交私有文本生图任务、轮询状态并通过受保护接口预览结果。 */
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
-import { Picture, Refresh, MagicStick } from '@element-plus/icons-vue'
+import { Picture, Refresh, MagicStick, QuestionFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { imageGenerationApi } from '@/api/endpoints'
 import { ApiException } from '@/api/http'
@@ -9,6 +9,7 @@ import type {
   ImageGenerationCapabilities,
   ImageGenerationJob,
   ImageGenerationJobStatus,
+  ImageGenerationOutputOptions,
 } from '@/api/types'
 import PageHeader from '@/components/PageHeader.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -26,6 +27,11 @@ let pollTimer: number | undefined
 const form = reactive({
   prompt: '',
   size: '',
+  aspectRatio: '',
+  imageSize: '',
+  useCustomSize: false,
+  customWidth: 1024,
+  customHeight: 1024,
 })
 
 const statusLabels: Record<ImageGenerationJobStatus, string> = {
@@ -50,7 +56,6 @@ const statusTypes: Record<ImageGenerationJobStatus, 'info' | 'warning' | 'succes
 
 const isAvailable = computed(() => capabilities.value?.available === true)
 const pointsPerImage = computed(() => capabilities.value?.points_per_image ?? 0)
-const selectedSize = computed(() => form.size || capabilities.value?.sizes[0] || '')
 const activeJob = computed(() => jobs.value.find((job) => job.job_id === activeJobId.value) || null)
 const hasActiveJob = computed(() => jobs.value.some((job) => job.status === 'queued' || job.status === 'running'))
 const canSubmit = computed(
@@ -67,6 +72,55 @@ function createIdempotencyKey(): string {
     return crypto.randomUUID()
   }
   return `image-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+function syncOutputDefaults(value: ImageGenerationCapabilities) {
+  const output = value.output
+  if (output.kind === 'gemini') {
+    if (!output.aspect_ratios.includes(form.aspectRatio)) form.aspectRatio = output.aspect_ratios[0] || ''
+    if (!output.image_sizes.includes(form.imageSize)) form.imageSize = output.image_sizes[0] || ''
+    return
+  }
+  if (output.kind === 'openai-images' || output.kind === 'compatible-images') {
+    if (!output.preset_sizes.includes(form.size)) form.size = output.preset_sizes[0] || ''
+    if (form.useCustomSize && !output.allow_custom_size) form.useCustomSize = false
+    return
+  }
+  form.size = ''
+  form.useCustomSize = false
+}
+
+function buildOutput(): ImageGenerationOutputOptions | undefined {
+  const output = capabilities.value?.output
+  if (!output || output.kind === 'unavailable' || output.kind === 'model-controlled') return undefined
+  if (output.kind === 'gemini') {
+    return {
+      aspect_ratio: form.aspectRatio || output.aspect_ratios[0],
+      image_size: form.imageSize || output.image_sizes[0],
+    }
+  }
+  if (output.kind === 'openai-images' && form.useCustomSize) {
+    return { size: `${form.customWidth}x${form.customHeight}` }
+  }
+  if (output.kind === 'openai-images' || output.kind === 'compatible-images') {
+    return { size: form.size || output.preset_sizes[0] }
+  }
+  return undefined
+}
+
+function outputSelectionLabel(): string {
+  const output = buildOutput()
+  if (output?.aspect_ratio && output.image_size) return `${output.aspect_ratio} · ${output.image_size}`
+  if (output?.size) return output.size
+  return '由模型决定'
+}
+
+function jobOutputLabel(job: ImageGenerationJob): string {
+  const requested = job.output.aspect_ratio && job.output.image_size
+    ? `${job.output.aspect_ratio} · ${job.output.image_size}`
+    : job.output.size || job.size || '由模型决定'
+  const asset = job.assets[0]
+  return asset?.width && asset?.height ? `${requested} · 实际 ${asset.width}x${asset.height}` : requested
 }
 
 function revokePreviewUrls() {
@@ -103,17 +157,19 @@ async function refreshJobs() {
 async function load() {
   loading.value = true
   try {
-    const result = await imageGenerationApi.capabilities()
-    capabilities.value = result.capabilities
-    if (!form.size || !result.capabilities.sizes.includes(form.size)) {
-      form.size = result.capabilities.sizes[0] || ''
-    }
+    await refreshCapabilities()
     await refreshJobs()
   } catch (error) {
     ElMessage.error(error instanceof ApiException ? error.message : '加载生图能力失败')
   } finally {
     loading.value = false
   }
+}
+
+async function refreshCapabilities() {
+  const result = await imageGenerationApi.capabilities()
+  capabilities.value = result.capabilities
+  syncOutputDefaults(result.capabilities)
 }
 
 async function refreshActiveJob() {
@@ -132,9 +188,7 @@ async function refreshActiveJob() {
     if (!['queued', 'running'].includes(result.job.status)) {
       activeJobId.value = ''
       stopPolling()
-      await Promise.all([auth.refreshProfile(), imageGenerationApi.capabilities().then((res) => {
-        capabilities.value = res.capabilities
-      })])
+      await Promise.all([auth.refreshProfile(), refreshCapabilities()])
     }
   } catch (error) {
     if (error instanceof ApiException && error.code !== 'JOB_NOT_FOUND') {
@@ -174,7 +228,7 @@ async function submit() {
   try {
     const result = await imageGenerationApi.create({
       prompt: form.prompt.trim(),
-      size: selectedSize.value,
+      ...(buildOutput() ? { output: buildOutput() } : {}),
       idempotency_key: createIdempotencyKey(),
     })
     const existingIndex = jobs.value.findIndex((item) => item.job_id === result.job.job_id)
@@ -210,9 +264,7 @@ async function removeJob(job: ImageGenerationJob) {
   try {
     await imageGenerationApi.delete(job.job_id)
     if (activeJobId.value === job.job_id) activeJobId.value = ''
-    await Promise.all([refreshJobs(), imageGenerationApi.capabilities().then((res) => {
-      capabilities.value = res.capabilities
-    }), auth.refreshProfile()])
+    await Promise.all([refreshJobs(), refreshCapabilities(), auth.refreshProfile()])
     if (!hasActiveJob.value) stopPolling()
     ElMessage.success(`${action}成功`)
   } catch (error) {
@@ -247,16 +299,22 @@ onUnmounted(() => {
               <p class="text-xs font-semibold uppercase tracking-[0.18em] text-brand-500">Image Generation</p>
               <h3 class="mt-1 flex items-center gap-2 text-lg font-semibold text-ink">
                 <el-icon class="text-brand-500"><Picture /></el-icon>
-                文本生成图片
+                <span>文本生成图片</span>
+                <el-tooltip
+                  content="仅支持单张文本生图。提交后会锁定一次任务，模型拒绝、超时或图片校验失败会自动退款。"
+                  placement="top"
+                  :show-after="100"
+                >
+                  <el-icon class="text-ink-muted/60 hover:text-brand-500 cursor-help transition-colors text-sm">
+                    <QuestionFilled />
+                  </el-icon>
+                </el-tooltip>
               </h3>
             </div>
             <el-tag :type="isAvailable ? 'success' : 'info'" effect="plain">
               {{ isAvailable ? '模型可用' : '暂不可用' }}
             </el-tag>
           </div>
-          <p class="mt-2 text-xs leading-5 text-ink-soft">
-            仅支持单张文本生图。提交后会锁定一次任务，模型拒绝、超时或图片校验失败会自动退款。
-          </p>
         </div>
 
         <div class="space-y-5 p-5">
@@ -290,12 +348,66 @@ onUnmounted(() => {
                 placeholder="描述画面主体、场景、风格、光线和构图，例如：雨后城市街道，水彩插画风格，暖色灯光。"
               />
             </el-form-item>
-            <el-form-item label="图片尺寸">
-              <el-radio-group v-model="form.size" class="flex flex-wrap gap-2">
-                <el-radio-button v-for="size in capabilities?.sizes || []" :key="size" :value="size">
+            <el-form-item label="输出尺寸">
+              <div v-if="capabilities?.output.kind === 'gemini'" class="grid w-full gap-3 sm:grid-cols-2">
+                <div>
+                  <p class="mb-1.5 text-xs text-ink-soft">画幅比例</p>
+                  <el-select v-model="form.aspectRatio" class="w-full">
+                    <el-option
+                      v-for="ratio in capabilities.output.aspect_ratios"
+                      :key="ratio"
+                      :label="ratio"
+                      :value="ratio"
+                    />
+                  </el-select>
+                </div>
+                <div>
+                  <p class="mb-1.5 text-xs text-ink-soft">像素档位</p>
+                  <el-select v-model="form.imageSize" class="w-full">
+                    <el-option
+                      v-for="imageSize in capabilities.output.image_sizes"
+                      :key="imageSize"
+                      :label="imageSize"
+                      :value="imageSize"
+                    />
+                  </el-select>
+                </div>
+              </div>
+              <div v-else-if="capabilities?.output.kind === 'openai-images'" class="w-full space-y-3">
+                <el-radio-group v-model="form.size" :disabled="form.useCustomSize" class="flex flex-wrap gap-2">
+                  <el-radio-button
+                    v-for="size in capabilities.output.preset_sizes"
+                    :key="size"
+                    :value="size"
+                  >
+                    {{ size }}
+                  </el-radio-button>
+                </el-radio-group>
+                <div v-if="capabilities.output.allow_custom_size" class="rounded-lg border border-line bg-card-soft px-3 py-3">
+                  <div class="flex flex-wrap items-center justify-between gap-3">
+                    <span class="text-sm text-ink">自定义宽高</span>
+                    <el-switch v-model="form.useCustomSize" />
+                  </div>
+                  <div v-if="form.useCustomSize" class="mt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                    <el-input-number v-model="form.customWidth" :min="capabilities.output.custom_size_constraints.min_width" :max="capabilities.output.custom_size_constraints.max_width" :step="capabilities.output.custom_size_constraints.step" controls-position="right" />
+                    <span class="text-ink-muted">x</span>
+                    <el-input-number v-model="form.customHeight" :min="capabilities.output.custom_size_constraints.min_height" :max="capabilities.output.custom_size_constraints.max_height" :step="capabilities.output.custom_size_constraints.step" controls-position="right" />
+                  </div>
+                </div>
+              </div>
+              <el-radio-group v-else-if="capabilities?.output.kind === 'compatible-images'" v-model="form.size" class="flex flex-wrap gap-2">
+                <el-radio-button
+                  v-for="size in capabilities.output.preset_sizes"
+                  :key="size"
+                  :value="size"
+                >
                   {{ size }}
                 </el-radio-button>
               </el-radio-group>
+              <div v-else class="rounded-lg border border-line bg-card-soft px-3 py-2.5 text-sm text-ink-soft">
+                尺寸由当前模型决定，生成完成后会显示实际输出宽高。
+              </div>
+              <p v-if="isAvailable" class="mt-2 text-xs text-ink-muted">本次请求：{{ outputSelectionLabel() }}</p>
             </el-form-item>
             <el-button type="primary" class="min-h-10 w-full" :loading="submitting" :disabled="!canSubmit" @click="submit">
               <el-icon class="mr-1"><MagicStick /></el-icon>
@@ -304,7 +416,7 @@ onUnmounted(() => {
           </el-form>
 
           <div v-if="!isAvailable" class="rounded-lg border border-warning/30 bg-warning/5 p-3 text-xs leading-5 text-ink-soft">
-            管理员尚未配置可用的生图模型。模型配置完成后，此页面会自动显示支持的图片尺寸。
+            管理员尚未配置可用的生图模型。模型配置完成后，此页面会显示可选画幅或尺寸。
           </div>
         </div>
       </section>
@@ -326,7 +438,7 @@ onUnmounted(() => {
             <div class="flex items-start justify-between gap-3 border-b border-line px-4 py-3">
               <div class="min-w-0">
                 <p class="line-clamp-2 text-sm font-medium leading-5 text-ink">{{ job.prompt }}</p>
-                <p class="mt-1 text-xs text-ink-muted">{{ job.size }} · {{ formatDateTime(job.created_at) }}</p>
+                <p class="mt-1 text-xs text-ink-muted">{{ jobOutputLabel(job) }} · {{ formatDateTime(job.created_at) }}</p>
               </div>
               <el-tag size="small" :type="statusTypes[job.status]" effect="plain">
                 {{ statusLabels[job.status] }}

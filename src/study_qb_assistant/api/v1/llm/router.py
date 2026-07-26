@@ -16,7 +16,6 @@ from ...dependencies import (
 from ...security import (
     auth_error_response,
     require_permissions,
-    require_roles,
 )
 from .schemas import LlmModelCreatePayload, LlmModelUpdatePayload, LlmRuntimeConfigPayload
 
@@ -34,9 +33,6 @@ def build_llm_router() -> APIRouter:
 
     @router.get("/llm-models")
     def llm_models_list(request: Request, llm: LlmManagementServiceDep) -> JSONResponse:
-        denied = require_roles(request, {"admin", "superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"llm:read"})
         if denied:
             return denied
@@ -44,9 +40,6 @@ def build_llm_router() -> APIRouter:
 
     @router.get("/llm-runtime-config")
     def llm_runtime_config(request: Request, settings: SettingsServiceDep) -> JSONResponse:
-        denied = require_roles(request, {"admin", "superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"llm:read"})
         if denied:
             return denied
@@ -59,9 +52,6 @@ def build_llm_router() -> APIRouter:
         lookup: LookupServiceDep,
         payload: LlmRuntimeConfigPayload,
     ) -> JSONResponse:
-        denied = require_roles(request, {"superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"llm:write"})
         if denied:
             return denied
@@ -80,9 +70,6 @@ def build_llm_router() -> APIRouter:
         lookup: LookupServiceDep,
         payload: LlmModelCreatePayload,
     ) -> JSONResponse:
-        denied = require_roles(request, {"superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"llm:write"})
         if denied:
             return denied
@@ -112,9 +99,6 @@ def build_llm_router() -> APIRouter:
         model_id: str,
         payload: LlmModelUpdatePayload,
     ) -> JSONResponse:
-        denied = require_roles(request, {"superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"llm:write"})
         if denied:
             return denied
@@ -133,9 +117,6 @@ def build_llm_router() -> APIRouter:
         lookup: LookupServiceDep,
         model_id: str,
     ) -> JSONResponse:
-        denied = require_roles(request, {"superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"llm:write"})
         if denied:
             return denied
@@ -152,9 +133,6 @@ def build_llm_router() -> APIRouter:
         llm: LlmManagementServiceDep,
         model_id: str,
     ) -> JSONResponse:
-        denied = require_roles(request, {"admin", "superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"llm:write"})
         if denied:
             return denied
@@ -166,9 +144,6 @@ def build_llm_router() -> APIRouter:
 
     @router.get("/llm-stats")
     def llm_stats(request: Request, llm: LlmManagementServiceDep) -> JSONResponse:
-        denied = require_roles(request, {"admin", "superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"llm:read"})
         if denied:
             return denied
@@ -184,9 +159,6 @@ def build_llm_router() -> APIRouter:
         limit: int = 50,
         page: int = 1,
     ) -> JSONResponse:
-        denied = require_roles(request, {"admin", "superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"llm:read"})
         if denied:
             return denied

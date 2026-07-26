@@ -190,18 +190,29 @@ class AuthService:
             return None
         return self.public_user_dict(user)
 
-    def set_role(self, username: str, role: str) -> dict:
-        """更新用户角色。"""
+    def set_role(
+        self,
+        username: str,
+        role: str,
+        *,
+        valid_role_ids: set[str],
+    ) -> dict:
+        """更新用户角色，并由调用方提供当前动态角色目录校验。"""
         username = (username or "").strip()
         role = (role or "").strip().lower()
-        if role not in {"superadmin", "admin", "user"}:
+        if role not in valid_role_ids:
             raise AuthError(
-                "INVALID_INPUT", "角色必须为 superadmin、admin 或 user", http_status=400
+                "ROLE_NOT_FOUND", "角色不存在", http_status=400
             )
         with self._lock:
             user = self.repository.get_user(username)
             if user is None:
                 raise AuthError("USER_NOT_FOUND", "用户不存在", http_status=404)
+            self.assert_system_owner_retained(
+                user,
+                next_role=role,
+                next_status=user.status,
+            )
             user.role = role
             self.repository.save_user(user)
             return self.public_user_dict(user)
@@ -216,6 +227,11 @@ class AuthService:
             user = self.repository.get_user(username)
             if user is None:
                 raise AuthError("USER_NOT_FOUND", "用户不存在", http_status=404)
+            self.assert_system_owner_retained(
+                user,
+                next_role=user.role,
+                next_status=status,
+            )
             user.status = status
             self.repository.save_user(user)
             if status != "active":
@@ -261,10 +277,48 @@ class AuthService:
         """删除用户并清理其登录会话。"""
         username = (username or "").strip()
         with self._lock:
+            user = self.repository.get_user(username)
+            if user is None:
+                return False
+            self.assert_system_owner_retained(
+                user,
+                next_role="",
+                next_status="deleted",
+            )
             deleted = self.repository.delete_user(username)
             if deleted:
                 self.session_store.delete_user_sessions(username)
             return deleted
+
+    def assert_system_owner_retained(
+        self,
+        user: UserRecord,
+        *,
+        next_role: str,
+        next_status: str,
+    ) -> None:
+        """阻止移除系统中最后一个可用超级管理员。
+
+        自定义角色可以承载业务权限，但不能替代 ``superadmin`` 的系统所有者职责。
+        该校验必须与用户写入处于同一个服务锁内，避免并发调整导致平台失去角色管理入口。
+        """
+
+        if user.role != "superadmin" or user.status != "active":
+            return
+        if next_role == "superadmin" and next_status == "active":
+            return
+        has_other_active_owner = any(
+            candidate.username != user.username
+            and candidate.role == "superadmin"
+            and candidate.status == "active"
+            for candidate in self.repository.list_users()
+        )
+        if not has_other_active_owner:
+            raise AuthError(
+                "LAST_SUPERADMIN_PROTECTED",
+                "至少保留一个已启用的超级管理员",
+                http_status=409,
+            )
 
     def set_points(self, username: str, points: int) -> dict:
         """直接设置用户积分余额。"""

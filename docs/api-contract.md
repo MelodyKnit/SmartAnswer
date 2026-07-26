@@ -219,8 +219,8 @@ Current behavior:
 
 ## 10. Image Generation
 
-文本生图是独立于查题与 OCS 图片资源的私有功能。它使用兼容 OpenAI Images 的
-`/images/generations` 协议，并且不会复用题目 `usage_logs` 或 OCS 公共图床。
+文本生图是独立于查题与 OCS 图片资源的私有功能。它支持 Gemini 原生、OpenAI Images 和受控
+兼容 Images 协议，并且不会复用题目 `usage_logs` 或 OCS 公共图床。
 
 ### User endpoints
 
@@ -236,10 +236,18 @@ Current behavior:
 ```json
 {
   "prompt": "雨后城市街道，水彩插画风格，暖色灯光",
-  "size": "1024x1024",
+  "output": {
+    "aspect_ratio": "16:9",
+    "image_size": "2K"
+  },
   "idempotency_key": "optional-client-key"
 }
 ```
+
+`output` 由当前启用模型的输出能力决定：Gemini 使用 `aspect_ratio` 与 `image_size`；OpenAI Images
+与通用兼容协议使用 `{ "size": "宽x高" }`。旧 `size` 字段仍兼容，但不能与非空 `output` 同时提交。
+旧聊天生图模型不接受尺寸控制，任务会显示“由模型决定”。任务响应中的 `output` 是归一化请求参数，
+生成资产的 `width` 与 `height` 是实际输出尺寸。
 
 `Idempotency-Key` 请求头优先于请求体字段。创建成功时返回 `202`；相同用户和幂等键
 重复提交时返回原任务和 `idempotent_replay: true`，不会重复预扣积分。
@@ -260,8 +268,10 @@ Current behavior:
 - `GET /api/v1/image-generation-stats`
 - `GET /api/v1/image-generation-traces`
 
-模型配置支持 `openai-images`（`/images/generations`）和 `openai-chat-image`（`/chat/completions` 返回图片）
-两种提供商。`api_key` 只接受写入，任何读取接口只返回
+模型配置支持 `gemini-native`（`generateContent`）、`openai-images`（`/images/generations`）、
+`openai-compatible-images`（受控兼容 `/images/generations`）和旧 `openai-chat-image`（聊天补全返回图片）。
+`protocol_config` 是受严格校验的结构化能力声明：Gemini 声明鉴权方式、画幅与像素档位；OpenAI 原生可
+声明预设尺寸与自定义尺寸约束；通用兼容协议仅声明预设尺寸。`api_key` 只接受写入，任何读取接口只返回
 `api_key_configured`；调用追溯不保存提示词、图片字节、Base64 或供应商密钥。首版同一时间
 仅有一个可用于新任务的启用模型，启用新模型会停用之前的模型，避免请求被隐式分流。
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 
@@ -13,6 +13,7 @@ class ImageGenerationRequest:
     prompt: str
     size: str
     request_id: str
+    output_options: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

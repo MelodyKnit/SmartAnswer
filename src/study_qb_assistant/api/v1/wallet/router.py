@@ -12,7 +12,6 @@ from ...security import (
     current_user,
     forbidden_response,
     require_permissions,
-    require_roles,
     unauthorized_response,
 )
 from .schemas import (
@@ -74,9 +73,6 @@ def build_wallet_router() -> APIRouter:
         limit: int = 100,
         page: int = 1,
     ) -> JSONResponse:
-        denied = require_roles(request, {"admin", "superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"wallet:changes:read"})
         if denied:
             return denied
@@ -101,9 +97,6 @@ def build_wallet_router() -> APIRouter:
 
     @router.post("/wallet/grants")
     def wallet_grants(request: Request, payload: WalletGrantPayload) -> JSONResponse:
-        denied = require_roles(request, {"admin", "superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"wallet:changes:write"})
         if denied:
             return denied
@@ -121,8 +114,8 @@ def build_wallet_router() -> APIRouter:
                 },
                 status_code=404,
             )
-        if actor["role"] == "admin" and target["role"] != "user":
-            return forbidden_response("管理员只能为普通用户发放积分")
+        if actor["role"] != "superadmin" and target["role"] != "user":
+            return forbidden_response("只能为内置普通用户发放积分")
         order = wallet_service.grant_wallet(
             user_id=str(target["user_id"]),
             username=str(target["username"]),
@@ -138,9 +131,6 @@ def build_wallet_router() -> APIRouter:
     # --- 兑换码管理 ---
     @router.get("/wallet/redeem-codes")
     def wallet_redeem_codes(request: Request) -> JSONResponse:
-        denied = require_roles(request, {"admin", "superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"wallet:changes:write"})
         if denied:
             return denied
@@ -153,9 +143,6 @@ def build_wallet_router() -> APIRouter:
     def wallet_redeem_codes_create(
         request: Request, payload: RedeemCodePayload
     ) -> JSONResponse:
-        denied = require_roles(request, {"admin", "superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"wallet:changes:write"})
         if denied:
             return denied
@@ -205,7 +192,7 @@ def build_wallet_router() -> APIRouter:
 
     @router.get("/points-policy")
     def points_policy_get(request: Request) -> JSONResponse:
-        denied = require_roles(request, {"admin", "superadmin"})
+        denied = require_permissions(request, {"billing:read"})
         if denied:
             return denied
         settings = get_settings_service(request)
@@ -214,9 +201,6 @@ def build_wallet_router() -> APIRouter:
     # --- 计费费率与策略配置 ---
     @router.get("/billing")
     def billing_get(request: Request) -> JSONResponse:
-        denied = require_roles(request, {"admin", "superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"billing:read"})
         if denied:
             return denied
@@ -225,9 +209,6 @@ def build_wallet_router() -> APIRouter:
 
     @router.patch("/billing")
     def billing_update(request: Request, payload: BillingPayload) -> JSONResponse:
-        denied = require_roles(request, {"superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"billing:write"})
         if denied:
             return denied

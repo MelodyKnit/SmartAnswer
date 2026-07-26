@@ -7,6 +7,7 @@ import { ApiException } from '@/api/http'
 import type {
   Announcement,
   AnnouncementAudience,
+  AnnouncementAudienceOption,
   AnnouncementLevel,
   AnnouncementStatus,
 } from '@/api/types'
@@ -21,6 +22,7 @@ const editing = ref<Announcement | null>(null)
 const announcements = ref<Announcement[]>([])
 const total = ref(0)
 const page = ref(1)
+const audienceOptions = ref<AnnouncementAudienceOption[]>([{ value: 'all', label: '全部用户' }])
 
 const filters = reactive({
   keyword: '',
@@ -57,13 +59,6 @@ const levelOptions: { value: AnnouncementLevel; label: string; type: string }[] 
   { value: 'danger', label: '重要', type: 'danger' },
 ]
 
-const audienceOptions: { value: AnnouncementAudience; label: string }[] = [
-  { value: 'all', label: '全部用户' },
-  { value: 'user', label: '普通用户' },
-  { value: 'admin', label: '管理员' },
-  { value: 'superadmin', label: '超级管理员' },
-]
-
 const statusOptions: { value: AnnouncementStatus; label: string; type: string }[] = [
   { value: 'draft', label: '草稿', type: 'info' },
   { value: 'published', label: '已发布', type: 'success' },
@@ -92,7 +87,7 @@ function levelMeta(level: string) {
 }
 
 function audienceLabel(value: string) {
-  return audienceOptions.find((item) => item.value === value)?.label || value
+  return audienceOptions.value.find((item) => item.value === value)?.label || value
 }
 
 function statusMeta(status: string) {
@@ -152,6 +147,7 @@ async function load() {
       limit: filters.limit,
     })
     announcements.value = res.announcements
+    audienceOptions.value = res.audience_options
     total.value = res.total
   } catch (error) {
     ElMessage.error(error instanceof ApiException ? error.message : '加载公告失败')

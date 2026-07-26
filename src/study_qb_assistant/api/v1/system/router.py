@@ -20,7 +20,6 @@ from ...security import (
     auth_error_response,
     current_user,
     require_permissions,
-    require_roles,
 )
 from ...runtime_config import apply_system_config_to_process
 from .schemas import (
@@ -36,9 +35,6 @@ def build_system_router() -> APIRouter:
 
     @router.get("/system-config")
     def system_config_get(request: Request) -> JSONResponse:
-        denied = require_roles(request, {"superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"system:write"})
         if denied:
             return denied
@@ -54,9 +50,6 @@ def build_system_router() -> APIRouter:
     def system_config_patch(
         request: Request, payload: SystemConfigPayload
     ) -> JSONResponse:
-        denied = require_roles(request, {"superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"system:write"})
         if denied:
             return denied
@@ -82,9 +75,6 @@ def build_system_router() -> APIRouter:
     def email_domain_whitelist_get(request: Request) -> JSONResponse:
         """读取仅供系统管理员维护的注册邮箱域名白名单。"""
 
-        denied = require_roles(request, {"superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"system:write"})
         if denied:
             return denied
@@ -100,9 +90,6 @@ def build_system_router() -> APIRouter:
     ) -> JSONResponse:
         """原子替换注册邮箱域名白名单。"""
 
-        denied = require_roles(request, {"superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"system:write"})
         if denied:
             return denied
@@ -116,9 +103,6 @@ def build_system_router() -> APIRouter:
     def project_update_status(request: Request) -> JSONResponse:
         """读取当前构建和最近 GitHub Release 检查结果。"""
 
-        denied = require_roles(request, {"superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"system:write"})
         if denied:
             return denied
@@ -129,9 +113,6 @@ def build_system_router() -> APIRouter:
     def project_update_check(request: Request) -> JSONResponse:
         """从 GitHub 即时检查一个经过 manifest 验证的 Release。"""
 
-        denied = require_roles(request, {"superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"system:write"})
         if denied:
             return denied
@@ -147,9 +128,6 @@ def build_system_router() -> APIRouter:
     ) -> JSONResponse:
         """调度 GitHub Actions 部署管理员确认的版本。"""
 
-        denied = require_roles(request, {"superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"system:write"})
         if denied:
             return denied
@@ -167,9 +145,6 @@ def build_system_router() -> APIRouter:
     def project_update_token_delete(request: Request) -> JSONResponse:
         """清除已保存的 GitHub 访问令牌。"""
 
-        denied = require_roles(request, {"superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"system:write"})
         if denied:
             return denied
@@ -183,9 +158,6 @@ def build_system_router() -> APIRouter:
     def project_update_operation(request: Request, operation_id: str) -> JSONResponse:
         """轮询 GitHub Actions 对应部署任务的最新状态。"""
 
-        denied = require_roles(request, {"superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"system:write"})
         if denied:
             return denied
@@ -200,9 +172,6 @@ def build_system_router() -> APIRouter:
         request: Request, file: UploadFile = File(...)
     ) -> JSONResponse:
         """上传网站 Logo 图片，并自动裁剪为大中小正方形尺寸。"""
-        denied = require_roles(request, {"superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"system:write"})
         if denied:
             return denied

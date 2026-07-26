@@ -20,6 +20,7 @@ import { DEFAULT_PAGE_SIZE } from '@/config/constants'
 
 const auth = useAuthStore()
 const router = useRouter()
+const canManageFeedback = computed(() => auth.hasPermission('feedback:manage'))
 const loading = ref(false)
 const submitting = ref(false)
 const list = ref<Feedback[]>([])
@@ -64,7 +65,7 @@ const resolveForm = reactive({
 })
 
 const pageDescription = computed(() =>
-  auth.isAdmin
+  canManageFeedback.value
     ? '处理用户反馈，纠正错题并对有效反馈发放积分奖励。'
     : '提交系统/答题反馈，并跟踪处理进度与结果。',
 )
@@ -128,7 +129,7 @@ async function copyQuestionTitle(row: Feedback) {
 
 /** 普通用户概览统计：用分页接口的 total 字段分别取总数/待处理/已解决（仅取计数，不取明细）。 */
 async function loadUserSummary() {
-  if (auth.isAdmin) return
+  if (canManageFeedback.value) return
   try {
     const [all, open, resolved] = await Promise.all([
       feedbackApi.list({ limit: 1, page: 1 }),
@@ -152,7 +153,7 @@ async function load() {
       limit: pageSize.value,
       page: page.value,
     }
-    if (auth.isAdmin && filters.username.trim()) {
+    if (canManageFeedback.value && filters.username.trim()) {
       params.username = filters.username.trim()
     }
     const res = await feedbackApi.list(params)
@@ -199,7 +200,7 @@ async function submitFeedback() {
 
 function openFeedbackDetail(row: Feedback) {
   current.value = row
-  if (auth.isAdmin) {
+  if (canManageFeedback.value) {
     resolveForm.status = row.status === 'open' ? 'resolved' : row.status
     resolveForm.admin_note = row.admin_note
     resolveForm.corrected_answer = row.corrected_answer
@@ -258,14 +259,14 @@ onMounted(() => {
   <div class="space-y-5">
     <PageHeader title="反馈中心" :description="pageDescription">
       <template #actions>
-        <el-button v-if="!auth.isAdmin" type="primary" :icon="'EditPen'" @click="openSubmit">
+        <el-button v-if="!canManageFeedback" type="primary" :icon="'EditPen'" @click="openSubmit">
           提交反馈
         </el-button>
         <el-button :icon="'Refresh'" plain @click="refresh">刷新列表</el-button>
       </template>
     </PageHeader>
 
-    <template v-if="!auth.isAdmin">
+    <template v-if="!canManageFeedback">
       <!-- 概览：紧凑横向统计条 -->
       <section class="grid grid-cols-1 gap-4 sm:grid-cols-3">
         <div class="app-card flex items-center gap-4 p-4">
@@ -319,7 +320,7 @@ onMounted(() => {
           />
         </el-select>
         <el-input
-          v-if="auth.isAdmin"
+          v-if="canManageFeedback"
           v-model="filters.username"
           placeholder="按用户名筛选"
           clearable
@@ -350,7 +351,7 @@ onMounted(() => {
             </div>
           </template>
         </el-table-column>
-        <el-table-column v-if="auth.isAdmin" label="提交人" width="120" prop="username" align="center" />
+        <el-table-column v-if="canManageFeedback" label="提交人" width="120" prop="username" align="center" />
         <el-table-column label="操作" width="120" align="right">
           <template #default="{ row }">
             <el-tag size="small" :type="statusType(row.status) as any">
@@ -380,12 +381,12 @@ onMounted(() => {
         <el-table-column label="操作" width="120" align="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openFeedbackDetail(row)">
-              {{ auth.isAdmin ? '处理' : '详情' }}
+              {{ canManageFeedback ? '处理' : '详情' }}
             </el-button>
           </template>
         </el-table-column>
         <template #empty>
-          <el-empty :description="auth.isAdmin ? '暂无待处理反馈' : '你还没有提交过反馈'" />
+          <el-empty :description="canManageFeedback ? '暂无待处理反馈' : '你还没有提交过反馈'" />
         </template>
       </el-table>
     </section>
@@ -455,7 +456,7 @@ onMounted(() => {
 
     <el-dialog
       v-model="resolveVisible"
-      :title="auth.isAdmin ? '处理反馈' : '反馈详情'"
+      :title="canManageFeedback ? '处理反馈' : '反馈详情'"
       width="560px"
     >
       <div v-if="current" class="space-y-4">
@@ -508,7 +509,7 @@ onMounted(() => {
           </div>
         </div>
 
-        <el-form v-if="auth.isAdmin" label-position="top">
+        <el-form v-if="canManageFeedback" label-position="top">
           <el-form-item label="处理状态">
             <el-select v-model="resolveForm.status" class="w-full">
               <el-option
@@ -570,8 +571,8 @@ onMounted(() => {
       </div>
 
       <template #footer>
-        <el-button @click="resolveVisible = false">{{ auth.isAdmin ? '取消' : '关闭' }}</el-button>
-        <el-button v-if="auth.isAdmin" type="primary" :loading="saving" @click="submitResolve">
+        <el-button @click="resolveVisible = false">{{ canManageFeedback ? '取消' : '关闭' }}</el-button>
+        <el-button v-if="canManageFeedback" type="primary" :loading="saving" @click="submitResolve">
           保存处理
         </el-button>
       </template>

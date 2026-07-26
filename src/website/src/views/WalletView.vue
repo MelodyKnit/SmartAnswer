@@ -78,7 +78,7 @@ onMounted(load)
 <template>
   <div v-loading="loading">
     <PageHeader title="我的钱包" description="查看积分余额、兑换积分码与个人积分流水。">
-      <template v-if="auth.isAdmin" #actions>
+      <template v-if="auth.hasPermission('wallet:changes:write')" #actions>
         <el-button type="primary" plain @click="router.push('/redeem-management')">
           兑换管理
         </el-button>

@@ -10,6 +10,7 @@ class ImageGenerationCreatePayload(BaseModel):
 
     prompt: str
     size: str = ""
+    output: dict[str, object] | None = None
     idempotency_key: str = ""
 
 
@@ -26,6 +27,7 @@ class ImageGenerationModelCreatePayload(BaseModel):
     timeout_seconds: float = 60.0
     status: str = "active"
     capabilities: list[str] = []
+    protocol_config: dict[str, object] | None = None
 
 
 class ImageGenerationModelUpdatePayload(BaseModel):
@@ -41,3 +43,4 @@ class ImageGenerationModelUpdatePayload(BaseModel):
     timeout_seconds: float | None = None
     status: str | None = None
     capabilities: list[str] | None = None
+    protocol_config: dict[str, object] | None = None

@@ -31,7 +31,10 @@ def build_usage_router() -> APIRouter:
         if user is None:
             return unauthorized_response("请先登录")
         usage = get_usage_service(request)
-        if user["role"] not in {"admin", "superadmin"}:
+        can_view_all = str(user["role"]) == "superadmin" or "dashboard:all" in set(
+            user.get("permissions") or ()
+        )
+        if not can_view_all:
             username = str(user["username"])
         try:
             start_time, end_time = local_day_window_from_dates(start_date, end_date)

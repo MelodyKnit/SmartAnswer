@@ -3,6 +3,7 @@ import http, { api } from './http'
 import type {
   Announcement,
   AnnouncementAudience,
+  AnnouncementAudienceOption,
   AnnouncementLevel,
   AnnouncementStatus,
   EmailDomainWhitelist,
@@ -16,6 +17,7 @@ import type {
   ImageGenerationCapabilities,
   ImageGenerationJob,
   ImageGenerationModel,
+  ImageGenerationOutputOptions,
   ImageGenerationStats,
   ImageGenerationTrace,
   LlmCallStat,
@@ -27,6 +29,7 @@ import type {
   NotificationCenterItem,
   NotificationCenterSource,
   OcsConfig,
+  PermissionDefinition,
   PointsPolicy,
   QueryResultPayload,
   QuestionRecord,
@@ -249,6 +252,7 @@ export const announcementApi = {
     api.get<{
       ok: true
       announcements: Announcement[]
+      audience_options: AnnouncementAudienceOption[]
       total: number
       page: number
       limit: number
@@ -383,7 +387,8 @@ export const importScriptApi = {
 
 /* ---------------- 角色权限 ---------------- */
 export const roleApi = {
-  list: () => api.get<{ ok: true; roles: RolePermission[] }>('/roles'),
+  list: () =>
+    api.get<{ ok: true; roles: RolePermission[]; permission_catalog: PermissionDefinition[] }>('/roles'),
   permissions: (roleId: string) =>
     api.get<{ ok: true; role: RolePermission }>(
       `/roles/${encodeURIComponent(roleId)}/permissions`,
@@ -392,6 +397,16 @@ export const roleApi = {
     api.put<{ ok: true; role: RolePermission }>(
       `/roles/${encodeURIComponent(roleId)}/permissions`,
       { permissions },
+    ),
+  create: (body: { role_id: string; name: string; description: string; permissions: string[] }) =>
+    api.post<{ ok: true; role: RolePermission }>('/roles', body),
+  update: (
+    roleId: string,
+    body: { name?: string; description?: string; permissions?: string[] },
+  ) => api.patch<{ ok: true; role: RolePermission }>(`/roles/${encodeURIComponent(roleId)}`, body),
+  remove: (roleId: string) =>
+    api.delete<{ ok: true; role_id: string; deleted: boolean }>(
+      `/roles/${encodeURIComponent(roleId)}`,
     ),
 }
 
@@ -479,7 +494,12 @@ export const llmApi = {
 export const imageGenerationApi = {
   capabilities: () =>
     api.get<{ ok: true; capabilities: ImageGenerationCapabilities }>('/image-generation-capabilities'),
-  create: (body: { prompt: string; size?: string; idempotency_key: string }) =>
+  create: (body: {
+    prompt: string
+    size?: string
+    output?: ImageGenerationOutputOptions
+    idempotency_key: string
+  }) =>
     api.post<{ ok: true; job: ImageGenerationJob; idempotent_replay: boolean }>(
       '/image-generations',
       body,

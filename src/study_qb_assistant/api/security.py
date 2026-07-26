@@ -29,9 +29,28 @@ def is_auth_required(request: Request) -> bool:
 
 
 def current_user(request: Request) -> dict | None:
-    """解析当前请求关联的登录用户。"""
+    """解析当前请求关联的登录用户，并附加实时角色权限。"""
 
-    return get_auth_service(request).resolve_session(session_token_from_request(request))
+    user = get_auth_service(request).resolve_session(session_token_from_request(request))
+    if user is None:
+        return None
+    permission_service = get_permission_service(request)
+    role_id = str(user.get("role") or "")
+    try:
+        role = permission_service.get_role(role_id)
+        user["role_name"] = str(role["name"])
+        user["role_is_system"] = bool(role["is_system"])
+        user["permissions"] = list(role["permissions"])
+    except AuthError:
+        # 旧数据中可能存在已不存在的角色；保留身份但拒绝其权限访问。
+        user["role_name"] = role_id or "未知角色"
+        user["role_is_system"] = False
+        user["permissions"] = (
+            sorted(permission_service.allowed_role_permissions())
+            if role_id == "superadmin"
+            else []
+        )
+    return user
 
 
 CurrentUserDep = Annotated[dict | None, Depends(current_user)]
@@ -59,7 +78,7 @@ def require_permissions(request: Request, permissions: Iterable[str]) -> JSONRes
     required = {item for item in permissions if item}
     if not required:
         return None
-    owned = get_permission_service(request).role_permissions(str(user["role"]))
+    owned = set(user.get("permissions") or ())
     if not required.issubset(owned):
         return forbidden_response("权限不足")
     return None
@@ -83,7 +102,7 @@ def require_access(
             raise AuthError("FORBIDDEN", "权限不足", http_status=403)
         if not required_permissions or str(user["role"]) == "superadmin":
             return
-        owned = permissions_service.role_permissions(str(user["role"]))
+        owned = set(user.get("permissions") or ())
         if not required_permissions.issubset(owned):
             raise AuthError("FORBIDDEN", "权限不足", http_status=403)
 

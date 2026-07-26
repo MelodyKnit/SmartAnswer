@@ -1,9 +1,9 @@
 <script setup lang="ts">
 /** 用户管理：列出用户、调整状态/角色/积分，并支持管理员手动发放积分。 */
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { billingApi, userApi, walletApi } from '@/api/endpoints'
-import type { ManagedUser } from '@/api/types'
+import { billingApi, roleApi, userApi, walletApi } from '@/api/endpoints'
+import type { ManagedUser, RolePermission } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
 import { ApiException } from '@/api/http'
 import { formatDateTime } from '@/utils/format'
@@ -12,13 +12,11 @@ import PageHeader from '@/components/PageHeader.vue'
 const auth = useAuthStore()
 const loading = ref(false)
 const users = ref<ManagedUser[]>([])
+const roles = ref<RolePermission[]>([])
 const manualGrantDefault = ref(1)
-
-const ROLE_LABELS: Record<string, string> = {
-  superadmin: '超级管理员',
-  admin: '管理员',
-  user: '普通用户',
-}
+const canAssignRoles = computed(() => auth.isSuperAdmin)
+const canGrantPoints = computed(() => auth.hasPermission('wallet:changes:write'))
+const canReadBillingPolicy = computed(() => auth.hasPermission('billing:read'))
 
 async function loadUsers() {
   loading.value = true
@@ -31,11 +29,22 @@ async function loadUsers() {
 }
 
 async function loadPointsPolicy() {
+  if (!canReadBillingPolicy.value) return
   try {
     const res = await billingApi.pointsPolicy()
     manualGrantDefault.value = res.points_policy.manual_grant_default_points
   } catch {
     // 积分策略只用于表单默认值，加载失败不影响用户管理主流程。
+  }
+}
+
+async function loadRoles() {
+  if (!canAssignRoles.value) return
+  try {
+    const response = await roleApi.list()
+    roles.value = response.roles
+  } catch {
+    // 角色选择器只为超级管理员提供；加载失败时由提交接口返回明确错误。
   }
 }
 
@@ -57,15 +66,22 @@ function openEdit(user: ManagedUser) {
   editVisible.value = true
 }
 
+function canManageUser(user: ManagedUser) {
+  return auth.isSuperAdmin || user.role === 'user'
+}
+
 async function submitEdit() {
   try {
     const body: Record<string, unknown> = { points: editing.points, status: editing.status }
-    if (auth.isSuperAdmin && editing.role !== editing.original_role) {
+    if (canAssignRoles.value && editing.role !== editing.original_role) {
       body.role = editing.role
     }
     await userApi.update(editing.username, body)
     ElMessage.success('已保存')
     editVisible.value = false
+    if (editing.username === auth.user?.username) {
+      await auth.refreshProfile()
+    }
     await loadUsers()
   } catch (error) {
     ElMessage.error(error instanceof ApiException ? error.message : '保存失败')
@@ -97,7 +113,7 @@ async function submitGrant() {
 }
 
 onMounted(async () => {
-  await Promise.all([loadPointsPolicy(), loadUsers()])
+  await Promise.all([loadPointsPolicy(), loadRoles(), loadUsers()])
 })
 </script>
 
@@ -116,9 +132,9 @@ onMounted(async () => {
           <template #default="{ row }">
             <el-tag
               size="small"
-              :type="row.role === 'superadmin' ? 'danger' : row.role === 'admin' ? 'warning' : 'info'"
+              :type="row.role_is_system ? 'info' : 'success'"
             >
-              {{ ROLE_LABELS[row.role] || row.role }}
+              {{ row.role_name || row.role }}
             </el-tag>
           </template>
         </el-table-column>
@@ -144,8 +160,11 @@ onMounted(async () => {
         </el-table-column>
         <el-table-column label="操作" width="160" align="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="primary" @click="openGrant(row)">发放积分</el-button>
+            <template v-if="canManageUser(row)">
+              <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+              <el-button v-if="canGrantPoints" link type="primary" @click="openGrant(row)">发放积分</el-button>
+            </template>
+            <span v-else class="text-xs text-ink-muted">无权限</span>
           </template>
         </el-table-column>
         <template #empty><el-empty description="暂无用户" /></template>
@@ -155,12 +174,10 @@ onMounted(async () => {
     <el-dialog v-model="editVisible" :title="`编辑用户 · ${editing.username}`" width="420px">
       <el-form label-position="top">
         <el-form-item label="角色">
-          <el-select v-model="editing.role" :disabled="!auth.isSuperAdmin" class="w-full">
-            <el-option value="user" label="普通用户" />
-            <el-option value="admin" label="管理员" />
-            <el-option value="superadmin" label="超级管理员" />
+          <el-select v-model="editing.role" :disabled="!canAssignRoles" class="w-full">
+            <el-option v-for="role in roles" :key="role.role_id" :value="role.role_id" :label="role.name" />
           </el-select>
-          <div v-if="!auth.isSuperAdmin" class="mt-1 text-xs text-ink-muted">仅超级管理员可调整角色</div>
+          <div v-if="!canAssignRoles" class="mt-1 text-xs text-ink-muted">仅超级管理员可调整角色</div>
         </el-form-item>
         <el-form-item label="积分">
           <el-input-number v-model="editing.points" :min="0" class="w-full" />

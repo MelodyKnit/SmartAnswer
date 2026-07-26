@@ -10,7 +10,7 @@ from ...dependencies import get_auth_service, get_feedback_service, get_wallet_s
 from ...security import (
     auth_error_response,
     current_user,
-    require_roles,
+    require_permissions,
     unauthorized_response,
 )
 from .schemas import FeedbackPayload, FeedbackResolvePayload
@@ -22,6 +22,9 @@ def build_feedback_router() -> APIRouter:
 
     @router.post("/feedback")
     def feedback_create(request: Request, payload: FeedbackPayload) -> JSONResponse:
+        denied = require_permissions(request, {"feedback:self"})
+        if denied:
+            return denied
         user = current_user(request)
         if user is None:
             return unauthorized_response("请先登录")
@@ -50,7 +53,8 @@ def build_feedback_router() -> APIRouter:
         if user is None:
             return unauthorized_response("请先登录")
         feedback_service = get_feedback_service(request)
-        if user["role"] not in {"admin", "superadmin"}:
+        can_manage = require_permissions(request, {"feedback:manage"}) is None
+        if not can_manage:
             username = str(user["username"])
         page = max(1, int(page))
         limit = max(1, min(int(limit), 500))
@@ -69,7 +73,7 @@ def build_feedback_router() -> APIRouter:
     def feedback_resolve(
         request: Request, feedback_id: str, payload: FeedbackResolvePayload
     ) -> JSONResponse:
-        denied = require_roles(request, {"admin", "superadmin"})
+        denied = require_permissions(request, {"feedback:manage"})
         if denied:
             return denied
         actor = current_user(request)

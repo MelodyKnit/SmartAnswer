@@ -46,8 +46,7 @@ def run_lookup(
     try:
         set_request_id(str(query.request_id or ""))
         result = lookup.query(query)
-        # 将 client_ip 以 debug 的方式载入 result中
-        result.debug.setdefault("client_ip", client_ip)
+        # 客户端 IP 仅用于使用审计，不能写入面向调用方的查题结果。
         if legacy_image_url_only(query):
             result.debug.setdefault("legacy_url_only", "true")
         if query.image_capture_status:

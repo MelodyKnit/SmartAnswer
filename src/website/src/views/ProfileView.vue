@@ -19,14 +19,7 @@ const activeTab = ref('profile')
 const inviteCodeRefreshing = ref(false)
 
 const roleLabel = computed(() => {
-  switch (auth.role) {
-    case 'superadmin':
-      return '超级管理员'
-    case 'admin':
-      return '管理员'
-    default:
-      return '普通用户'
-  }
+  return auth.user?.role_name || auth.user?.role || '—'
 })
 
 const inviteLink = computed(() => {

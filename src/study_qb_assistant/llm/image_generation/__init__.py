@@ -8,6 +8,7 @@ from .contracts import (
 )
 from .openai_images import OpenAIImageGenerationProvider
 from .openai_chat_image import OpenAIChatImageGenerationProvider
+from .gemini_native import GeminiNativeImageGenerationProvider
 
 __all__ = (
     "GeneratedImage",
@@ -16,4 +17,5 @@ __all__ = (
     "ImageGenerationRequest",
     "OpenAIImageGenerationProvider",
     "OpenAIChatImageGenerationProvider",
+    "GeminiNativeImageGenerationProvider",
 )

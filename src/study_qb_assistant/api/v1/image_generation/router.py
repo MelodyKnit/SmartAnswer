@@ -11,7 +11,6 @@ from ...security import (
     current_user,
     forbidden_response,
     require_permissions,
-    require_roles,
     unauthorized_response,
 )
 from .schemas import (
@@ -64,6 +63,7 @@ def build_image_generation_router() -> APIRouter:
                 username=str(user["username"]),
                 prompt=payload.prompt,
                 size=payload.size,
+                output=payload.output,
                 idempotency_key=idempotency_key,
             )
         except ImageGenerationError as exc:
@@ -87,11 +87,11 @@ def build_image_generation_router() -> APIRouter:
         user = require_image_generation_user(request)
         if isinstance(user, JSONResponse):
             return user
-        is_admin = str(user.get("role")) in {"admin", "superadmin"}
-        if user_id and not is_admin:
+        can_manage = has_permission(user, "llm:read")
+        if user_id and not can_manage:
             return forbidden_response("无权查看其他用户的生图任务")
         result = service.list_jobs(
-            user_id=user_id.strip() if is_admin and user_id.strip() else str(user["user_id"]),
+            user_id=user_id.strip() if can_manage and user_id.strip() else str(user["user_id"]),
             status=status.strip(),
             page=page,
             limit=limit,
@@ -111,7 +111,7 @@ def build_image_generation_router() -> APIRouter:
             job = service.ensure_job_owner(
                 job_id,
                 user_id=str(user["user_id"]),
-                allow_admin=str(user.get("role")) in {"admin", "superadmin"},
+                allow_admin=has_permission(user, "llm:read"),
             )
         except ImageGenerationError as exc:
             return image_generation_error_response(exc)
@@ -133,7 +133,7 @@ def build_image_generation_router() -> APIRouter:
             service.ensure_job_owner(
                 job_id,
                 user_id=str(user["user_id"]),
-                allow_admin=str(user.get("role")) in {"admin", "superadmin"},
+                allow_admin=has_permission(user, "llm:read"),
             )
             asset, path = service.asset_path(job_id, asset_id)
         except ImageGenerationError as exc:
@@ -156,7 +156,7 @@ def build_image_generation_router() -> APIRouter:
             job = service.delete_or_cancel_job(
                 job_id,
                 user_id=str(user["user_id"]),
-                allow_admin=str(user.get("role")) in {"admin", "superadmin"},
+                allow_admin=has_permission(user, "llm:read"),
             )
         except ImageGenerationError as exc:
             return image_generation_error_response(exc)
@@ -292,21 +292,23 @@ def require_image_generation_user(request: Request) -> dict | JSONResponse:
     return denied or user
 
 
+def has_permission(user: dict, permission: str) -> bool:
+    """判断当前用户是否拥有用于跨用户审计的管理权限。"""
+
+    return str(user.get("role")) == "superadmin" or permission in set(
+        user.get("permissions") or ()
+    )
+
+
 def require_image_generation_management_read(request: Request) -> JSONResponse | None:
     """校验生图管理读取权限。"""
 
-    denied = require_roles(request, {"admin", "superadmin"})
-    if denied:
-        return denied
     return require_permissions(request, {"llm:read"})
 
 
 def require_image_generation_management_write(request: Request) -> JSONResponse | None:
     """校验生图管理写入权限。"""
 
-    denied = require_roles(request, {"superadmin"})
-    if denied:
-        return denied
     return require_permissions(request, {"llm:write"})
 
 

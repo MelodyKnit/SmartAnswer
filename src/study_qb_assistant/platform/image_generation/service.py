@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from threading import RLock
+from typing import Any
 
 from ...llm.image_generation import (
+    GeminiNativeImageGenerationProvider,
     ImageGenerationProvider,
     ImageGenerationProviderError,
     ImageGenerationRequest,
@@ -27,6 +29,18 @@ from ...storage.repositories.image_generation import (
     ImageGenerationRepositoryError,
 )
 from ..base import PlatformDomainService
+from .protocols import (
+    GEMINI_NATIVE_PROVIDER,
+    LEGACY_OPENAI_CHAT_IMAGE_PROVIDER,
+    OPENAI_COMPATIBLE_IMAGES_PROVIDER,
+    OPENAI_IMAGES_PROVIDER,
+    ImageGenerationProtocolError,
+    SUPPORTED_IMAGE_PROVIDERS,
+    capabilities_for_protocol,
+    normalize_output_options,
+    normalize_protocol_config,
+    public_output_capabilities,
+)
 from .records import (
     ImageGenerationAssetRecord,
     ImageGenerationJobRecord,
@@ -35,9 +49,7 @@ from .records import (
 )
 
 
-DEFAULT_IMAGE_CAPABILITIES = "text-to-image,1024x1024,1024x1536,1536x1024"
 MAX_PROMPT_LENGTH = 4_000
-SUPPORTED_IMAGE_PROVIDERS = frozenset({"openai-images", "openai-chat-image"})
 
 
 class ImageGenerationError(RuntimeError):
@@ -55,14 +67,34 @@ def build_image_generation_provider(
 ) -> ImageGenerationProvider:
     """根据已保存模型配置创建对应提供商适配器。"""
 
-    if model.provider == "openai-images":
+    try:
+        protocol_config = normalize_protocol_config(
+            model.provider,
+            model.protocol_config,
+            legacy_capabilities=model.capabilities,
+        )
+    except ImageGenerationProtocolError as exc:
+        raise ImageGenerationError(
+            "INVALID_MODEL_PROTOCOL_CONFIG", "生图模型协议配置无效"
+        ) from exc
+
+    if model.provider == GEMINI_NATIVE_PROVIDER:
+        return GeminiNativeImageGenerationProvider(
+            base_url=model.base_url,
+            model=model.model,
+            api_key=model.api_key,
+            timeout_seconds=model.timeout_seconds,
+            auth_mode=str(protocol_config["auth_mode"]),
+        )
+    if model.provider in {OPENAI_IMAGES_PROVIDER, OPENAI_COMPATIBLE_IMAGES_PROVIDER}:
         return OpenAIImageGenerationProvider(
             base_url=model.base_url,
             model=model.model,
             api_key=model.api_key,
             timeout_seconds=model.timeout_seconds,
+            provider_name=model.provider,
         )
-    if model.provider == "openai-chat-image":
+    if model.provider == LEGACY_OPENAI_CHAT_IMAGE_PROVIDER:
         return OpenAIChatImageGenerationProvider(
             base_url=model.base_url,
             model=model.model,
@@ -108,6 +140,7 @@ class ImageGenerationService(PlatformDomainService):
         timeout_seconds: float = 60.0,
         status: str = "active",
         capabilities: list[str] | tuple[str, ...] | None = None,
+        protocol_config: dict[str, object] | None = None,
     ) -> dict:
         """创建独立的生图模型配置。"""
 
@@ -115,18 +148,29 @@ class ImageGenerationService(PlatformDomainService):
         normalized_api_key = self._validate_api_key(api_key)
         if not normalized_api_key:
             raise ImageGenerationError("INVALID_INPUT", "请填写生图 API Key")
+        normalized_provider = self._validate_provider(provider)
+        normalized_protocol_config = self._normalize_protocol_config(
+            normalized_provider,
+            protocol_config,
+            legacy_capabilities=capabilities,
+        )
         record = ImageGenerationModelRecord(
             model_id=secrets.token_hex(12),
             name=self._validate_model_name(name),
-            provider=self._validate_provider(provider),
+            provider=normalized_provider,
             base_url=self._validate_base_url(base_url),
             model=self._validate_model_identifier(model),
             api_key=normalized_api_key,
             timeout_seconds=self._validate_timeout(timeout_seconds),
             status=self._validate_model_status(status),
-            capabilities=self._normalize_capabilities(capabilities),
+            capabilities=self._serialize_capabilities(
+                normalized_provider,
+                normalized_protocol_config,
+                legacy_capabilities=capabilities,
+            ),
             created_at=now,
             updated_at=now,
+            protocol_config=self._serialize_protocol_config(normalized_protocol_config),
         )
         with self.lock:
             return self.repository.save_model(record).to_dict()
@@ -138,10 +182,23 @@ class ImageGenerationService(PlatformDomainService):
             record = self.repository.get_model(model_id)
             if record is None:
                 raise ImageGenerationError("IMAGE_MODEL_NOT_FOUND", "生图模型不存在", http_status=404)
+
+            candidate_provider = self._validate_provider(values.get("provider", record.provider))
+            legacy_capabilities = values.get("capabilities", record.capabilities)
+            raw_protocol_config = values.get("protocol_config")
+            if raw_protocol_config is None:
+                raw_protocol_config = (
+                    {} if candidate_provider != record.provider else record.protocol_config
+                )
+            normalized_protocol_config = self._normalize_protocol_config(
+                candidate_provider,
+                raw_protocol_config,
+                legacy_capabilities=legacy_capabilities,
+            )
             if "name" in values:
                 record.name = self._validate_model_name(values["name"])
             if "provider" in values:
-                record.provider = self._validate_provider(values["provider"])
+                record.provider = candidate_provider
             if "base_url" in values:
                 record.base_url = self._validate_base_url(values["base_url"])
             if "model" in values:
@@ -152,8 +209,12 @@ class ImageGenerationService(PlatformDomainService):
                 record.timeout_seconds = self._validate_timeout(values["timeout_seconds"])
             if "status" in values:
                 record.status = self._validate_model_status(values["status"])
-            if "capabilities" in values:
-                record.capabilities = self._normalize_capabilities(values["capabilities"])
+            record.capabilities = self._serialize_capabilities(
+                candidate_provider,
+                normalized_protocol_config,
+                legacy_capabilities=legacy_capabilities,
+            )
+            record.protocol_config = self._serialize_protocol_config(normalized_protocol_config)
             record.updated_at = time.time()
             return self.repository.save_model(record).to_dict()
 
@@ -173,6 +234,7 @@ class ImageGenerationService(PlatformDomainService):
         username: str,
         prompt: str,
         size: str = "",
+        output: dict[str, object] | None = None,
         idempotency_key: str = "",
     ) -> tuple[dict, bool]:
         """提交一条生图任务，并在同一事务中预扣当前单张积分。"""
@@ -184,7 +246,11 @@ class ImageGenerationService(PlatformDomainService):
                 raise ImageGenerationError(
                     "IMAGE_GENERATION_UNAVAILABLE", "当前没有可用的生图模型", http_status=503
                 )
-            selected_size = self._validate_size(size, model)
+            selected_size, output_options = self._normalize_output(
+                model,
+                size=size,
+                output=output,
+            )
             policy = self.settings_service.get_image_generation_policy()
             now = time.time()
             normalized_key = self._normalize_idempotency_key(idempotency_key)
@@ -208,6 +274,7 @@ class ImageGenerationService(PlatformDomainService):
                         "model": model.model,
                         "timeout_seconds": model.timeout_seconds,
                         "capabilities": self._capabilities(model),
+                        "protocol_config": self._model_protocol_config(model),
                     },
                     ensure_ascii=False,
                     separators=(",", ":"),
@@ -223,6 +290,7 @@ class ImageGenerationService(PlatformDomainService):
                 completed_at=0.0,
                 updated_at=now,
                 expires_at=expires_at,
+                output_options=self._serialize_protocol_config(output_options),
             )
             try:
                 job, created = self.repository.create_job_with_reservation(
@@ -239,6 +307,7 @@ class ImageGenerationService(PlatformDomainService):
                 "user_id": user_id,
                 "model_id": job.model_id,
                 "size": job.size,
+                "output": output_options,
                 "points_cost": job.points_cost,
                 "idempotent_replay": not created,
                 "prompt_length": len(normalized_prompt),
@@ -279,8 +348,14 @@ class ImageGenerationService(PlatformDomainService):
         stored_key = ""
         try:
             provider = self.provider_factory(execution_model)
+            output_options = self._job_output_options(job, execution_model)
             generated = provider.generate(
-                ImageGenerationRequest(prompt=job.prompt, size=job.size, request_id=job.job_id)
+                ImageGenerationRequest(
+                    prompt=job.prompt,
+                    size=job.size,
+                    request_id=job.job_id,
+                    output_options=output_options,
+                )
             )
             stored = store_generated_image(asset_id=secrets.token_hex(16), content=generated.content)
             stored_key = stored.storage_key
@@ -297,6 +372,17 @@ class ImageGenerationService(PlatformDomainService):
             )
             completed = self.repository.complete_job(job.job_id, asset, completed_at=time.time())
             stored_key = ""
+        except ImageGenerationError as exc:
+            if stored_key:
+                delete_generated_image(stored_key)
+            self._finish_failure(
+                job,
+                status="failed",
+                code=exc.code,
+                message=exc.message,
+                elapsed_ms=(time.monotonic() - started) * 1000,
+                model=execution_model,
+            )
         except ImageGenerationProviderError as exc:
             if stored_key:
                 delete_generated_image(stored_key)
@@ -391,10 +477,17 @@ class ImageGenerationService(PlatformDomainService):
         with self.lock:
             model = self.repository.get_active_model()
             policy = self.settings_service.get_image_generation_policy()
+            protocol_config = self._model_protocol_config(model) if model else {}
             return {
                 "available": model is not None,
                 "model_name": model.name if model else "",
-                "sizes": self._sizes(model) if model else [],
+                "provider": model.provider if model else "",
+                "sizes": self._compatibility_sizes(model, protocol_config) if model else [],
+                "output": (
+                    public_output_capabilities(model.provider, protocol_config)
+                    if model
+                    else {"kind": "unavailable"}
+                ),
                 "points_per_image": policy["points"],
                 "max_active_jobs": policy["max_active_jobs"],
                 "daily_limit": policy["daily_limit"],
@@ -527,14 +620,16 @@ class ImageGenerationService(PlatformDomainService):
         model = self.repository.get_model(model_id)
         if model is None:
             raise ImageGenerationError("IMAGE_MODEL_NOT_FOUND", "生图模型不存在", http_status=404)
-        provider = self.provider_factory(model)
         started = time.monotonic()
         try:
+            selected_size, output_options = self._normalize_output(model, size="", output=None)
+            provider = self.provider_factory(model)
             result = provider.generate(
                 ImageGenerationRequest(
                     prompt="A small blue geometric square on a plain white background.",
-                    size=self._sizes(model)[0],
+                    size=selected_size,
                     request_id=f"test-{model_id}",
+                    output_options=output_options,
                 )
             )
             return {
@@ -543,6 +638,13 @@ class ImageGenerationService(PlatformDomainService):
                 "provider_request_id": result.provider_request_id,
             }
         except ImageGenerationProviderError as exc:
+            return {
+                "ok": False,
+                "elapsed_ms": round((time.monotonic() - started) * 1000, 2),
+                "error_code": exc.code,
+                "error": exc.message,
+            }
+        except ImageGenerationError as exc:
             return {
                 "ok": False,
                 "elapsed_ms": round((time.monotonic() - started) * 1000, 2),
@@ -636,18 +738,29 @@ class ImageGenerationService(PlatformDomainService):
         if not api_key:
             raise ImageGenerationError("IMAGE_MODEL_UNAVAILABLE", "生图模型缺少 API Key", http_status=503)
         try:
+            provider = self._validate_provider(snapshot.get("provider"))
+            protocol_config = self._normalize_protocol_config(
+                provider,
+                snapshot.get("protocol_config"),
+                legacy_capabilities=snapshot.get("capabilities"),
+            )
             return ImageGenerationModelRecord(
                 model_id=current_model.model_id,
                 name=job.model_name or current_model.name,
-                provider=self._validate_provider(snapshot.get("provider")),
+                provider=provider,
                 base_url=self._validate_base_url(snapshot.get("base_url")),
                 model=self._validate_model_identifier(snapshot.get("model")),
                 api_key=api_key,
                 timeout_seconds=self._validate_timeout(snapshot.get("timeout_seconds", 60.0)),
                 status=current_model.status,
-                capabilities=self._normalize_capabilities(snapshot.get("capabilities")),
+                capabilities=self._serialize_capabilities(
+                    provider,
+                    protocol_config,
+                    legacy_capabilities=snapshot.get("capabilities"),
+                ),
                 created_at=current_model.created_at,
                 updated_at=current_model.updated_at,
+                protocol_config=self._serialize_protocol_config(protocol_config),
             )
         except ImageGenerationError as exc:
             raise ImageGenerationError("MODEL_SNAPSHOT_INVALID", "生图任务的模型快照无效") from exc
@@ -713,7 +826,7 @@ class ImageGenerationService(PlatformDomainService):
         if provider not in SUPPORTED_IMAGE_PROVIDERS:
             raise ImageGenerationError(
                 "INVALID_INPUT",
-                "生图提供商必须是 openai-images 或 openai-chat-image",
+                "生图提供商不受支持",
             )
         return provider
 
@@ -756,22 +869,6 @@ class ImageGenerationService(PlatformDomainService):
         return status
 
     @staticmethod
-    def _normalize_capabilities(value: list[str] | tuple[str, ...] | object | None) -> str:
-        raw_values = value if isinstance(value, (list, tuple)) else str(value or "").split(",")
-        values = [str(item).strip().lower() for item in raw_values if str(item).strip()]
-        allowed = {"text-to-image", "1024x1024", "1024x1536", "1536x1024"}
-        unknown = sorted(set(values) - allowed)
-        if unknown:
-            raise ImageGenerationError(
-                "INVALID_INPUT", f"不支持的生图能力: {', '.join(unknown)}"
-            )
-        if "text-to-image" not in values:
-            values.insert(0, "text-to-image")
-        if not any(item in allowed - {"text-to-image"} for item in values):
-            values.append("1024x1024")
-        return ",".join(dict.fromkeys(values))
-
-    @staticmethod
     def _normalize_idempotency_key(value: object) -> str:
         key = str(value or "").strip()
         if not key:
@@ -784,18 +881,116 @@ class ImageGenerationService(PlatformDomainService):
     def _capabilities(model: ImageGenerationModelRecord) -> list[str]:
         return [item for item in model.capabilities.split(",") if item]
 
-    def _sizes(self, model: ImageGenerationModelRecord) -> list[str]:
-        return [
-            item
-            for item in self._capabilities(model)
-            if item in {"1024x1024", "1024x1536", "1536x1024"}
-        ] or ["1024x1024"]
+    @staticmethod
+    def _serialize_protocol_config(value: Mapping[str, object]) -> str:
+        """稳定保存已校验的协议或输出配置。"""
 
-    def _validate_size(self, size: object, model: ImageGenerationModelRecord) -> str:
-        selected = str(size or "").strip().lower() or self._sizes(model)[0]
-        if selected not in self._sizes(model):
-            raise ImageGenerationError("INVALID_INPUT", "当前生图模型不支持该图片尺寸")
-        return selected
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+    def _normalize_protocol_config(
+        self,
+        provider: str,
+        value: object,
+        *,
+        legacy_capabilities: object = None,
+    ) -> dict[str, Any]:
+        """将协议配置限制在已支持的字段与能力范围内。"""
+
+        try:
+            return normalize_protocol_config(
+                provider,
+                value,
+                legacy_capabilities=legacy_capabilities,
+            )
+        except ImageGenerationProtocolError as exc:
+            raise ImageGenerationError("INVALID_INPUT", str(exc)) from exc
+
+    def _model_protocol_config(self, model: ImageGenerationModelRecord) -> dict[str, Any]:
+        """读取模型的结构化协议配置，并兼容旧能力字段。"""
+
+        return self._normalize_protocol_config(
+            model.provider,
+            model.protocol_config,
+            legacy_capabilities=model.capabilities,
+        )
+
+    @staticmethod
+    def _serialize_capabilities(
+        provider: str,
+        protocol_config: dict[str, Any],
+        *,
+        legacy_capabilities: object = None,
+    ) -> str:
+        """生成兼容旧客户端的平铺能力字段。"""
+
+        return ",".join(
+            capabilities_for_protocol(
+                provider,
+                protocol_config,
+                legacy_capabilities=legacy_capabilities,
+            )
+        )
+
+    def _normalize_output(
+        self,
+        model: ImageGenerationModelRecord,
+        *,
+        size: object,
+        output: object,
+    ) -> tuple[str, dict[str, str]]:
+        """将外部输入统一成可复现、与当前协议匹配的输出参数。"""
+
+        try:
+            return normalize_output_options(
+                model.provider,
+                self._model_protocol_config(model),
+                size=size,
+                output=output,
+            )
+        except ImageGenerationProtocolError as exc:
+            raise ImageGenerationError("INVALID_INPUT", str(exc)) from exc
+
+    def _compatibility_sizes(
+        self,
+        model: ImageGenerationModelRecord,
+        protocol_config: dict[str, Any],
+    ) -> list[str]:
+        """继续返回旧字段 ``sizes``，新前端改用结构化 ``output``。"""
+
+        if model.provider in {OPENAI_IMAGES_PROVIDER, OPENAI_COMPATIBLE_IMAGES_PROVIDER}:
+            return list(protocol_config["preset_sizes"])
+        if model.provider == LEGACY_OPENAI_CHAT_IMAGE_PROVIDER:
+            return [
+                capability
+                for capability in self._capabilities(model)
+                if "x" in capability
+            ]
+        return []
+
+    def _job_output_options(
+        self,
+        job: ImageGenerationJobRecord,
+        model: ImageGenerationModelRecord,
+    ) -> dict[str, str]:
+        """恢复提交时输出参数，兼容还未保存该字段的历史任务。"""
+
+        if model.provider == LEGACY_OPENAI_CHAT_IMAGE_PROVIDER:
+            return {"mode": "model-controlled"}
+        try:
+            output = json.loads(job.output_options or "{}")
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ImageGenerationError("MODEL_SNAPSHOT_INVALID", "生图任务输出参数无效") from exc
+        if output and not isinstance(output, dict):
+            raise ImageGenerationError("MODEL_SNAPSHOT_INVALID", "生图任务输出参数无效")
+        try:
+            _, normalized = self._normalize_output(
+                model,
+                size="" if output else job.size,
+                output=output or None,
+            )
+            return normalized
+        except ImageGenerationError as exc:
+            raise ImageGenerationError("MODEL_SNAPSHOT_INVALID", "生图任务输出参数无效") from exc
 
     @staticmethod
     def _repository_error(exc: ImageGenerationRepositoryError) -> ImageGenerationError:

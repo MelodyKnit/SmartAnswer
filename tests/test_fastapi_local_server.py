@@ -36,9 +36,11 @@ from study_qb_assistant.llm.http_client import HttpClientError  # noqa: E402
 from study_qb_assistant.llm.providers import OpenAICompatibleProvider  # noqa: E402
 from study_qb_assistant.search import LocalQuestionIndex  # noqa: E402
 from study_qb_assistant.storage import database as database_module  # noqa: E402
+from study_qb_assistant.storage.database import get_session_factory  # noqa: E402
 from study_qb_assistant.storage.repositories.questions import (  # noqa: E402
     SqlAlchemyQuestionRepository,
 )  # noqa: E402
+from study_qb_assistant.storage.repositories.settings import SettingsRepository  # noqa: E402
 
 
 class FakeEmailSender:
@@ -1875,9 +1877,197 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(wallet_grant_admin_forbidden.status_code, 403)
         self.assertEqual(
             wallet_grant_admin_forbidden.json()["error"]["message"],
-            "管理员只能为普通用户发放积分",
+            "只能为内置普通用户发放积分",
         )
         self.assertEqual(disable_ok.json()["user"]["status"], "disabled")
+
+    def test_dynamic_roles_enforce_permissions_and_delegated_boundaries(self) -> None:
+        """自定义角色可访问授权资源，但不能越权管理系统角色或扩大权限。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformServices(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
+                )
+            )
+            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            owner_headers = {
+                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'owner', 'password': 'password123'}).json()['token']}"
+            }
+            client.post("/auth/register", json={"username": "reader", "password": "password123"})
+            client.post("/auth/register", json={"username": "editor", "password": "password123"})
+
+            initial_roles = client.get("/roles", headers=owner_headers)
+            create_reader = client.post(
+                "/roles",
+                json={
+                    "role_id": "question_reader",
+                    "name": "题库阅览员",
+                    "description": "查看题库",
+                    "permissions": ["dashboard:self", "questions:read"],
+                },
+                headers=owner_headers,
+            )
+            create_editor = client.post(
+                "/roles",
+                json={
+                    "role_id": "role_editor",
+                    "name": "角色维护员",
+                    "description": "受委托维护自定义角色",
+                    "permissions": ["dashboard:self", "roles:read", "roles:write"],
+                },
+                headers=owner_headers,
+            )
+            assign_reader = client.patch(
+                "/users/reader", json={"role": "question_reader"}, headers=owner_headers
+            )
+            assign_editor = client.patch(
+                "/users/editor", json={"role": "role_editor"}, headers=owner_headers
+            )
+            reader_headers = {
+                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'reader', 'password': 'password123'}).json()['token']}"
+            }
+            editor_headers = {
+                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'editor', 'password': 'password123'}).json()['token']}"
+            }
+
+            reader_questions = client.get("/questions", headers=reader_headers)
+            reader_system = client.get("/system-config", headers=reader_headers)
+            custom_audience = client.post(
+                "/announcements",
+                json={
+                    "title": "题库阅览员公告",
+                    "content": "仅题库阅览员可见",
+                    "audience": "question_reader",
+                    "status": "published",
+                },
+                headers=owner_headers,
+            )
+            reader_announcements = client.get("/announcements/active", headers=reader_headers)
+            announcement_options = client.get("/announcements", headers=owner_headers)
+            unknown_audience = client.post(
+                "/announcements",
+                json={
+                    "title": "无效受众",
+                    "content": "不应创建",
+                    "audience": "missing_role",
+                    "status": "published",
+                },
+                headers=owner_headers,
+            )
+            delegated_update = client.patch(
+                "/roles/question_reader",
+                json={"permissions": ["dashboard:self"]},
+                headers=editor_headers,
+            )
+            delegated_escalation = client.patch(
+                "/roles/question_reader",
+                json={"permissions": ["dashboard:self", "questions:read"]},
+                headers=editor_headers,
+            )
+            delegated_system_update = client.patch(
+                "/roles/user",
+                json={"permissions": ["dashboard:self"]},
+                headers=editor_headers,
+            )
+            in_use_delete = client.delete("/roles/question_reader", headers=owner_headers)
+            restore_reader = client.patch(
+                "/users/reader", json={"role": "user"}, headers=owner_headers
+            )
+            delete_reader = client.delete("/roles/question_reader", headers=owner_headers)
+            delete_system = client.delete("/roles/user", headers=owner_headers)
+            editor_create = client.post(
+                "/roles",
+                json={"role_id": "forbidden_role", "name": "不可创建", "permissions": []},
+                headers=editor_headers,
+            )
+
+        self.assertEqual(initial_roles.status_code, 200)
+        system_roles = {item["role_id"]: item for item in initial_roles.json()["roles"]}
+        self.assertTrue(system_roles["superadmin"]["is_system"])
+        self.assertTrue(system_roles["admin"]["is_system"])
+        self.assertTrue(system_roles["user"]["is_system"])
+        self.assertEqual(create_reader.status_code, 201)
+        self.assertEqual(create_editor.status_code, 201)
+        self.assertEqual(assign_reader.status_code, 200)
+        self.assertEqual(assign_reader.json()["user"]["role_name"], "题库阅览员")
+        self.assertEqual(assign_editor.status_code, 200)
+        self.assertEqual(reader_questions.status_code, 200)
+        self.assertEqual(reader_system.status_code, 403)
+        self.assertEqual(custom_audience.status_code, 200)
+        self.assertEqual(reader_announcements.status_code, 200)
+        self.assertTrue(
+            any(item["title"] == "题库阅览员公告" for item in reader_announcements.json()["announcements"])
+        )
+        self.assertEqual(announcement_options.status_code, 200)
+        self.assertIn(
+            {"value": "question_reader", "label": "题库阅览员"},
+            announcement_options.json()["audience_options"],
+        )
+        self.assertEqual(unknown_audience.status_code, 400)
+        self.assertEqual(delegated_update.status_code, 200)
+        self.assertEqual(delegated_escalation.status_code, 403)
+        self.assertEqual(delegated_escalation.json()["error"]["code"], "ROLE_PERMISSION_ESCALATION")
+        self.assertEqual(delegated_system_update.status_code, 403)
+        self.assertEqual(in_use_delete.status_code, 409)
+        self.assertEqual(in_use_delete.json()["error"]["code"], "ROLE_IN_USE")
+        self.assertEqual(restore_reader.status_code, 200)
+        self.assertEqual(delete_reader.status_code, 200)
+        self.assertEqual(delete_system.status_code, 400)
+        self.assertEqual(editor_create.status_code, 403)
+
+    def test_last_active_superadmin_cannot_be_demoted_or_disabled(self) -> None:
+        """系统始终保留可管理角色分配的所有者账号。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformServices(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(),
+                    auth_service=auth,
+                    platform_services=platform,
+                    require_auth=True,
+                )
+            )
+            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            owner_headers = {
+                "Authorization": (
+                    f"Bearer {client.post('/auth/login', json={'username': 'owner', 'password': 'password123'}).json()['token']}"
+                )
+            }
+
+            demote = client.patch("/users/owner", json={"role": "admin"}, headers=owner_headers)
+            disable = client.patch(
+                "/users/owner", json={"status": "disabled"}, headers=owner_headers
+            )
+
+        self.assertEqual(demote.status_code, 409)
+        self.assertEqual(demote.json()["error"]["code"], "LAST_SUPERADMIN_PROTECTED")
+        self.assertEqual(disable.status_code, 409)
+        self.assertEqual(disable.json()["error"]["code"], "LAST_SUPERADMIN_PROTECTED")
+
+    def test_system_role_initialization_preserves_legacy_permission_override(self) -> None:
+        """旧 role_permissions 配置只在首次角色初始化时作为系统角色权限来源。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            settings = SettingsRepository(get_session_factory(database_path))
+            settings.set_settings(
+                "role_permissions",
+                {"admin": json.dumps({"permissions": ["questions:read"]})},
+            )
+            platform = PlatformServices(database_path)
+            roles = {item["role_id"]: item for item in platform.permissions.list_roles()}
+
+        self.assertEqual(roles["admin"]["name"], "管理员")
+        self.assertTrue(roles["admin"]["is_system"])
+        self.assertIn("questions:read", roles["admin"]["permissions"])
+        self.assertNotIn("dashboard:all", roles["admin"]["permissions"])
 
     def test_redeem_code_expiry_contract(self) -> None:
         """兑换码创建支持可选有效期，并拒绝创建已过期兑换码。"""

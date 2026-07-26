@@ -11,7 +11,6 @@ from ...security import (
     auth_error_response,
     current_user,
     require_permissions,
-    require_roles,
 )
 from ...http import base_url_from_request
 from .schemas import ImportScriptCreatePayload, ImportScriptGeneratePayload
@@ -23,9 +22,6 @@ def build_import_script_router() -> APIRouter:
 
     @router.get("/import-scripts")
     def import_scripts(request: Request) -> JSONResponse:
-        denied = require_roles(request, {"admin", "superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"import-scripts:read"})
         if denied:
             return denied
@@ -42,9 +38,6 @@ def build_import_script_router() -> APIRouter:
 
     @router.post("/import-scripts")
     def import_script_create(request: Request, payload: ImportScriptCreatePayload) -> JSONResponse:
-        denied = require_roles(request, {"admin", "superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"import-scripts:write"})
         if denied:
             return denied
@@ -70,9 +63,6 @@ def build_import_script_router() -> APIRouter:
     def import_script_generate(
         request: Request, payload: ImportScriptGeneratePayload
     ) -> JSONResponse:
-        denied = require_roles(request, {"admin", "superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"import-scripts:write"})
         if denied:
             return denied
@@ -90,9 +80,6 @@ def build_import_script_router() -> APIRouter:
 
     @router.get("/import-scripts/{script_id}")
     def import_script_get(request: Request, script_id: str) -> JSONResponse:
-        denied = require_roles(request, {"admin", "superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"import-scripts:read"})
         if denied:
             return denied
@@ -114,9 +101,6 @@ def build_import_script_router() -> APIRouter:
 
     @router.delete("/import-scripts/{script_id}")
     def import_script_delete(request: Request, script_id: str) -> JSONResponse:
-        denied = require_roles(request, {"admin", "superadmin"})
-        if denied:
-            return denied
         denied = require_permissions(request, {"import-scripts:write"})
         if denied:
             return denied

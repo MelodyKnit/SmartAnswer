@@ -48,6 +48,17 @@ class SuccessfulImageProvider:
         )
 
 
+class CapturingImageProvider(SuccessfulImageProvider):
+    """记录执行请求，用于验证任务快照不受后续配置修改影响。"""
+
+    def __init__(self) -> None:
+        self.requests = []
+
+    def generate(self, request) -> GeneratedImage:
+        self.requests.append(request)
+        return super().generate(request)
+
+
 class FailingImageProvider:
     """模拟供应商超时，验证失败任务自动退款。"""
 
@@ -227,6 +238,81 @@ class ImageGenerationApiTests(unittest.TestCase):
                 headers=other_headers,
             )
             self.assertEqual(forbidden.status_code, 403)
+
+    def test_gemini_output_options_are_persisted_and_used_by_the_worker(self) -> None:
+        """Gemini 画幅/像素档位应进入任务快照，而非由执行时模型配置覆盖。"""
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ, {"STQB_DATA_DIR": directory}, clear=False
+        ):
+            client, _auth, platform, headers = self.build_client(directory)
+            created_model = client.post(
+                "/api/v1/image-generation-models",
+                headers=headers,
+                json={
+                    "name": "Gemini 生图",
+                    "provider": "gemini-native",
+                    "base_url": "https://images.example.test/v1beta",
+                    "model": "gemini-image-model",
+                    "api_key": "test-secret-key",
+                    "protocol_config": {
+                        "auth_mode": "bearer",
+                        "aspect_ratios": ["1:1", "16:9"],
+                        "image_sizes": ["1K", "2K"],
+                    },
+                },
+            )
+            self.assertEqual(created_model.status_code, 201, created_model.text)
+            model = created_model.json()["model"]
+            self.assertEqual(model["protocol_config"]["auth_mode"], "bearer")
+
+            capabilities = client.get(
+                "/api/v1/image-generation-capabilities", headers=headers
+            ).json()["capabilities"]
+            self.assertEqual(capabilities["output"]["kind"], "gemini")
+            self.assertEqual(capabilities["output"]["image_sizes"], ["1K", "2K"])
+
+            created_job = client.post(
+                "/api/v1/image-generations",
+                headers=headers,
+                json={
+                    "prompt": "宽屏纸飞机插画",
+                    "output": {"aspect_ratio": "16:9", "image_size": "2K"},
+                    "idempotency_key": "gemini-output-options",
+                },
+            )
+            self.assertEqual(created_job.status_code, 202, created_job.text)
+            self.assertEqual(created_job.json()["job"]["size"], "16:9 · 2K")
+            self.assertEqual(
+                created_job.json()["job"]["output"],
+                {"aspect_ratio": "16:9", "image_size": "2K"},
+            )
+
+            captured_provider = CapturingImageProvider()
+            platform.image_generation.provider_factory = lambda _model: captured_provider
+            self.assertTrue(platform.image_generation.process_next_job())
+            self.assertEqual(
+                captured_provider.requests[0].output_options,
+                {"aspect_ratio": "16:9", "image_size": "2K"},
+            )
+            completed = client.get(
+                f"/api/v1/image-generations/{created_job.json()['job']['job_id']}",
+                headers=headers,
+            ).json()["job"]
+            self.assertEqual(completed["assets"][0]["width"], 8)
+            self.assertEqual(completed["assets"][0]["height"], 8)
+
+            mixed = client.post(
+                "/api/v1/image-generations",
+                headers=headers,
+                json={
+                    "prompt": "冲突尺寸参数",
+                    "size": "1024x1024",
+                    "output": {"aspect_ratio": "1:1", "image_size": "1K"},
+                },
+            )
+            self.assertEqual(mixed.status_code, 400)
+            self.assertEqual(mixed.json()["error"]["code"], "INVALID_INPUT")
 
     def test_failed_job_refunds_points_and_trace_is_sanitized(self) -> None:
         """供应商异常必须失败退款，追溯仅保留稳定错误分类。"""

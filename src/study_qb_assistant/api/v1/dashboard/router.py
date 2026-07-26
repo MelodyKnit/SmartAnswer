@@ -26,6 +26,7 @@ def build_dashboard_router() -> APIRouter:
             points=int(user["points"]),
             role=str(user["role"]),
             scope=scope,
+            permissions=set(user.get("permissions") or ()),
         )
         return JSONResponse({"ok": True, "workbench": payload})
 
@@ -48,6 +49,7 @@ def build_dashboard_router() -> APIRouter:
             username=str(user["username"]),
             role=str(user["role"]),
             scope=scope,
+            permissions=set(user.get("permissions") or ()),
         )
         return JSONResponse({"ok": True, "rankings": rankings})
 
@@ -65,6 +67,7 @@ def build_dashboard_router() -> APIRouter:
                     role=str(user["role"]),
                     scope=scope,
                     days=days,
+                    permissions=set(user.get("permissions") or ()),
                 ),
             }
         )

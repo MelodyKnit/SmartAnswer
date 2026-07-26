@@ -31,6 +31,21 @@ class UserEntity(Base):
     reset_expires_at: Mapped[float] = mapped_column(Float, default=0.0)
 
 
+class RoleEntity(Base):
+    """可分配给用户的角色与权限集合。"""
+
+    __tablename__ = "roles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    role_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(64))
+    description: Mapped[str] = mapped_column(String(255), default="")
+    permissions_json: Mapped[str] = mapped_column(Text, default="[]")
+    is_system: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    created_at: Mapped[float] = mapped_column(Float, index=True)
+    updated_at: Mapped[float] = mapped_column(Float, index=True)
+
+
 class EmailVerificationCodeEntity(Base):
     """邮箱验证码表。"""
 
@@ -355,6 +370,7 @@ class ImageGenerationModelEntity(Base):
     timeout_seconds: Mapped[float] = mapped_column(Float, default=60.0)
     status: Mapped[str] = mapped_column(String(32), default="active", index=True)
     capabilities: Mapped[str] = mapped_column(Text, default="text-to-image,1024x1024")
+    protocol_config: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[float] = mapped_column(Float, index=True)
     updated_at: Mapped[float] = mapped_column(Float, index=True)
 
@@ -373,6 +389,7 @@ class ImageGenerationJobEntity(Base):
     username: Mapped[str] = mapped_column(String(64), index=True)
     prompt: Mapped[str] = mapped_column(Text, default="")
     size: Mapped[str] = mapped_column(String(32), default="1024x1024")
+    output_options: Mapped[str] = mapped_column(Text, default="{}")
     model_id: Mapped[str] = mapped_column(String(64), index=True)
     model_name: Mapped[str] = mapped_column(String(255), default="")
     model_snapshot: Mapped[str] = mapped_column(Text, default="{}")

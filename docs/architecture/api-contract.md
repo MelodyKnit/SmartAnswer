@@ -4,10 +4,10 @@
 
 ## 1. 目的
 
-本文件定义当前后端接口的请求、响应和角色边界。接口分为两类：
+本文件定义当前后端接口的请求、响应和权限边界。接口分为两类：
 
 - 题库查询接口：供 OCS 或其他客户端查题
-- 平台管理接口：供用户、管理员、超级管理员管理令牌、积分、日志与反馈
+- 平台管理接口：供已授权用户管理令牌、积分、日志与反馈
 
 ## 2. 鉴权与角色
 
@@ -16,22 +16,14 @@
 - 浏览器控制台：登录后使用会话 Cookie
 - OCS 客户端：使用 `Authorization: Bearer <token>`
 
-### 2.2 角色
+### 2.2 角色与权限
 
-- `superadmin`
-  - 首个注册用户
-  - 可调整积分消耗规则
-  - 可修改用户角色、状态、积分
-  - 可查看所有用户日志与反馈
-- `admin`
-  - 可查看所有用户日志与反馈
-  - 可修改普通用户的状态与积分
-  - 不可调整用户等级
-  - 不可修改积分计费规则
-  - 不可修改系统配置
-- `user`
-  - 可创建和吊销自己的 API 令牌
-  - 只能查看自己的使用日志、自己的反馈和自己的看板
+- 角色是数据库中的可分配用户组，保存显示名称、说明和权限集合。
+- 启动时幂等创建三个不可删除的系统角色：`superadmin`、`admin`、`user`。系统角色的标识和名称不可修改，但超级管理员可调整其权限集合。
+- 超级管理员可创建和删除自定义角色，并可将任意已存在角色分配给用户。
+- 业务接口以权限标识授权，例如 `questions:read`、`llm:write`；自定义角色获得相应权限后与系统角色同样生效。
+- `superadmin` 是系统所有者身份，创建、删除、分配角色仍要求该身份，不能通过自定义角色获得。
+- 拥有 `roles:write` 的非超级管理员只能维护自定义角色，且只能授予自身已有权限的子集；不能修改系统角色、创建/删除角色或分配用户角色。
 
 ## 3. 题库查询接口
 
@@ -341,21 +333,22 @@
 
 #### `GET /users`
 
-- 角色：`admin` / `superadmin`
+- 权限：`users:write`
 - 返回所有用户列表
+- 每个用户包含 `role`、`role_name`、`role_is_system` 与当前有效 `permissions`，前端不应根据固定角色名称推断能力。
 
 #### `PATCH /users/{username}`
 
-- 角色：`admin` / `superadmin`
+- 权限：`users:write`
 - 支持字段：
-  - `role`
+  - `role`：已存在的角色标识，仅 `superadmin` 可修改
   - `points`
   - `status`
 
 说明：
 
-- `superadmin` 可调整任意用户的角色、状态、积分
-- `admin` 只能管理 `user` 角色用户，且不能修改角色等级
+- `superadmin` 可调整任意用户的角色、状态、积分。
+- 其他拥有 `users:write` 的角色只能修改内置 `user` 用户的状态与积分，不能调整角色或管理管理员、自定义角色用户。
 
 ### 4.3 API 令牌
 
@@ -428,7 +421,6 @@
 
 #### `GET /questions`
 
-- 角色：`admin` / `superadmin`
 - 权限：`questions:read`
 - 数据源：数据库题库表，而不是当前进程内存索引。
 - 查询参数：
@@ -442,14 +434,12 @@
 
 #### `PATCH /questions/{question_id}`
 
-- 角色：`admin` / `superadmin`
 - 权限：`questions:write`
 - 用于编辑题干、选项、答案、解析等题库字段。
 - 状态为 `active` / `trusted` 的记录会同步进入运行时本地索引；`low_confidence`、`pending`、`conflict` 等记录只在题库管理可见，不自动命中作答。
 
 #### `DELETE /questions/{question_id}`
 
-- 角色：`admin` / `superadmin`
 - 权限：`questions:write`
 - 采用软删除：数据库记录会标记为 `deleted`，默认题库列表不再显示，当前运行时本地索引会立即移除该题。
 - 不物理删除 JSONL 来源文件，也不删除历史使用日志、反馈记录、积分流水或调用追溯。
@@ -467,7 +457,6 @@
 
 #### `POST /questions/reindex`
 
-- 角色：`admin` / `superadmin`
 - 权限：`questions:write`
 - 从数据库重新构建当前进程内存索引，只载入 `active` 与 `trusted` 记录。
 
@@ -475,7 +464,7 @@
 
 #### `GET /billing`
 
-- 角色：`admin` / `superadmin`
+- 权限：`billing:read`
 - 返回当前积分规则：
   - `local_hit`
   - `web_search`
@@ -483,7 +472,7 @@
 
 #### `PATCH /billing`
 
-- 角色：仅 `superadmin`
+- 权限：`billing:write`
 - 请求：
 
 ```json
@@ -496,7 +485,6 @@
 
 #### `GET /points-policy`
 
-- 角色：`admin` / `superadmin`
 - 权限：`billing:read`
 - 返回前端表单需要展示或预填的积分策略：
   - `default_user_points`
@@ -509,13 +497,13 @@
 
 #### `GET /system-config`
 
-- 角色：仅 `superadmin`
+- 权限：`system:write`
 - 返回当前系统配置
 - 敏感字段不回明文，只返回 `*_configured` 标志
 
 #### `PATCH /system-config`
 
-- 角色：仅 `superadmin`
+- 权限：`system:write`
 - 支持字段：
   - `site_title`
   - `site_logo_url`
@@ -561,7 +549,7 @@
 
 ### `GET /system/email-domain-whitelist`
 
-读取注册邮箱域名白名单。需要 `superadmin` 角色和 `system:write` 权限，白名单不会暴露给公开注册接口。
+读取注册邮箱域名白名单。需要 `system:write` 权限，白名单不会暴露给公开注册接口。
 
 响应：
 
@@ -574,7 +562,7 @@
 
 ### `PUT /system/email-domain-whitelist`
 
-原子替换注册邮箱域名白名单。需要 `superadmin` 角色和 `system:write` 权限；域名会统一小写、去重并排序。白名单不能为空，不能传入完整邮箱、URL 或非法域名。
+原子替换注册邮箱域名白名单。需要 `system:write` 权限；域名会统一小写、去重并排序。白名单不能为空，不能传入完整邮箱、URL 或非法域名。
 
 请求：
 
@@ -589,7 +577,7 @@
 ### `GET /project-update/status`
 
 读取当前构建、最近一次 GitHub Release 检查缓存和最后一个部署任务状态。仅
-`superadmin + system:write` 可用，不会主动访问 GitHub 或返回访问令牌。
+需要 `system:write` 权限，不会主动访问 GitHub 或返回访问令牌。
 
 ### `POST /project-update/check`
 
@@ -615,7 +603,7 @@ GitHub Actions 工作流。响应为 `202` 和可轮询的更新任务。
 
 ### `DELETE /project-update/token`
 
-清除已保存的 GitHub 访问令牌。仅 `superadmin + system:write` 可用；项目更新必须先关闭，且不能存在
+清除已保存的 GitHub 访问令牌。需要 `system:write` 权限；项目更新必须先关闭，且不能存在
 `queued` 或 `running` 的部署任务。成功后仅返回脱敏后的系统配置。
 
 大模型推理、联网搜索和 LLM 学习缓存配置统一通过 `/llm-runtime-config` 维护，系统配置页不再展示这些字段。
@@ -667,19 +655,12 @@ GitHub Actions 工作流。响应为 `202` 和可轮询的更新任务。
 
 #### `GET /wallet/orders`
 
-查询参数：
-
-- `username`：管理员 / 超级管理员可用
-- `limit`
-
-说明：
-
-- `user` 只能查看自己的订单
-- `admin` / `superadmin` 可查看全部订单
+- `limit` / `page`：分页参数。
+- 始终只返回当前登录用户自己的订单；全局积分流水使用 `GET /wallet/changes`，需要 `wallet:changes:read` 权限。
 
 #### `POST /wallet/grants`
 
-- 角色：`admin` / `superadmin`
+- 权限：`wallet:changes:write`
 - 用于手动发放积分
 
 请求：
@@ -694,12 +675,12 @@ GitHub Actions 工作流。响应为 `202` 和可轮询的更新任务。
 
 #### `GET /wallet/redeem-codes`
 
-- 角色：`admin` / `superadmin`
+- 权限：`wallet:changes:write`
 - 查看所有兑换码
 
 #### `POST /wallet/redeem-codes`
 
-- 角色：`admin` / `superadmin`
+- 权限：`wallet:changes:write`
 - 创建积分兑换码
 
 请求：
@@ -734,14 +715,14 @@ GitHub Actions 工作流。响应为 `202` 和可轮询的更新任务。
 
 查询参数：
 
-- `username`：管理员/超级管理员可用
+- `username`：拥有 `dashboard:all` 的角色可用
 - `keyword`
 - `limit`
 
 说明：
 
-- `user` 只能查看自己的日志
-- `admin` / `superadmin` 可查看所有用户日志
+- 未拥有 `dashboard:all` 的用户只能查看自己的日志
+- 拥有 `dashboard:all` 的角色可查看所有用户日志
 - 每条日志包含 `elapsed_ms`，表示服务端查题链路耗时（毫秒），旧历史记录可能为 `0.0`
 - 本地题库命中时，每条日志会尽量包含 `question_id`、`source_name`、`source_type`、`source_id`、`source_url`，用于反馈中心定位题库记录。旧历史记录或纯联网来源可能为空。
 
@@ -770,8 +751,8 @@ GitHub Actions 工作流。响应为 `202` 和可轮询的更新任务。
 
 说明：
 
-- `user` 只能查看自己的反馈
-- `admin` / `superadmin` 可查看所有反馈
+- 未拥有 `feedback:manage` 的用户只能查看自己的反馈。
+- 拥有 `feedback:manage` 的角色可查看所有反馈。
 - 返回会包含可选定位字段：`question_id`、`question_title`、`question_type`、`answer_snapshot`、`resolution_mode`、`confidence`、`request_id`、`source_name`、`source_type`、`source_id`、`source_url`、`context`。
 - 管理端优先使用 `question_id` 跳转题库编辑；字段为空时只能按题干关键字降级检索。
 
@@ -904,14 +885,12 @@ GitHub Actions 工作流。响应为 `202` 和可轮询的更新任务。
 
 #### `GET /llm-runtime-config`
 
-- 角色：`admin`、`superadmin`
 - 权限：`llm:read`
 - 返回大模型答题、联网搜索和 LLM 学习缓存运行配置。
 - `web_search_configs` 返回 JSON 字符串数组；其中单个搜索引擎的 `api_key` 不会返回给前端，只返回 `api_key_configured` 表示是否已保存密钥。
 
 #### `PATCH /llm-runtime-config`
 
-- 角色：仅 `superadmin`
 - 权限：`llm:write`
 - 支持字段：
   - `llm_fallback`
@@ -945,7 +924,7 @@ GitHub Actions 工作流。响应为 `202` 和可轮询的更新任务。
 
 ### 4.16 兑换管理
 
-管理员通过前端 `/redeem-management` 使用现有钱包接口管理积分兑换码、手动发放积分并查看全平台积分流水。后端不再提供 `/quota-packages` 套餐目录接口。
+拥有 `wallet:changes:write` 的角色可通过前端 `/redeem-management` 管理积分兑换码、手动发放积分并查看全平台积分流水。后端不再提供 `/quota-packages` 套餐目录接口。
 
 ### 4.17 公告管理
 
@@ -953,15 +932,15 @@ GitHub Actions 工作流。响应为 `202` 和可轮询的更新任务。
 
 #### `GET /announcements`
 
-- 角色：`admin` / `superadmin`
 - 权限：`announcements:read`
 - 查询参数：
   - `keyword`：按标题或内容搜索。
   - `status`：`draft` / `published` / `archived`。
   - `level`：`info` / `success` / `warning` / `danger`。
-  - `audience`：`all` / `user` / `admin` / `superadmin`。
+  - `audience`：`all` 或当前角色目录中的任一 `role_id`。
   - `page` / `limit`：分页。
-- 返回：`announcements`、`total`、`page`、`limit`。
+- 返回：`announcements`、`audience_options`、`total`、`page`、`limit`。`audience_options` 包含
+  `all` 和当前角色目录中的可投放角色，前端据此展示角色名称与投放范围。
 
 #### `GET /announcements/active`
 
@@ -972,7 +951,6 @@ GitHub Actions 工作流。响应为 `202` 和可轮询的更新任务。
 
 #### `POST /announcements`
 
-- 角色：`admin` / `superadmin`
 - 权限：`announcements:write`
 - 请求字段：
   - `title`：公告标题，必填。
@@ -985,30 +963,46 @@ GitHub Actions 工作流。响应为 `202` 和可轮询的更新任务。
 
 #### `PATCH /announcements/{announcement_id}`
 
-- 角色：`admin` / `superadmin`
 - 权限：`announcements:write`
 - 支持局部更新公告字段。
 - 首次将公告状态改为 `published` 时写入 `published_at`。
 
 #### `DELETE /announcements/{announcement_id}`
 
-- 角色：`admin` / `superadmin`
 - 权限：`announcements:write`
 - 采用软删除语义：将公告状态改为 `archived`，不物理删除数据库记录。
 
-### 4.17 角色权限
+### 4.18 角色权限
 
 #### `GET /roles`
 
-返回角色列表。
+- 权限：`roles:read`。
+- 返回 `roles` 与 `permission_catalog`。角色包含 `role_id`、`name`、`description`、`permissions`、`is_system`、创建/修改时间；权限目录包含权限分组、展示名称和说明。
 
-#### `GET /roles/{role_id}/permissions`
+#### `GET /roles/{role_id}` / `GET /roles/{role_id}/permissions`
 
-返回角色权限矩阵。
+- 权限：`roles:read`。
+- 返回指定角色。`/permissions` 保留为旧客户端兼容路径。
+
+#### `POST /roles`
+
+- 权限：`roles:write`，且调用者必须是 `superadmin`。
+- 创建自定义角色。`role_id` 为 3-32 位小写英文、数字、连字符或下划线，角色默认不继承权限。
+
+#### `PATCH /roles/{role_id}`
+
+- 权限：`roles:write`。
+- 可更新自定义角色的名称、说明或权限集合；非超级管理员受自身权限子集与系统角色保护约束。
 
 #### `PUT /roles/{role_id}/permissions`
 
-更新角色权限矩阵。
+- 兼容旧客户端的权限更新接口，语义与 `PATCH /roles/{role_id}` 的 `permissions` 字段一致。
+
+#### `DELETE /roles/{role_id}`
+
+- 权限：`roles:write`，且调用者必须是 `superadmin`。
+- 系统角色不可删除；仍被用户分配的自定义角色返回 `409 ROLE_IN_USE`。
+- 用户角色或状态调整不会移除最后一个已启用的 `superadmin`；该场景返回 `409 LAST_SUPERADMIN_PROTECTED`。
 
 ## 5. 外部适配器映射说明
 

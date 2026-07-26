@@ -150,6 +150,12 @@ def ensure_sqlite_compat_columns(engine: Engine) -> None:
             "created_at": "REAL DEFAULT 0.0",
             "updated_at": "REAL DEFAULT 0.0",
         },
+        "image_generation_models": {
+            "protocol_config": "TEXT DEFAULT '{}'",
+        },
+        "image_generation_jobs": {
+            "output_options": "TEXT DEFAULT '{}'",
+        },
     }
     with engine.begin() as connection:
         existing_tables = {
@@ -249,6 +255,12 @@ def ensure_sql_compat_columns(engine: Engine) -> None:
             "is_active": "INTEGER DEFAULT 1",
             "created_at": "FLOAT DEFAULT 0.0",
             "updated_at": "FLOAT DEFAULT 0.0",
+        },
+        "image_generation_models": {
+            "protocol_config": "TEXT DEFAULT '{}'",
+        },
+        "image_generation_jobs": {
+            "output_options": "TEXT DEFAULT '{}'",
         },
     }
     inspector = inspect(engine)

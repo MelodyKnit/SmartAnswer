@@ -13,7 +13,7 @@ from ..storage.repositories.import_scripts import ImportScriptRepository
 from ..storage.repositories.image_generation import ImageGenerationRepository
 from ..storage.repositories.llm import LlmRepository
 from ..storage.repositories.notifications import NotificationRepository
-from ..storage.repositories.permissions import PermissionRepository
+from ..storage.repositories.roles import RoleRepository
 from ..storage.repositories.settings import SettingsRepository
 from ..storage.repositories.tokens import TokenRepository
 from ..storage.repositories.usage import UsageRepository
@@ -48,7 +48,7 @@ class PlatformServices:
         notification_repository = NotificationRepository(session_factory)
         announcement_repository = AnnouncementRepository(session_factory)
         import_script_repository = ImportScriptRepository(session_factory)
-        permission_repository = PermissionRepository(settings_repository)
+        role_repository = RoleRepository(session_factory, settings_repository)
         llm_repository = LlmRepository(session_factory, settings_repository)
         image_generation_repository = ImageGenerationRepository(session_factory)
 
@@ -68,7 +68,8 @@ class PlatformServices:
             token_repository,
             lock,
         )
-        self.permissions = PermissionService(permission_repository, lock)
+        self.permissions = PermissionService(role_repository, lock)
+        self.permissions.ensure_system_roles()
         self.permissions.ensure_image_generation_permission_defaults()
         self.llm = LlmManagementService(llm_repository, lock)
         self.image_generation = ImageGenerationService(

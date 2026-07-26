@@ -119,13 +119,25 @@ class UsageService(PlatformDomainService):
         with self.lock:
             return dict(self.repository.usage_counts_by_field("username"))
 
-    def usage_scope(self, *, username: str, role: str, scope: str = "self") -> tuple[str, str | None]:
-        """归一化统计范围，并返回仓储层需要的用户过滤器。"""
+    def usage_scope(
+        self,
+        *,
+        username: str,
+        role: str,
+        scope: str = "self",
+        can_view_global: bool | None = None,
+    ) -> tuple[str, str | None]:
+        """归一化统计范围，并根据实时权限决定是否允许全站范围。"""
 
         requested_scope = (scope or "").strip().lower()
+        global_allowed = (
+            role == "superadmin"
+            if can_view_global is None
+            else bool(can_view_global)
+        )
         if not requested_scope:
-            requested_scope = "global" if role in {"admin", "superadmin"} else "self"
-        if requested_scope == "global" and role in {"admin", "superadmin"}:
+            requested_scope = "global" if global_allowed else "self"
+        if requested_scope == "global" and global_allowed:
             return "global", None
         return "self", username
 
@@ -137,6 +149,7 @@ class UsageService(PlatformDomainService):
         scope: str,
         start_time: float,
         end_time: float,
+        can_view_global: bool | None = None,
     ) -> dict[str, float | str]:
         """返回当前口径下的概览统计。"""
 
@@ -144,6 +157,7 @@ class UsageService(PlatformDomainService):
             username=username,
             role=role,
             scope=scope,
+            can_view_global=can_view_global,
         )
         with self.lock:
             metrics = self.repository.usage_overview(
@@ -163,6 +177,7 @@ class UsageService(PlatformDomainService):
         start_time: float,
         end_time: float,
         limit: int | None = None,
+        can_view_global: bool | None = None,
     ) -> list[tuple[str, int]]:
         """返回指定统计口径下的分布聚合。"""
 
@@ -170,6 +185,7 @@ class UsageService(PlatformDomainService):
             username=username,
             role=role,
             scope=scope,
+            can_view_global=can_view_global,
         )
         with self.lock:
             return self.repository.usage_counts_by_field(
@@ -224,11 +240,20 @@ class UsageService(PlatformDomainService):
             },
         }
 
-    def usage_trend(self, username: str, role: str, scope: str, days: int) -> list[dict]:
+    def usage_trend(
+        self,
+        username: str,
+        role: str,
+        scope: str,
+        days: int,
+        *,
+        can_view_global: bool | None = None,
+    ) -> list[dict]:
         effective_scope, username_filter = self.usage_scope(
             username=username,
             role=role,
             scope=scope,
+            can_view_global=can_view_global,
         )
         del effective_scope
         items: list[dict] = []
@@ -243,12 +268,19 @@ class UsageService(PlatformDomainService):
         return items
 
     def usage_summary_trend(
-        self, username: str, role: str, scope: str, days: int
+        self,
+        username: str,
+        role: str,
+        scope: str,
+        days: int,
+        *,
+        can_view_global: bool | None = None,
     ) -> list[dict]:
         effective_scope, username_filter = self.usage_scope(
             username=username,
             role=role,
             scope=scope,
+            can_view_global=can_view_global,
         )
         del effective_scope
         items: list[dict] = []
