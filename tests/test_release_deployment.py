@@ -141,6 +141,14 @@ class RemoteReleaseScriptTests(unittest.TestCase):
         self.assertIn("SOURCE_REPOSITORY=${{ github.repository }}", workflow)
         self.assertNotIn("GHCR_READ_TOKEN", workflow)
 
+    def test_release_workflow_pins_ruff_version(self) -> None:
+        """发布校验必须使用确定的 Ruff 版本，避免默认规则随上游变动。"""
+
+        workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("ruff==0.15.21", workflow)
+        self.assertIn("ruff --version", workflow)
+
     def test_release_workflow_retries_transient_npm_install_failures(self) -> None:
         """前端依赖下载遇到瞬时网络重置时应重试，再进入构建阶段。"""
 
