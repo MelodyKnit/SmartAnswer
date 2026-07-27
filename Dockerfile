@@ -13,6 +13,7 @@ FROM python:3.13-slim
 
 ARG APP_VERSION=dev
 ARG BUILD_SHA=unknown
+ARG SOURCE_REPOSITORY=unknown
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
@@ -20,8 +21,9 @@ ENV PYTHONPATH=/app/src
 ENV STQB_DATA_DIR=/app/data
 ENV STQB_APP_VERSION=${APP_VERSION}
 ENV STQB_BUILD_SHA=${BUILD_SHA}
+ENV STQB_SOURCE_REPOSITORY=${SOURCE_REPOSITORY}
 
-LABEL org.opencontainers.image.source="https://github.com/MelodyKnit/SmartAnswer"
+LABEL org.opencontainers.image.source="https://github.com/${SOURCE_REPOSITORY}"
 LABEL org.opencontainers.image.version="${APP_VERSION}"
 LABEL org.opencontainers.image.revision="${BUILD_SHA}"
 

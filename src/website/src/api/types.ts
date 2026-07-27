@@ -353,12 +353,6 @@ export interface SystemConfig {
   image_generation_daily_limit?: string
   image_generation_retention_days?: string
   answer_retry_times?: string
-  project_update_enabled?: string
-  project_update_auto_check_enabled?: string
-  project_update_check_interval_hours?: string
-  project_update_repository?: string
-  project_update_workflow?: string
-  project_update_github_token_configured?: boolean
   registration_enabled?: string
   registration_email_mode?: 'optional' | 'required' | 'verified'
   email_verification_enabled?: string
@@ -378,12 +372,8 @@ export interface SystemConfig {
 }
 
 export type ProjectUpdateState =
-  | 'disabled'
-  | 'unconfigured'
+  | 'unavailable'
   | 'idle'
-  | 'queued'
-  | 'running'
-  | 'succeeded'
   | 'failed'
 
 export interface ProjectUpdateRelease {
@@ -398,28 +388,9 @@ export interface ProjectUpdateRelease {
   build_sha: string
 }
 
-export interface ProjectUpdateOperation {
-  operation_id: string
-  expected_version: string
-  requested_by: string
-  state: ProjectUpdateState
-  created_at: number
-  updated_at: number
-  workflow_run_id: number
-  workflow_run_url: string
-  last_polled_at: number
-  message: string
-  error: string
-}
-
 export interface ProjectUpdateStatus {
-  configured: boolean
-  enabled: boolean
-  automatic_check_enabled: boolean
-  check_interval_hours: number
-  next_check_at: number
+  available: boolean
   repository: string
-  workflow: string
   current_version: string
   build_sha: string
   build_type: string
@@ -430,7 +401,6 @@ export interface ProjectUpdateStatus {
   message: string
   error: string
   release: ProjectUpdateRelease | null
-  operation: ProjectUpdateOperation | null
 }
 
 export interface EmailDomainWhitelist {

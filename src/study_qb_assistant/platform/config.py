@@ -17,12 +17,6 @@ SYSTEM_CONFIG_KEYS = {
     "image_generation_daily_limit",
     "image_generation_retention_days",
     "answer_retry_times",
-    "project_update_enabled",
-    "project_update_auto_check_enabled",
-    "project_update_check_interval_hours",
-    "project_update_repository",
-    "project_update_workflow",
-    "project_update_github_token",
     "registration_enabled",
     "registration_email_mode",
     "email_verification_enabled",
@@ -43,8 +37,6 @@ SYSTEM_CONFIG_KEYS = {
 SYSTEM_CONFIG_BOOLEAN_KEYS = {
     "smart_proto_enabled",
     "registration_enabled",
-    "project_update_enabled",
-    "project_update_auto_check_enabled",
     "email_verification_enabled",
 }
 
@@ -67,7 +59,7 @@ LLM_RUNTIME_CONFIG_KEYS = {
     "llm_cache_min_confirmations",
 }
 
-SYSTEM_CONFIG_SECRET_KEYS = {"smtp_password", "project_update_github_token"}
+SYSTEM_CONFIG_SECRET_KEYS = {"smtp_password"}
 
 LLM_RUNTIME_SECRET_KEYS = {
     "google_search_api_key",
@@ -90,12 +82,6 @@ SYSTEM_CONFIG_DEFAULTS = {
     "image_generation_daily_limit": "20",
     "image_generation_retention_days": "30",
     "answer_retry_times": "3",
-    "project_update_enabled": "false",
-    "project_update_auto_check_enabled": "true",
-    "project_update_check_interval_hours": "24",
-    "project_update_repository": "",
-    "project_update_workflow": "deploy-release.yml",
-    "project_update_github_token": "",
     "registration_enabled": "true",
     "registration_email_mode": "optional",
     "email_verification_enabled": "false",

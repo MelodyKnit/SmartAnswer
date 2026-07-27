@@ -11,7 +11,6 @@ image_ref="${2:-}"
 version="${3:-}"
 build_sha="${4:-}"
 health_base_url="${5:-}"
-ghcr_username="${6:-}"
 compose_file=""
 candidate_compose_file=""
 
@@ -26,10 +25,9 @@ validate_arguments() {
   [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "invalid release version"
   [[ "$build_sha" =~ ^[a-f0-9]{40}$ ]] || fail "invalid build revision"
   [[ "$health_base_url" =~ ^https?://127\.0\.0\.1:[1-9][0-9]{0,4}$ ]] || fail "invalid health URL"
-  [[ "$ghcr_username" =~ ^[A-Za-z0-9_.-]+$ ]] || fail "invalid GHCR username"
   compose_file="$project_dir/docker-compose.yaml"
   candidate_compose_file="$project_dir/deploy/docker-compose.release.yaml"
-  [[ -f "$compose_file" ]] || fail "docker-compose.yaml is missing"
+  [[ -d "$project_dir" ]] || fail "project directory is missing"
   [[ -f "$candidate_compose_file" ]] || fail "release Compose file is missing"
 }
 
@@ -96,14 +94,20 @@ restore_previous_release() {
   local release_env="$1"
   local previous_env="$2"
   local had_previous_release="$3"
-  local backup_path="$4"
-  local previous_version="$5"
+  local had_previous_compose="$4"
+  local backup_path="$5"
+  local previous_version="$6"
 
-  replace_file_atomically "$previous_compose" "$compose_file" 644
+  if [[ "$had_previous_compose" == true ]]; then
+    replace_file_atomically "$previous_compose" "$compose_file" 644
+  else
+    rm -f "$compose_file"
+  fi
 
   if [[ "$had_previous_release" != true ]]; then
     rm -f "$release_env"
-    printf 'Original Compose file restored, but no prior release is available to restart.\n' >&2
+    docker rm -f "$SERVICE_NAME" >/dev/null 2>&1 || true
+    printf 'No prior release is available to restart.\n' >&2
     return 1
   fi
 
@@ -122,21 +126,17 @@ restore_previous_release() {
 
 validate_arguments
 
-IFS= read -r ghcr_read_token || fail "missing GHCR read token"
-[[ -n "$ghcr_read_token" ]] || fail "missing GHCR read token"
-
 release_env="$project_dir/.env.release"
 previous_env="$(mktemp)"
 previous_compose="$(mktemp)"
-docker_config="$(mktemp -d)"
 had_previous_release=false
+had_previous_compose=false
 backup_path=""
 previous_version=""
 
 cleanup() {
   rm -f "$previous_env"
   rm -f "$previous_compose" "$candidate_compose_file"
-  rm -rf "$docker_config"
 }
 trap cleanup EXIT
 
@@ -145,12 +145,13 @@ if [[ -f "$release_env" ]]; then
   had_previous_release=true
   previous_version="$(awk -F= '$1 == "STQB_RELEASE_VERSION" { print $2; exit }' "$release_env")"
 fi
-cp "$compose_file" "$previous_compose"
+if [[ -f "$compose_file" ]]; then
+  cp "$compose_file" "$previous_compose"
+  had_previous_compose=true
+fi
 
-printf '%s' "$ghcr_read_token" | docker --config "$docker_config" login ghcr.io -u "$ghcr_username" --password-stdin >/dev/null
-docker --config "$docker_config" pull "$image_ref"
-docker --config "$docker_config" logout ghcr.io >/dev/null 2>&1 || true
-unset ghcr_read_token
+# 公开 GHCR 包允许匿名拉取；生产始终使用 Release manifest 中的不可变 digest。
+docker pull "$image_ref"
 
 candidate_build="$(docker run --rm --entrypoint python "$image_ref" -c 'from study_qb_assistant.version import BUILD_INFO; print(BUILD_INFO.version + ":" + BUILD_INFO.build_sha)')"
 [[ "$candidate_build" == "$version:$build_sha" ]] || fail "image build metadata does not match release"
@@ -160,14 +161,14 @@ write_release_environment "$release_env"
 replace_file_atomically "$candidate_compose_file" "$compose_file" 644
 
 if ! docker compose --env-file "$release_env" -f "$compose_file" up -d --no-build "$SERVICE_NAME"; then
-  if ! restore_previous_release "$release_env" "$previous_env" "$had_previous_release" "$backup_path" "$previous_version"; then
+  if ! restore_previous_release "$release_env" "$previous_env" "$had_previous_release" "$had_previous_compose" "$backup_path" "$previous_version"; then
     fail "Compose start failed and rollback failed"
   fi
   fail "Compose start failed; previous release was restored"
 fi
 
 if ! wait_until_healthy "$version"; then
-  if ! restore_previous_release "$release_env" "$previous_env" "$had_previous_release" "$backup_path" "$previous_version"; then
+  if ! restore_previous_release "$release_env" "$previous_env" "$had_previous_release" "$had_previous_compose" "$backup_path" "$previous_version"; then
     fail "health check failed and rollback failed"
   fi
   fail "health check failed; previous release was restored"

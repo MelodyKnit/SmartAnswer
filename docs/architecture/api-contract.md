@@ -515,12 +515,6 @@
   - `smart_proto_enabled`
   - `custom_proto_header`
   - `answer_retry_times`
-  - `project_update_enabled`
-  - `project_update_auto_check_enabled`
-  - `project_update_check_interval_hours`：`1` 到 `168` 小时
-  - `project_update_repository`
-  - `project_update_workflow`
-  - `project_update_github_token`：写入后不回显
   - `registration_enabled`
   - `registration_email_mode`：`optional`、`required` 或 `verified`
   - `email_verification_enabled`
@@ -544,8 +538,6 @@
 - 选择 `registration_email_mode=verified` 时必须先完整配置 SMTP 主机、端口、加密方式、用户名、密码和发件邮箱；`required` 不依赖 SMTP。
 - 邮箱域名白名单存储在 `data/configs/email-domain-whitelist.json`，按文件修改时间轻量缓存，修改后无需重启。
 - Docker 部署中该路径对应宿主机的 `deploy-data/configs/email-domain-whitelist.json`，应通过系统配置页维护，不会在镜像更新时被覆盖。
-- `project_update_enabled=true` 前必须填写 GitHub 仓库、部署工作流和 GitHub 访问令牌；令牌只返回 `project_update_github_token_configured` 标记。
-- `project_update_auto_check_enabled=true` 时，运行时巡检仅按配置周期读取并校验最新 Release；它不会自动部署。
 
 ### `GET /system/email-domain-whitelist`
 
@@ -576,35 +568,14 @@
 
 ### `GET /project-update/status`
 
-读取当前构建、最近一次 GitHub Release 检查缓存和最后一个部署任务状态。仅
-需要 `system:write` 权限，不会主动访问 GitHub 或返回访问令牌。
+读取当前构建和最近一次公开 GitHub Release 检查缓存。需要 `system:write` 权限，不会主动访问 GitHub，也不包含任何 GitHub 凭据。
 
 ### `POST /project-update/check`
 
-立即读取最新正式 GitHub Release，并验证 `release-manifest.json` 的仓库、标签、版本、
-提交号、镜像名称和 digest。校验通过后返回 `latest_version` 与 `has_update`。
+立即匿名读取最新正式 GitHub Release，并验证 `release-manifest.json` 的仓库、标签、版本、提交号、镜像名称和 digest。校验通过后返回 `latest_version` 与 `has_update`。
 
-### `POST /project-update/apply`
-
-仅接受管理员确认后的版本：
-
-```json
-{ "expected_version": "0.1.33" }
-```
-
-服务端会再次检查 Release；只有版本仍是最新且高于当前发布构建时，才会调度配置的
-GitHub Actions 工作流。响应为 `202` 和可轮询的更新任务。
-
-### `GET /project-update/operations/{operation_id}`
-
-轮询 GitHub Actions 对应任务。状态包括 `queued`、`running`、`succeeded` 和 `failed`。
-部署脚本的远端健康检查和自动回滚仍由 GitHub Actions 调用的 `remote-release.sh` 负责。
-若 GitHub 在 10 分钟内未创建对应工作流，任务会标记为失败，管理员可重新检查并发起更新。
-
-### `DELETE /project-update/token`
-
-清除已保存的 GitHub 访问令牌。需要 `system:write` 权限；项目更新必须先关闭，且不能存在
-`queued` 或 `running` 的部署任务。成功后仅返回脱敏后的系统配置。
+应用不提供部署、任务轮询或 GitHub Token 管理接口。GitHub Actions 的受保护 `production` Environment 负责从 Release 的精确镜像 digest 部署，远端 `remote-release.sh` 负责健康检查和自动回滚。
+应用启动时会幂等清理旧版本遗留的 `project_update_*` 系统配置，包含历史 GitHub Token。
 
 大模型推理、联网搜索和 LLM 学习缓存配置统一通过 `/llm-runtime-config` 维护，系统配置页不再展示这些字段。
 

@@ -1,136 +1,103 @@
 # Server Deployment
 
-This project is deployed on Linux with Docker because the runtime requires Python 3.13 while the current server default Python may differ.
+生产环境使用公开 GHCR 的不可变镜像，通过 GitHub Actions 的 `production`
+Environment 部署。业务容器不执行 `git pull`、不访问 Docker Socket，也不保存 GitHub
+Token。
 
-## Deployment assets
+## 部署边界
 
-- `Dockerfile`: application image with Python 3.13, backend dependencies, and a built frontend
-- `docker-compose.yaml`: one-command production service definition
-- `.env.server`: server-local environment file, intentionally not committed
-- `.env.server.example`: server-local environment template
-- `.env.release`: current immutable image reference and release version
-- `deploy/remote-release.sh`: a short-lived deployment script invoked by GitHub Actions
+- `Dockerfile`：构建 Python 运行时和前端静态资源。
+- `docker-compose.yaml`：仅接受 `STQB_IMAGE_REF` 指向的镜像 digest，拒绝可变标签启动。
+- `.env.server`：服务器本地业务配置，未提交到仓库。
+- `.env.release`：由发布工作流的远端脚本原子生成，记录当前镜像 digest、版本和提交号。
+- `deploy/remote-release.sh`：GitHub Actions 通过 SSH 临时执行，负责备份、切换、健康检查和回滚。
 
-The image only contains code, generated frontend static assets, and committed configs.
-It does **not** carry local `data/` contents into production.
+镜像只包含代码、构建后的前端和提交的默认配置，不包含 `.env`、题库、SQLite、日志或图片数据。
 
-## Data boundary
+## 运行数据
 
-Production paths are split into three categories:
+所有可变数据都保存在服务器的 `deploy-data/`：
 
-- Image-only read-only assets:
-  - `src/`
-  - `scripts/`
-  - `configs/`
-- Runtime writable data on the server:
-  - `deploy-data/runtime/`
-  - `deploy-data/logs/`
-  - `deploy-data/normalized/`
-  - `deploy-data/images/ocs/`
-  - `deploy-data/images/generations/`
-  - any later runtime cache files under `deploy-data/`
-- Optional import assets:
-  - manually uploaded or generated question-bank files after deployment
+- `deploy-data/runtime/`：SQLite 和运行时状态。
+- `deploy-data/logs/`：应用日志。
+- `deploy-data/normalized/`：导入后的题库数据。
+- `deploy-data/images/ocs/`：OCS 图片题资产。
+- `deploy-data/images/generations/`：文本生图资产。
+- `deploy-data/backups/releases/`：发布前的 SQLite 一致性快照。
 
-The default production deployment starts with an empty `deploy-data/normalized/`.
-If `data/normalized/verified.jsonl` does not exist, the service still starts and exposes
-health, auth, and admin pages. Query endpoints return a normal local not-found result until
-question-bank data is imported later.
+容器内使用 `/app/data`，由 Compose 映射到该目录。更新镜像不会覆盖运行数据。
 
-## Expected server-local environment
+## 服务器准备
 
-Minimum required values:
+在服务器上创建部署目录并让部署账户可写：
 
-- none for first boot
+```bash
+sudo mkdir -p /opt/study-question-bank-assistant
+sudo chown -R "$USER":"$USER" /opt/study-question-bank-assistant
+```
 
-Recommended deployment values:
+可选地创建 `.env.server` 保存模型、代理等业务配置。该文件与发布版本无关，示例见
+`.env.server.example`。常用配置包括：
 
 - `STQB_LLM_BASE_URL`
 - `STQB_LLM_MODEL`
 - `STQB_LLM_API_KEY`
 - `STQB_REQUIRE_AUTH=true`
 - `STQB_PUBLIC_BASE_URL=https://your-public-domain`
-- `STQB_REDIS_URL` only if shared session storage is needed
+- `STQB_REDIS_URL`（仅共享会话需要时）
 
-When the model gateway or outbound proxy runs on the host machine instead of inside the
-same container network, use `host.docker.internal` rather than `127.0.0.1`.
-Inside the container, loopback only points to the application container itself.
-Vision questions store readable OCS images under `deploy-data/images/ocs/` and send the
-model a URL under `/api/v1/media/ocs/images/`. Configure `STQB_PUBLIC_BASE_URL` to the public
-HTTPS origin that the model provider can reach; otherwise local loopback requests fall
-back to inline data URLs for development.
+模型网关或代理运行在宿主机时，容器内应通过 `host.docker.internal` 访问，不要使用
+`127.0.0.1`。视觉模型要读取 OCS 图片时，`STQB_PUBLIC_BASE_URL` 必须是模型可访问的
+HTTPS 地址。
 
-Text-to-image output is stored separately under `deploy-data/images/generations/`. Generated
-assets are private: they are served only through authenticated `/api/v1/image-generations/.../content`
-requests and are never exposed through the OCS public image route. The directory is part of the
-same `/app/data` volume, so generated images survive a container rebuild. Their retention period
-is managed by **系统配置 > 积分策略**; `0` means permanent retention.
+## GitHub Environment
 
-The compose file does not require `.env.server` to exist. You can boot the site first,
-create the first `superadmin`, and then configure model/search providers from the admin UI.
-If you prefer environment-based deployment, copy `.env.server.example` to `.env.server`
-and fill server-local values; Compose loads it when present.
-The default server template points `STQB_LLM_BASE_URL` at `http://host.docker.internal:3000/v1`
-so a host-side OpenAI-compatible gateway remains reachable from the container.
-The server template also defaults `STQB_WEB_SEARCH_PROVIDER` to `bing`, which is the safer
-choice when DuckDuckGo direct access is unstable in the deployment environment.
+在 GitHub 仓库中创建名为 `production` 的 Environment，并配置部署保护规则：
 
-## First release start
+1. 启用必需审批人，并限制为维护者可以发布的版本标签。
+2. 添加 Secrets：`DEPLOY_SSH_PRIVATE_KEY`、`DEPLOY_KNOWN_HOSTS`。
+3. 添加 Variables：`DEPLOY_HOST`、`DEPLOY_PORT`、`DEPLOY_USER`、`DEPLOY_PATH`、`DEPLOY_HEALTH_URL`。
+4. 将 GHCR 包设为公开。GitHub 新建包通常默认私有；首次镜像发布后，应在 Packages 页面调整为 Public，再批准部署任务。
 
-Create `.env.release` from the template, then replace the image reference with the digest
-published in the GitHub Release manifest:
+`DEPLOY_HEALTH_URL` 应是服务器本机的服务地址，例如 `http://127.0.0.1:3003`。这些值只存在于 GitHub Environment；不会写入数据库、`.env.server` 或业务容器。
+
+## 首次发布
+
+首次不需要手工创建 `.env.release`，也不需要在服务器执行 `docker login`。完成 GitHub
+Environment 配置后，按以下方式发布：
 
 ```bash
-cp .env.release.example .env.release
-chmod 600 .env.release
-docker login ghcr.io -u YOUR_GITHUB_USERNAME
-docker pull ghcr.io/melodyknit/smartanswer@sha256:RELEASE_DIGEST
-docker compose --env-file .env.release up -d --no-build
+# 在本地完成验证后
+git add .
+git commit -m "release: vX.Y.Z"
+git tag vX.Y.Z
+git push origin HEAD --tags
 ```
 
-Docker creates `deploy-data/` automatically on first boot. The service uses
-`STQB_DATA_DIR=/app/data` in the container, so database, logs, and optional normalized
-question-bank files and OCS question images all live under the mounted server directory.
-The image contains versioned prompts and default configs. On first use, the email-domain
-whitelist is copied to `deploy-data/configs/email-domain-whitelist.json`; edit that runtime
-copy from **系统配置 > 注册邮箱白名单** when changing allowed registration domains. It is
-not overwritten by later images.
+`release.yml` 会按顺序执行：
 
-On a brand-new runtime database, the first registered user becomes `superadmin`.
+1. 校验 `vX.Y.Z` 与 `pyproject.toml` 版本和标签提交一致。
+2. 运行后端测试、前端构建和发布脚本语法检查。
+3. 构建并发布 `linux/amd64` GHCR 镜像，以及 `release-manifest.json`。
+4. 创建正式 GitHub Release。
+5. 等待 `production` Environment 审批。
+6. 远端脚本匿名拉取 manifest 中的精确 digest，备份 SQLite，原子切换 Compose，并验证 `/api/v1/healthz` 与 `/api/v1/version`。
 
-## Manual server releases
+健康检查或启动失败时，脚本会恢复上一份 Compose、`.env.release` 和 SQLite 快照。首次发布没有旧版本时会清理候选配置并失败退出，不会把失败镜像标记为当前版本。
 
-Version tags are release records only. `.github/workflows/release.yml` no longer runs when a
-tag is pushed, and production deployment does not depend on GitHub Actions, a GitHub webhook,
-or an application-held GitHub token.
+## 重新部署已发布版本
 
-For each release, use this controlled sequence from a trusted administrator machine:
+如需重新部署某个已发布版本，在 GitHub Actions 手工运行 `Deploy Existing Release`，输入
+`vX.Y.Z`。工作流会下载并校验该 Release 的 `release-manifest.json`，再走同一套
+备份、digest 切换、健康检查和回滚逻辑。不要在服务器上按 `stable` 标签手工更新。
 
-1. Finish review and validation, update `pyproject.toml`, commit, create the matching `vX.Y.Z`
-   tag, and push the source plus tag.
-2. On the server, create a timestamped backup of the project source and the SQLite runtime
-   database under `deploy-data/backups/`.
-3. Transfer reviewed source files without overwriting `.env.server`, `.env.release`, or
-   `deploy-data/`.
-4. Build a local versioned image with `APP_VERSION` and `BUILD_SHA` build arguments.
-5. Start that image through `docker compose`, then verify `/api/v1/healthz` and
-   `/api/v1/version` before treating the release as complete.
+## 应用内状态页
 
-The repository retains the GitHub workflow files for future operator-led use, but they are not
-part of the current production release path. Any GitHub access token stored in application
-configuration is optional and is not required for manual server deployment.
+**系统配置 > 版本发布** 只显示当前构建和最近一次公开 GitHub Release 检查结果。它不会保存 GitHub Token、触发 GitHub Actions 或修改生产容器。正式部署始终从 GitHub 的受保护 Environment 发起。
 
-## Importing question-bank data
+应用启动时会删除旧版本遗留的 `project_update_*` 系统配置，包括旧的 GitHub Token，避免迁移后继续在 SQLite 中保留不再使用的部署凭据。
 
-Question-bank files are not bundled into production by default.
-After the service is online, import or copy normalized data separately if needed, for example:
+## 反向代理
 
-- place a normalized JSONL into `deploy-data/normalized/verified.jsonl`, or
-- use later admin/import workflows when available
-
-This keeps local work artifacts, caches, logs, and SQLite snapshots out of the deployment image.
-
-## Reverse proxy
-
-The service listens on container port `8765` and host port `3003`.
-If Nginx is used, proxy `ocs.classbot.top` to `http://127.0.0.1:3003`.
+服务监听容器端口 `8765`、宿主机端口 `3003`。Nginx 可将公开域名转发到
+`http://127.0.0.1:3003`。反向代理需要正确传递 `Host` 和 `X-Forwarded-Proto`，以便生成可访问的 OCS 图片 URL。

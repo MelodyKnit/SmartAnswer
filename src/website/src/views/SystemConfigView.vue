@@ -3,8 +3,8 @@
  *  敏感项后端只返回 *_configured 标志，不回明文；留空表示不修改。 */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { billingApi, projectUpdateApi, systemConfigApi } from '@/api/endpoints'
+import { ElMessage } from 'element-plus'
+import { billingApi, systemConfigApi } from '@/api/endpoints'
 import { ApiException } from '@/api/http'
 import PageHeader from '@/components/PageHeader.vue'
 import SiteLogo from '@/components/SiteLogo.vue'
@@ -59,13 +59,6 @@ const form = reactive({
   image_generation_daily_limit: 20,
   image_generation_retention_days: 30,
   answer_retry_times: 3,
-  project_update_enabled: 'false',
-  project_update_auto_check_enabled: 'true',
-  project_update_check_interval_hours: 24,
-  project_update_repository: '',
-  project_update_workflow: 'deploy-release.yml',
-  project_update_github_token: '',
-  project_update_github_token_configured: false,
   registration_enabled: 'true',
   registration_email_mode: 'optional',
   smtp_host: '',
@@ -93,8 +86,6 @@ const emailDomainWhitelist = ref<string[]>([])
 const savedEmailDomainWhitelist = ref<string[]>([])
 const emailDomainDraft = ref('')
 const savingEmailDomainWhitelist = ref(false)
-const projectUpdateConfigurationVersion = ref(0)
-const persistedProjectUpdateEnabled = ref('false')
 
 const previewLogoUrl = computed(() => {
   const value = form.site_logo_url.trim()
@@ -151,48 +142,6 @@ function selectRegistrationEmailMode(value: 'optional' | 'required' | 'verified'
     return
   }
   ElMessage.warning(`请先完成 SMTP 配置后再开启邮箱验证：${issue}`)
-}
-
-/** 开启更新前先确保本次表单已具备 GitHub 私有仓库所需配置。 */
-function selectProjectUpdateEnabled(value: 'true' | 'false') {
-  if (value === 'false') {
-    form.project_update_enabled = value
-    return
-  }
-  if (!form.project_update_repository.trim()) {
-    ElMessage.warning('请先填写 GitHub 仓库')
-    return
-  }
-  if (!form.project_update_workflow.trim()) {
-    ElMessage.warning('请先填写部署工作流文件名')
-    return
-  }
-  if (!form.project_update_github_token.trim() && !form.project_update_github_token_configured) {
-    ElMessage.warning('请先填写 GitHub 访问令牌')
-    return
-  }
-  form.project_update_enabled = value
-}
-
-async function clearProjectUpdateToken() {
-  try {
-    await ElMessageBox.confirm(
-      '清除后无法继续检查私有仓库或调度部署工作流。请确认项目更新已关闭。',
-      '清除 GitHub 访问令牌',
-      { confirmButtonText: '清除', cancelButtonText: '取消', type: 'warning' },
-    )
-  } catch {
-    return
-  }
-  try {
-    await projectUpdateApi.clearToken()
-    form.project_update_github_token = ''
-    form.project_update_github_token_configured = false
-    projectUpdateConfigurationVersion.value += 1
-    ElMessage.success('GitHub 访问令牌已清除')
-  } catch (err) {
-    ElMessage.error(err instanceof ApiException ? err.message : '清除 GitHub 访问令牌失败')
-  }
 }
 
 function addEmailDomain() {
@@ -271,17 +220,6 @@ async function load() {
     form.image_generation_daily_limit = Number(res.config.image_generation_daily_limit || 20)
     form.image_generation_retention_days = Number(res.config.image_generation_retention_days || 30)
     form.answer_retry_times = Number(res.config.answer_retry_times || 3)
-    form.project_update_enabled = (res.config.project_update_enabled as string) || 'false'
-    persistedProjectUpdateEnabled.value = form.project_update_enabled
-    form.project_update_auto_check_enabled =
-      (res.config.project_update_auto_check_enabled as string) || 'true'
-    form.project_update_check_interval_hours = Number(
-      res.config.project_update_check_interval_hours || 24,
-    )
-    form.project_update_repository = (res.config.project_update_repository as string) || ''
-    form.project_update_workflow = (res.config.project_update_workflow as string) || 'deploy-release.yml'
-    form.project_update_github_token = ''
-    form.project_update_github_token_configured = Boolean(res.config.project_update_github_token_configured)
     form.registration_enabled = (res.config.registration_enabled as string) || 'true'
     form.registration_email_mode = res.config.registration_email_mode || 'optional'
     form.smtp_host = (res.config.smtp_host as string) || ''
@@ -303,7 +241,6 @@ async function load() {
     emailDomainWhitelist.value = [...whitelist.domains]
     savedEmailDomainWhitelist.value = [...whitelist.domains]
     emailDomainDraft.value = ''
-    projectUpdateConfigurationVersion.value += 1
   } catch (err) {
     ElMessage.error(err instanceof ApiException ? err.message : '加载系统配置失败')
   } finally {
@@ -338,11 +275,6 @@ async function save() {
       image_generation_daily_limit: String(form.image_generation_daily_limit),
       image_generation_retention_days: String(form.image_generation_retention_days),
       answer_retry_times: String(form.answer_retry_times),
-      project_update_enabled: form.project_update_enabled,
-      project_update_auto_check_enabled: form.project_update_auto_check_enabled,
-      project_update_check_interval_hours: String(form.project_update_check_interval_hours),
-      project_update_repository: form.project_update_repository,
-      project_update_workflow: form.project_update_workflow,
       registration_enabled: form.registration_enabled,
       registration_email_mode: form.registration_email_mode,
       smtp_host: form.smtp_host,
@@ -360,10 +292,6 @@ async function save() {
     if (form.smtp_password.trim()) {
       body.smtp_password = form.smtp_password
     }
-    if (form.project_update_github_token.trim()) {
-      body.project_update_github_token = form.project_update_github_token
-    }
-
     const updated = await systemConfigApi.update(body)
     site.applyConfig(updated.config)
     site.applyBrowserBrand(route.meta.title as string | undefined)
@@ -455,76 +383,10 @@ onMounted(load)
               </p>
             </div>
 
-            <!-- 版本更新 -->
+            <!-- 发布状态 -->
             <div class="app-card p-6">
-              <div class="flex flex-wrap items-center justify-between gap-3">
-                <h3 class="text-base font-semibold text-ink">项目更新</h3>
-                <el-switch
-                  :model-value="form.project_update_enabled"
-                  active-value="true"
-                  inactive-value="false"
-                  active-text="启用"
-                  inactive-text="关闭"
-                  @update:model-value="selectProjectUpdateEnabled"
-                />
-              </div>
-              <el-form label-position="top" class="mt-4 grid grid-cols-1 gap-x-6 md:grid-cols-2">
-                <el-form-item label="GitHub 仓库">
-                  <el-input v-model="form.project_update_repository" placeholder="owner/repository" />
-                </el-form-item>
-                <el-form-item label="部署工作流">
-                  <el-input v-model="form.project_update_workflow" placeholder="deploy-release.yml" />
-                </el-form-item>
-                <el-form-item label="自动检查更新">
-                  <el-switch
-                    v-model="form.project_update_auto_check_enabled"
-                    active-value="true"
-                    inactive-value="false"
-                    active-text="开启"
-                    inactive-text="关闭"
-                  />
-                </el-form-item>
-                <el-form-item label="检查周期（小时）">
-                  <el-input-number
-                    v-model="form.project_update_check_interval_hours"
-                    :min="1"
-                    :max="168"
-                    :disabled="form.project_update_auto_check_enabled !== 'true'"
-                    class="w-full"
-                  />
-                </el-form-item>
-                <el-form-item
-                  class="md:col-span-2"
-                  :label="form.project_update_github_token_configured ? 'GitHub 访问令牌（已配置）' : 'GitHub 访问令牌'"
-                >
-                  <div class="flex w-full flex-col gap-2 sm:flex-row">
-                    <div class="min-w-0 flex-1">
-                      <el-input
-                        v-model="form.project_update_github_token"
-                        class="w-full"
-                        type="password"
-                        show-password
-                        placeholder="留空保持不变；私有仓库需授予 Contents 读取和 Actions 写入权限"
-                      />
-                    </div>
-                    <el-button
-                      v-if="form.project_update_github_token_configured"
-                      class="sm:shrink-0"
-                      :disabled="persistedProjectUpdateEnabled === 'true'"
-                      @click="clearProjectUpdateToken"
-                    >
-                      清除令牌
-                    </el-button>
-                  </div>
-                </el-form-item>
-              </el-form>
-              <p class="text-xs text-ink-muted">
-                自动检查只发现版本，不会自动部署。更新会校验 GitHub Release manifest 后通过 GitHub Actions 部署不可变镜像；访问令牌仅保存在服务端，不会回显。
-              </p>
-              <p v-if="form.project_update_github_token_configured && persistedProjectUpdateEnabled === 'true'" class="mt-1 text-xs text-ink-muted">
-                如需清除访问令牌，请先关闭并保存项目更新配置。
-              </p>
-              <ProjectUpdatePanel :configuration-version="projectUpdateConfigurationVersion" />
+              <h3 class="text-base font-semibold text-ink">版本发布</h3>
+              <ProjectUpdatePanel />
             </div>
           </div>
         </el-tab-pane>

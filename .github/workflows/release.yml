@@ -1,8 +1,9 @@
 name: Release
 
 on:
-  # 版本标签用于提交追踪；生产发布由运维人员手动执行。
-  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
 
 permissions:
   contents: write
@@ -14,6 +15,7 @@ concurrency:
 
 jobs:
   release:
+    name: Validate, package and publish Release
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -96,8 +98,7 @@ jobs:
 
       - name: Build frontend
         working-directory: src/website
-        run: |
-          npm run build
+        run: npm run build
 
       - name: Validate backend
         run: |
@@ -131,6 +132,7 @@ jobs:
           build-args: |
             APP_VERSION=${{ steps.version.outputs.version }}
             BUILD_SHA=${{ github.sha }}
+            SOURCE_REPOSITORY=${{ github.repository }}
           tags: |
             ${{ steps.image.outputs.name }}:${{ steps.version.outputs.version }}
             ${{ steps.image.outputs.name }}:${{ github.ref_name }}
@@ -150,6 +152,7 @@ jobs:
           python3 - <<'PY'
           import json
           import os
+
           payload = {
               "schema_version": 1,
               "version": os.environ["VERSION"],
@@ -181,10 +184,11 @@ jobs:
           fi
 
   deploy:
-    name: Deploy release to configured server
+    name: Deploy immutable release
     needs: release
-    if: ${{ vars.DEPLOY_ENABLED == 'true' }}
     runs-on: ubuntu-latest
+    environment:
+      name: production
     concurrency:
       group: study-qb-production-deploy
       cancel-in-progress: false
@@ -196,8 +200,6 @@ jobs:
       DEPLOY_HEALTH_URL: ${{ vars.DEPLOY_HEALTH_URL || 'http://127.0.0.1:3003' }}
       DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
       DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
-      GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-      GHCR_USERNAME: ${{ github.repository_owner }}
       IMAGE_REF: ${{ needs.release.outputs.image }}@${{ needs.release.outputs.image_digest }}
       VERSION: ${{ needs.release.outputs.version }}
       BUILD_SHA: ${{ needs.release.outputs.build_sha }}
@@ -220,8 +222,6 @@ jobs:
           [[ "${BUILD_SHA}" =~ ^[a-f0-9]{40}$ ]] || { echo "Invalid release revision" >&2; exit 1; }
           [[ -n "${DEPLOY_SSH_PRIVATE_KEY}" ]] || { echo "DEPLOY_SSH_PRIVATE_KEY is not configured" >&2; exit 1; }
           [[ -n "${DEPLOY_KNOWN_HOSTS}" ]] || { echo "DEPLOY_KNOWN_HOSTS is not configured" >&2; exit 1; }
-          [[ -n "${GHCR_READ_TOKEN}" ]] || { echo "GHCR_READ_TOKEN is not configured" >&2; exit 1; }
-          [[ "${GHCR_USERNAME}" =~ ^[A-Za-z0-9_.-]+$ ]] || { echo "Invalid GHCR username" >&2; exit 1; }
 
       - name: Configure SSH
         shell: bash
@@ -244,5 +244,5 @@ jobs:
           scp "${scp_args[@]}" docker-compose.yaml "$remote_target:$remote_deploy_dir/docker-compose.release.yaml"
           scp "${scp_args[@]}" deploy/remote-release.sh "$remote_target:$remote_deploy_dir/remote-release.sh"
           ssh "${ssh_args[@]}" "$remote_target" "chmod 700 '$remote_deploy_dir/remote-release.sh'"
-          printf '%s\n' "$GHCR_READ_TOKEN" | ssh "${ssh_args[@]}" "$remote_target" \
-            "bash '$remote_deploy_dir/remote-release.sh' '$DEPLOY_PATH' '$IMAGE_REF' '$VERSION' '$BUILD_SHA' '$DEPLOY_HEALTH_URL' '$GHCR_USERNAME'"
+          ssh "${ssh_args[@]}" "$remote_target" \
+            "bash '$remote_deploy_dir/remote-release.sh' '$DEPLOY_PATH' '$IMAGE_REF' '$VERSION' '$BUILD_SHA' '$DEPLOY_HEALTH_URL'"

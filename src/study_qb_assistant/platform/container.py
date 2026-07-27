@@ -27,7 +27,10 @@ from .notifications import NotificationService
 from .permissions import PermissionService
 from .settings import SettingsService
 from .tokens import TokenService
-from .updates.service import ProjectUpdateService
+from .updates.service import (
+    ProjectUpdateService,
+    remove_legacy_project_update_settings,
+)
 from .usage import UsageService
 from .wallet import WalletService
 
@@ -45,6 +48,7 @@ class PlatformServices:
         feedback_repository = FeedbackRepository(session_factory)
         wallet_repository = WalletRepository(session_factory)
         settings_repository = SettingsRepository(session_factory)
+        remove_legacy_project_update_settings(settings_repository)
         notification_repository = NotificationRepository(session_factory)
         announcement_repository = AnnouncementRepository(session_factory)
         import_script_repository = ImportScriptRepository(session_factory)
@@ -77,7 +81,7 @@ class PlatformServices:
             self.settings,
             lock,
         )
-        self.updates = ProjectUpdateService(settings_repository, self.settings, lock)
+        self.updates = ProjectUpdateService(settings_repository, lock)
         self.dashboard = DashboardService(
             usage=self.usage,
             notifications=self.notifications,

@@ -18,13 +18,11 @@ from ...dependencies import (
 )
 from ...security import (
     auth_error_response,
-    current_user,
     require_permissions,
 )
 from ...runtime_config import apply_system_config_to_process
 from .schemas import (
     EmailDomainWhitelistPayload,
-    ProjectUpdateApplyPayload,
     SystemConfigPayload,
 )
 
@@ -121,51 +119,6 @@ def build_system_router() -> APIRouter:
             return JSONResponse({"ok": True, "update": update_service.check()})
         except ProjectUpdateError as exc:
             return project_update_error_response(exc)
-
-    @router.post("/project-update/apply")
-    def project_update_apply(
-        request: Request, payload: ProjectUpdateApplyPayload
-    ) -> JSONResponse:
-        """调度 GitHub Actions 部署管理员确认的版本。"""
-
-        denied = require_permissions(request, {"system:write"})
-        if denied:
-            return denied
-        user = current_user(request)
-        try:
-            operation = get_project_update_service(request).apply(
-                expected_version=payload.expected_version,
-                requested_by=str((user or {}).get("username") or "superadmin"),
-            )
-        except ProjectUpdateError as exc:
-            return project_update_error_response(exc)
-        return JSONResponse({"ok": True, "operation": operation.to_dict()}, status_code=202)
-
-    @router.delete("/project-update/token")
-    def project_update_token_delete(request: Request) -> JSONResponse:
-        """清除已保存的 GitHub 访问令牌。"""
-
-        denied = require_permissions(request, {"system:write"})
-        if denied:
-            return denied
-        try:
-            config = get_project_update_service(request).clear_access_token()
-        except ProjectUpdateError as exc:
-            return project_update_error_response(exc)
-        return JSONResponse({"ok": True, "config": config})
-
-    @router.get("/project-update/operations/{operation_id}")
-    def project_update_operation(request: Request, operation_id: str) -> JSONResponse:
-        """轮询 GitHub Actions 对应部署任务的最新状态。"""
-
-        denied = require_permissions(request, {"system:write"})
-        if denied:
-            return denied
-        try:
-            operation = get_project_update_service(request).operation(operation_id)
-        except ProjectUpdateError as exc:
-            return project_update_error_response(exc)
-        return JSONResponse({"ok": True, "operation": operation.to_dict()})
 
     @router.post("/system/logo/upload")
     async def upload_logo(

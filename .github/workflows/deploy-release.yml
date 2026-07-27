@@ -7,16 +7,11 @@ on:
         description: Existing GitHub Release tag to deploy
         required: true
         type: string
-      operation_id:
-        description: Project update operation identifier
-        required: true
-        type: string
 
-run-name: Deploy ${{ inputs.release_tag }} · ${{ inputs.operation_id }}
+run-name: Redeploy ${{ inputs.release_tag }}
 
 permissions:
   contents: read
-  packages: read
 
 concurrency:
   group: study-qb-production-deploy
@@ -24,10 +19,11 @@ concurrency:
 
 jobs:
   deploy:
-    name: Deploy immutable release
+    name: Redeploy immutable release
     runs-on: ubuntu-latest
+    environment:
+      name: production
     env:
-      DEPLOY_ENABLED: ${{ vars.DEPLOY_ENABLED }}
       DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
       DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
       DEPLOY_USER: ${{ vars.DEPLOY_USER }}
@@ -35,11 +31,7 @@ jobs:
       DEPLOY_HEALTH_URL: ${{ vars.DEPLOY_HEALTH_URL || 'http://127.0.0.1:3003' }}
       DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
       DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
-      GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
-      GHCR_USERNAME: ${{ github.repository_owner }}
       RELEASE_TAG: ${{ inputs.release_tag }}
-      OPERATION_ID: ${{ inputs.operation_id }}
-
     steps:
       - name: Checkout release source
         uses: actions/checkout@v4
@@ -53,7 +45,6 @@ jobs:
         run: |
           set -euo pipefail
           [[ "${RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid release tag" >&2; exit 1; }
-          [[ "${OPERATION_ID}" =~ ^[0-9a-f]{32}$ ]] || { echo "Invalid operation ID" >&2; exit 1; }
           mkdir -p "$RUNNER_TEMP/release"
           gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
             --pattern release-manifest.json --dir "$RUNNER_TEMP/release"
@@ -103,7 +94,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "${DEPLOY_ENABLED}" == "true" ]] || { echo "DEPLOY_ENABLED must be true" >&2; exit 1; }
           [[ "${DEPLOY_HOST}" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "Invalid DEPLOY_HOST" >&2; exit 1; }
           [[ "${DEPLOY_PORT}" =~ ^[1-9][0-9]{0,4}$ ]] || { echo "Invalid DEPLOY_PORT" >&2; exit 1; }
           (( 10#${DEPLOY_PORT} <= 65535 )) || { echo "Invalid DEPLOY_PORT" >&2; exit 1; }
@@ -112,8 +102,6 @@ jobs:
           [[ "${DEPLOY_HEALTH_URL}" =~ ^https?://127\.0\.0\.1:[1-9][0-9]{0,4}$ ]] || { echo "Invalid DEPLOY_HEALTH_URL" >&2; exit 1; }
           [[ -n "${DEPLOY_SSH_PRIVATE_KEY}" ]] || { echo "DEPLOY_SSH_PRIVATE_KEY is not configured" >&2; exit 1; }
           [[ -n "${DEPLOY_KNOWN_HOSTS}" ]] || { echo "DEPLOY_KNOWN_HOSTS is not configured" >&2; exit 1; }
-          [[ -n "${GHCR_READ_TOKEN}" ]] || { echo "GHCR_READ_TOKEN is not configured" >&2; exit 1; }
-          [[ "${GHCR_USERNAME}" =~ ^[A-Za-z0-9_.-]+$ ]] || { echo "Invalid GHCR username" >&2; exit 1; }
 
       - name: Configure SSH
         shell: bash
@@ -140,5 +128,5 @@ jobs:
           scp "${scp_args[@]}" docker-compose.yaml "$remote_target:$remote_deploy_dir/docker-compose.release.yaml"
           scp "${scp_args[@]}" deploy/remote-release.sh "$remote_target:$remote_deploy_dir/remote-release.sh"
           ssh "${ssh_args[@]}" "$remote_target" "chmod 700 '$remote_deploy_dir/remote-release.sh'"
-          printf '%s\n' "$GHCR_READ_TOKEN" | ssh "${ssh_args[@]}" "$remote_target" \
-            "bash '$remote_deploy_dir/remote-release.sh' '$DEPLOY_PATH' '$IMAGE_REF' '$VERSION' '$BUILD_SHA' '$DEPLOY_HEALTH_URL' '$GHCR_USERNAME'"
+          ssh "${ssh_args[@]}" "$remote_target" \
+            "bash '$remote_deploy_dir/remote-release.sh' '$DEPLOY_PATH' '$IMAGE_REF' '$VERSION' '$BUILD_SHA' '$DEPLOY_HEALTH_URL'"

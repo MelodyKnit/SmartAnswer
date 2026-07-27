@@ -104,7 +104,9 @@ class RemoteReleaseScriptTests(unittest.TestCase):
         self.assertIn(f"STQB_IMAGE_REF={NEW_IMAGE}", release_environment)
         self.assertIn(f"STQB_RELEASE_VERSION={NEW_VERSION}", release_environment)
         self.assertFalse((self.deploy_dir / "docker-compose.release.yaml").exists())
-        self.assertNotIn("test-read-token", self.docker_log.read_text(encoding="utf-8"))
+        docker_commands = self.docker_log.read_text(encoding="utf-8")
+        self.assertIn(f"pull {NEW_IMAGE}", docker_commands)
+        self.assertNotIn("login", docker_commands)
 
     def test_compose_failure_restores_previous_release(self) -> None:
         """新容器首次启动失败时恢复旧 Compose 与旧镜像引用。"""
@@ -128,13 +130,16 @@ class RemoteReleaseScriptTests(unittest.TestCase):
         self.assertIn('scp "${scp_args[@]}" docker-compose.yaml', workflow)
         self.assertNotIn('scp "${ssh_args[@]}"', workflow)
 
-    def test_release_workflow_requires_manual_dispatch(self) -> None:
-        """版本标签只负责追踪，不能自动启动 GitHub 发布或服务器部署。"""
+    def test_release_workflow_triggers_for_version_tags(self) -> None:
+        """正式版本标签必须触发校验、发布和受保护环境部署。"""
 
         workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
 
-        self.assertIn("workflow_dispatch:", workflow)
-        self.assertNotIn("push:\n    tags:", workflow)
+        self.assertIn("push:", workflow)
+        self.assertIn('"v*"', workflow)
+        self.assertIn("name: production", workflow)
+        self.assertIn("SOURCE_REPOSITORY=${{ github.repository }}", workflow)
+        self.assertNotIn("GHCR_READ_TOKEN", workflow)
 
     def test_release_workflow_retries_transient_npm_install_failures(self) -> None:
         """前端依赖下载遇到瞬时网络重置时应重试，再进入构建阶段。"""
@@ -151,7 +156,7 @@ class RemoteReleaseScriptTests(unittest.TestCase):
         )
 
     def test_existing_release_workflow_validates_manifest_before_remote_deploy(self) -> None:
-        """项目内更新只能调度已发布且经过 manifest 校验的不可变镜像。"""
+        """人工重部署只接受已发布且经过 manifest 校验的不可变镜像。"""
 
         workflow = UPDATE_WORKFLOW.read_text(encoding="utf-8")
 
@@ -160,6 +165,9 @@ class RemoteReleaseScriptTests(unittest.TestCase):
         self.assertIn("Release manifest validation failed", workflow)
         self.assertIn('scp_args=(-P "$DEPLOY_PORT"', workflow)
         self.assertIn("remote-release.sh", workflow)
+        self.assertIn("name: production", workflow)
+        self.assertNotIn("operation_id", workflow)
+        self.assertNotIn("GHCR_READ_TOKEN", workflow)
 
     def test_first_release_failure_restores_original_files(self) -> None:
         """首次发布无法启动时不应在服务器留下候选发布配置。"""
@@ -169,7 +177,7 @@ class RemoteReleaseScriptTests(unittest.TestCase):
         completed = self.run_release(health_version=OLD_VERSION, fail_first_up=True)
 
         self.assertNotEqual(completed.returncode, 0)
-        self.assertIn("no prior release is available", completed.stderr)
+        self.assertIn("No prior release is available", completed.stderr)
         self.assertIn("old-release", (self.project_dir / "docker-compose.yaml").read_text(encoding="utf-8"))
         self.assertFalse((self.project_dir / ".env.release").exists())
         self.assertFalse((self.deploy_dir / "docker-compose.release.yaml").exists())
@@ -198,7 +206,6 @@ class RemoteReleaseScriptTests(unittest.TestCase):
             NEW_VERSION,
             NEW_SHA,
             "http://127.0.0.1:3003",
-            "MelodyKnit",
         ]
         process = subprocess.Popen(
             command,
@@ -213,7 +220,7 @@ class RemoteReleaseScriptTests(unittest.TestCase):
             text=True,
         )
         try:
-            stdout, stderr = process.communicate("test-read-token\n", timeout=20)
+            stdout, stderr = process.communicate(timeout=20)
         except subprocess.TimeoutExpired:
             self.terminate_process_tree(process)
             stdout, stderr = process.communicate()
@@ -261,14 +268,8 @@ class RemoteReleaseScriptTests(unittest.TestCase):
         docker_script = r'''#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
-if [[ "${1:-}" == "--config" ]]; then
-  shift 2
-fi
 command="${1:-}"
 case "$command" in
-  login)
-    cat >/dev/null
-    ;;
   run)
     printf '%s:%s\n' "$FAKE_VERSION" "$FAKE_SHA"
     ;;

@@ -23,7 +23,6 @@ from .llm.tracing import set_trace_sink
 from .platform.container import PlatformServices
 from .platform.image_generation.worker import ImageGenerationWorker
 from .platform.settings import SettingsService
-from .platform.updates.monitor import ProjectUpdateMonitor
 from .logger import configure_external_loggers, log_event
 from .search import LocalQuestionIndex
 
@@ -79,19 +78,15 @@ def build_runtime_app() -> FastAPI:
 
 @asynccontextmanager
 async def runtime_lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """仅在真实运行时启动后台巡检与生图队列，测试应用不创建网络任务。"""
+    """仅在真实运行时启动生图队列，测试应用不创建网络任务。"""
 
-    monitor = ProjectUpdateMonitor(app.state.services.updates)
     image_worker = ImageGenerationWorker(app.state.services.image_generation)
-    app.state.project_update_monitor = monitor
     app.state.image_generation_worker = image_worker
-    await monitor.start()
     await image_worker.start()
     try:
         yield
     finally:
         await image_worker.stop()
-        await monitor.stop()
 
 
 def create_runtime_app() -> FastAPI:

@@ -1,15 +1,11 @@
-"""GitHub Release 驱动的项目更新领域。"""
+"""公开 GitHub Release 状态查询领域。"""
 
 from .contracts import (
-    ProjectUpdateConfiguration,
     ProjectUpdateError,
-    ProjectUpdateOperation,
     ProjectUpdateRelease,
 )
 
 __all__ = [
-    "ProjectUpdateConfiguration",
     "ProjectUpdateError",
-    "ProjectUpdateOperation",
     "ProjectUpdateRelease",
 ]

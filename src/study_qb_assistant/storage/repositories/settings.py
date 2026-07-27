@@ -40,3 +40,17 @@ class SettingsRepository(SqlAlchemyRepository):
             for key, value in values.items():
                 session.add(SettingEntity(scope=scope, key=key, value=value))
             session.commit()
+
+    def delete_settings(self, scope: str, *, keys: set[str]) -> None:
+        """删除指定作用域内的一组配置；空集合不产生数据库写入。"""
+
+        if not keys:
+            return
+        with self.session_factory() as session:
+            session.execute(
+                delete(SettingEntity).where(
+                    SettingEntity.scope == scope,
+                    SettingEntity.key.in_(keys),
+                )
+            )
+            session.commit()

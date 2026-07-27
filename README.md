@@ -116,10 +116,9 @@ npm install
 npm run build
 ```
 
-Docker deployment uses the immutable image reference recorded in `.env.release`:
+Docker deployment uses an immutable image reference recorded in `.env.release` by the release workflow:
 
 ```bash
-cp .env.release.example .env.release
 docker compose --env-file .env.release up -d --no-build
 ```
 
@@ -134,17 +133,16 @@ Recommended release order:
 2. Update `pyproject.toml` `version`.
 3. Run the minimal required validation.
 4. Commit the release change and create the matching `vX.Y.Z` tag.
-5. Then sync to the server or rebuild the deployment.
+5. Push the matching `vX.Y.Z` tag and approve the GitHub `production` Environment deployment.
 
 The Docker image builds the frontend and backend together. Runtime data is written to
 `deploy-data/` on the server and starts empty by default; local `data/` files are not
 required and are not copied into the image.
-Version tags are used for release traceability only; they do not automatically build, publish,
-or deploy the service. Production releases are synchronized manually: back up the server
-runtime data, transfer the reviewed source, build the versioned image on the server, and verify
-`/api/v1/healthz` plus `/api/v1/version`. The optional **系统配置 > 项目更新** capability is
-not part of the current production release procedure. See [docs/deployment.md](docs/deployment.md)
-for the manual deployment checklist.
+Pushing a matching `vX.Y.Z` tag triggers CI, builds a public GHCR image, creates a GitHub Release,
+and waits for the protected `production` Environment approval before deployment. Production always
+pulls the Release manifest's exact image digest and verifies `/api/v1/healthz` plus
+`/api/v1/version`; it never performs server-side `git pull` or builds from mutable source.
+See [docs/deployment.md](docs/deployment.md) for the GitHub Environment setup.
 For production vision-question support, set `STQB_PUBLIC_BASE_URL` to the public HTTPS
 origin of the service. OCS question images are stored under `deploy-data/images/ocs/`
 and exposed as `/api/v1/media/ocs/images/<sha256>.<ext>` for vision models.

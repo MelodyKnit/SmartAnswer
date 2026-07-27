@@ -1,7 +1,7 @@
 services:
   study-qb-assistant:
     container_name: study-qb-assistant
-    image: ${STQB_IMAGE_REF:-ghcr.io/melodyknit/smartanswer:stable}
+    image: ${STQB_IMAGE_REF:?STQB_IMAGE_REF 必须使用 GitHub Release 提供的不可变镜像 digest}
     restart: unless-stopped
     ports:
       - "3003:8765"

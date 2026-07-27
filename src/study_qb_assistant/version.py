@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass
 
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 BUILD_SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
+SOURCE_REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +22,7 @@ class BuildInfo:
     version: str
     build_sha: str
     build_type: str
+    source_repository: str = ""
 
     def to_dict(self) -> dict[str, str]:
         """转换为 API 可直接返回的字典。"""
@@ -35,10 +37,15 @@ def current_build_info() -> BuildInfo:
     version = raw_version if VERSION_RE.fullmatch(raw_version) else "dev"
     raw_sha = os.getenv("STQB_BUILD_SHA", "").strip().lower()
     build_sha = raw_sha if BUILD_SHA_RE.fullmatch(raw_sha) else "unknown"
+    raw_repository = os.getenv("STQB_SOURCE_REPOSITORY", "").strip()
+    source_repository = (
+        raw_repository if SOURCE_REPOSITORY_RE.fullmatch(raw_repository) else ""
+    )
     return BuildInfo(
         version=version,
         build_sha=build_sha,
         build_type="release" if version != "dev" else "source",
+        source_repository=source_repository,
     )
 
 

@@ -10,7 +10,6 @@ import type {
   ApiToken,
   Billing,
   DashboardSummary,
-  ProjectUpdateOperation,
   ProjectUpdateStatus,
   Feedback,
   ImportScript,
@@ -312,15 +311,6 @@ export const systemConfigApi = {
 export const projectUpdateApi = {
   status: () => api.get<{ ok: true; update: ProjectUpdateStatus }>('/project-update/status'),
   check: () => api.post<{ ok: true; update: ProjectUpdateStatus }>('/project-update/check'),
-  apply: (expectedVersion: string) =>
-    api.post<{ ok: true; operation: ProjectUpdateOperation }>('/project-update/apply', {
-      expected_version: expectedVersion,
-    }),
-  clearToken: () => api.delete<{ ok: true; config: SystemConfig }>('/project-update/token'),
-  operation: (operationId: string) =>
-    api.get<{ ok: true; operation: ProjectUpdateOperation }>(
-      `/project-update/operations/${encodeURIComponent(operationId)}`,
-    ),
 }
 
 export const siteConfigApi = {

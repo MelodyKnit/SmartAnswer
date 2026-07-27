@@ -136,26 +136,19 @@ OCS-compatible `/ocs/query` endpoint, whose path remains stable for imported cli
 - `GET /ocs/query?title=...&options=...&type=...`
 - `POST /ocs/query`
 
-### Project update control plane
+### Project release status
 
 The following versioned endpoints are restricted to `superadmin` users with `system:write`.
-They check a validated GitHub Release and dispatch a deployment workflow; they never run Docker
-or SSH commands in the API process.
+They only read public GitHub Release metadata and never run Docker or SSH commands, dispatch a
+workflow, or access a GitHub credential.
 
 - `GET /api/v1/project-update/status`
 - `POST /api/v1/project-update/check`
-- `POST /api/v1/project-update/apply` with `{ "expected_version": "X.Y.Z" }`
-- `GET /api/v1/project-update/operations/{operation_id}`
-- `DELETE /api/v1/project-update/token`
 
-The system configuration stores `project_update_enabled`,
-`project_update_auto_check_enabled`, `project_update_check_interval_hours`,
-`project_update_repository`, `project_update_workflow`, and a write-only
-`project_update_github_token`. Automatic checks are limited to one check every 1 to 168 hours
-and only discover verified releases; deployment always needs an explicit `apply` request. The
-token is never included in API responses; a `project_update_github_token_configured` boolean is
-returned instead. `DELETE /api/v1/project-update/token` clears the stored token only after the
-update feature is disabled and no deployment task is active.
+The image build injects `owner/repository` into `STQB_SOURCE_REPOSITORY`. `check` retrieves the
+latest formal Release anonymously and validates the repository, tag, version, commit SHA, image
+name and immutable digest in `release-manifest.json`. Production deployment remains a GitHub
+Actions `production` Environment responsibility.
 
 ### `POST /api/v1/query` 单输入框请求
 

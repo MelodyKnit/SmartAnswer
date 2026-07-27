@@ -19,12 +19,6 @@ class SystemConfigPayload(BaseModel):
     image_generation_max_active_jobs: str | None = None
     image_generation_daily_limit: str | None = None
     image_generation_retention_days: str | None = None
-    project_update_enabled: str | None = None
-    project_update_auto_check_enabled: str | None = None
-    project_update_check_interval_hours: str | None = None
-    project_update_repository: str | None = None
-    project_update_workflow: str | None = None
-    project_update_github_token: str | None = None
     registration_enabled: str | None = None
     registration_email_mode: str | None = None
     email_verification_enabled: str | None = None
@@ -46,9 +40,3 @@ class EmailDomainWhitelistPayload(BaseModel):
     """邮箱域名白名单整体替换请求。"""
 
     domains: list[str]
-
-
-class ProjectUpdateApplyPayload(BaseModel):
-    """触发 GitHub Actions 部署时确认的 Release 版本。"""
-
-    expected_version: str
