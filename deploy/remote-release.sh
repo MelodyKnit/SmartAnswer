@@ -5,6 +5,7 @@
 set -euo pipefail
 
 readonly SERVICE_NAME="study-qb-assistant"
+readonly CONTAINER_DATA_DIR="/app/data"
 
 project_dir="${1:-}"
 image_ref="${2:-}"
@@ -13,6 +14,9 @@ build_sha="${4:-}"
 health_base_url="${5:-}"
 compose_file=""
 candidate_compose_file=""
+database_path=""
+database_container_path=""
+database_mode="sqlite"
 
 fail() {
   printf 'Release deployment failed: %s\n' "$1" >&2
@@ -29,6 +33,39 @@ validate_arguments() {
   candidate_compose_file="$project_dir/deploy/docker-compose.release.yaml"
   [[ -d "$project_dir" ]] || fail "project directory is missing"
   [[ -f "$candidate_compose_file" ]] || fail "release Compose file is missing"
+}
+
+service_is_running() {
+  "$(command -v docker)" inspect --format '{{.State.Running}}' "$SERVICE_NAME" 2>/dev/null | grep -qx true
+}
+
+resolve_database_paths() {
+  local configured_path database_relative_path
+
+  database_mode="sqlite"
+  database_relative_path="runtime/study-qb.sqlite3"
+
+  if service_is_running; then
+    configured_path="$(docker exec "$SERVICE_NAME" python -c '
+from study_qb_assistant.config import get_global_config
+config = get_global_config()
+print("external" if config.database_url.strip() else config.database_path_resolved)
+')"
+    configured_path="${configured_path//$'\r'/}"
+    if [[ "$configured_path" == "external" ]]; then
+      database_mode="external"
+      database_path=""
+      database_container_path=""
+      printf 'External database detected; SQLite snapshot skipped.\n' >&2
+      return 0
+    fi
+    [[ "$configured_path" == "$CONTAINER_DATA_DIR/"* ]] || fail "SQLite database is outside the data mount"
+    database_relative_path="${configured_path#"$CONTAINER_DATA_DIR"/}"
+  fi
+
+  [[ "$database_relative_path" =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ ]] || fail "invalid SQLite database path"
+  database_path="$project_dir/deploy-data/$database_relative_path"
+  database_container_path="$CONTAINER_DATA_DIR/$database_relative_path"
 }
 
 wait_until_healthy() {
@@ -70,22 +107,31 @@ replace_file_atomically() {
 }
 
 backup_database() {
-  local database_path="$project_dir/deploy-data/runtime/study-qb.sqlite3"
-  local backup_directory="$project_dir/deploy-data/backups/releases/$(date -u +%Y%m%dT%H%M%SZ)-$version"
-  local backup_path="$backup_directory/study-qb.sqlite3"
-  local container_backup_path="/app/data/backups/releases/$(basename "$backup_directory")/study-qb.sqlite3"
+  local backup_directory backup_path container_backup_path
 
-  [[ -f "$database_path" ]] || return 0
+  [[ "$database_mode" == "sqlite" ]] || return 0
+  backup_directory="$project_dir/deploy-data/backups/releases/$(date -u +%Y%m%dT%H%M%SZ)-$version"
+  backup_path="$backup_directory/$(basename "$database_path")"
+  container_backup_path="$CONTAINER_DATA_DIR/backups/releases/$(basename "$backup_directory")/$(basename "$database_path")"
+  if [[ ! -f "$database_path" ]]; then
+    if service_is_running; then
+      fail "configured SQLite database is missing from the data mount"
+    fi
+    return 0
+  fi
   mkdir -p "$backup_directory"
 
-  if docker inspect --format '{{.State.Running}}' "$SERVICE_NAME" 2>/dev/null | grep -qx true; then
+  if service_is_running; then
     docker exec "$SERVICE_NAME" mkdir -p "$(dirname "$container_backup_path")"
     docker exec "$SERVICE_NAME" python -c \
-      'import sqlite3, sys; source = sqlite3.connect("/app/data/runtime/study-qb.sqlite3"); target = sqlite3.connect(sys.argv[1]); source.backup(target); target.close(); source.close()' \
+      'import sqlite3, sys; source = sqlite3.connect(sys.argv[1]); target = sqlite3.connect(sys.argv[2]); source.backup(target); target.close(); source.close()' \
+      "$database_container_path" \
       "$container_backup_path"
   else
     cp "$database_path" "$backup_path"
   fi
+
+  [[ -f "$backup_path" ]] || fail "SQLite backup was not written to the data mount"
 
   printf '%s\n' "$backup_path"
 }
@@ -114,8 +160,7 @@ restore_previous_release() {
   install -m 600 "$previous_env" "$release_env"
   docker compose --env-file "$release_env" -f "$compose_file" stop "$SERVICE_NAME" || true
 
-  if [[ -n "$backup_path" && -f "$backup_path" ]]; then
-    local database_path="$project_dir/deploy-data/runtime/study-qb.sqlite3"
+  if [[ "$database_mode" == "sqlite" && -n "$backup_path" && -f "$backup_path" ]]; then
     rm -f "${database_path}-wal" "${database_path}-shm"
     cp "$backup_path" "$database_path"
   fi
@@ -156,6 +201,7 @@ docker pull "$image_ref"
 candidate_build="$(docker run --rm --entrypoint python "$image_ref" -c 'from study_qb_assistant.version import BUILD_INFO; print(BUILD_INFO.version + ":" + BUILD_INFO.build_sha)')"
 [[ "$candidate_build" == "$version:$build_sha" ]] || fail "image build metadata does not match release"
 
+resolve_database_paths
 backup_path="$(backup_database)" || fail "SQLite backup failed; deployment was not started"
 write_release_environment "$release_env"
 replace_file_atomically "$candidate_compose_file" "$compose_file" 644

@@ -123,10 +123,13 @@ jobs:
           ssh_args=(-p "$DEPLOY_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes)
           scp_args=(-P "$DEPLOY_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes)
           remote_target="${DEPLOY_USER}@${DEPLOY_HOST}"
-          remote_deploy_dir="${DEPLOY_PATH}/deploy"
-          ssh "${ssh_args[@]}" "$remote_target" "mkdir -p '$remote_deploy_dir'"
-          scp "${scp_args[@]}" docker-compose.yaml "$remote_target:$remote_deploy_dir/docker-compose.release.yaml"
-          scp "${scp_args[@]}" deploy/remote-release.sh "$remote_target:$remote_deploy_dir/remote-release.sh"
-          ssh "${ssh_args[@]}" "$remote_target" "chmod 700 '$remote_deploy_dir/remote-release.sh'"
+          remote_stage_dir="$(ssh "${ssh_args[@]}" "$remote_target" 'set -euo pipefail; mkdir -p "$HOME/.cache"; mktemp -d "$HOME/.cache/stqb-release.XXXXXX"')"
+          [[ "$remote_stage_dir" =~ ^/home/[A-Za-z0-9_-]+/\.cache/stqb-release\.[A-Za-z0-9]+$ ]] || { echo "Invalid remote staging directory" >&2; exit 1; }
+          cleanup_remote_stage() {
+            ssh "${ssh_args[@]}" "$remote_target" "rm -rf '$remote_stage_dir'" || true
+          }
+          trap cleanup_remote_stage EXIT
+          scp "${scp_args[@]}" docker-compose.yaml "$remote_target:$remote_stage_dir/docker-compose.release.yaml"
+          scp "${scp_args[@]}" deploy/remote-release.sh "$remote_target:$remote_stage_dir/remote-release.sh"
           ssh "${ssh_args[@]}" "$remote_target" \
-            "bash '$remote_deploy_dir/remote-release.sh' '$DEPLOY_PATH' '$IMAGE_REF' '$VERSION' '$BUILD_SHA' '$DEPLOY_HEALTH_URL'"
+            "set -euo pipefail; sudo -n install -d -o root -g root -m 0755 '$DEPLOY_PATH/deploy'; sudo -n install -o root -g root -m 0644 '$remote_stage_dir/docker-compose.release.yaml' '$DEPLOY_PATH/deploy/docker-compose.release.yaml'; sudo -n install -o root -g root -m 0700 '$remote_stage_dir/remote-release.sh' '$DEPLOY_PATH/deploy/remote-release.sh'; sudo -n bash '$DEPLOY_PATH/deploy/remote-release.sh' '$DEPLOY_PATH' '$IMAGE_REF' '$VERSION' '$BUILD_SHA' '$DEPLOY_HEALTH_URL'"

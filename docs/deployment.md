@@ -29,12 +29,21 @@ Token。
 
 ## 服务器准备
 
-在服务器上创建部署目录并让部署账户可写：
+在服务器上创建部署目录与可持久化数据目录。发布工作流通过部署账户 SSH
+登录，并使用无密码 `sudo` 原子安装发布资产、运行受控发布脚本；业务容器本身不持有
+Docker Socket 或 GitHub 凭据：
 
 ```bash
-sudo mkdir -p /opt/study-question-bank-assistant
-sudo chown -R "$USER":"$USER" /opt/study-question-bank-assistant
+sudo install -d -o root -g root -m 0755 /opt/study-question-bank-assistant/deploy
+sudo install -d -o "$USER" -g "$USER" -m 0775 /opt/study-question-bank-assistant/deploy-data
+# 仅对实际部署账户配置；执行前请确认 sudoers 规则符合本机安全基线。
+sudo visudo
 ```
+
+部署账户必须能在不交互输入密码的情况下执行 `sudo -n install` 与
+`sudo -n bash /opt/study-question-bank-assistant/deploy/remote-release.sh`。当前工作流会先将
+候选 Compose 和发布脚本上传到该账户的 `~/.cache/stqb-release.*`，校验后再以 root 权限
+安装到项目目录；它不会直接向 root 所有目录执行 SCP。
 
 可选地创建 `.env.server` 保存模型、代理等业务配置。该文件与发布版本无关，示例见
 `.env.server.example`。常用配置包括：
@@ -83,7 +92,9 @@ git push origin HEAD --tags
 5. 等待 `production` Environment 审批。
 6. 远端脚本匿名拉取 manifest 中的精确 digest，备份 SQLite，原子切换 Compose，并验证 `/api/v1/healthz` 与 `/api/v1/version`。
 
-健康检查或启动失败时，脚本会恢复上一份 Compose、`.env.release` 和 SQLite 快照。首次发布没有旧版本时会清理候选配置并失败退出，不会把失败镜像标记为当前版本。
+健康检查或启动失败时，脚本会恢复上一份 Compose、`.env.release` 和 SQLite 快照。脚本会
+从运行中容器读取实际 SQLite 路径，且只接受 `/app/data` 挂载内的数据库；使用外部数据库
+时不会创建 SQLite 快照，需要由外部数据库自身负责备份和回滚。首次发布没有旧版本时会清理候选配置并失败退出，不会把失败镜像标记为当前版本。
 
 ## 重新部署已发布版本
 

@@ -121,6 +121,34 @@ class RemoteReleaseScriptTests(unittest.TestCase):
         self.assertIn(f"STQB_RELEASE_VERSION={OLD_VERSION}", release_environment)
         self.assertEqual(self.up_counter.read_text(encoding="utf-8").strip(), "2")
 
+    def test_running_container_uses_configured_sqlite_path_for_backup(self) -> None:
+        """自定义 SQLite 路径必须通过容器配置解析，并保存到发布快照目录。"""
+
+        database_path = self.project_dir / "deploy-data" / "runtime" / "custom.sqlite3"
+        database_path.parent.mkdir(parents=True)
+        self.write_text(database_path, "database snapshot source")
+
+        completed = self.run_release(
+            health_version=NEW_VERSION,
+            running_database_path="/app/data/runtime/custom.sqlite3",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        backups = list((self.project_dir / "deploy-data" / "backups" / "releases").rglob("custom.sqlite3"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_text(encoding="utf-8"), "database snapshot source")
+
+    def test_external_database_skips_sqlite_snapshot_without_failing(self) -> None:
+        """外部数据库不应因 SQLite 文件不存在而阻断镜像发布。"""
+
+        completed = self.run_release(
+            health_version=NEW_VERSION,
+            running_database_path="external",
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertFalse((self.project_dir / "deploy-data" / "backups").exists())
+
     def test_deployment_workflow_uses_scp_port_option(self) -> None:
         """SCP 必须使用大写 -P，避免非 22 端口被误当成源文件。"""
 
@@ -129,6 +157,18 @@ class RemoteReleaseScriptTests(unittest.TestCase):
         self.assertIn('scp_args=(-P "$DEPLOY_PORT"', workflow)
         self.assertIn('scp "${scp_args[@]}" docker-compose.yaml', workflow)
         self.assertNotIn('scp "${ssh_args[@]}"', workflow)
+
+    def test_deployment_workflows_stage_assets_before_privileged_install(self) -> None:
+        """部署账户只写入自身临时目录，再由 sudo 原子安装受控发布文件。"""
+
+        for workflow in (RELEASE_WORKFLOW, UPDATE_WORKFLOW):
+            content = workflow.read_text(encoding="utf-8")
+
+            self.assertIn('mktemp -d "$HOME/.cache/stqb-release.XXXXXX"', content)
+            self.assertIn("Invalid remote staging directory", content)
+            self.assertIn("sudo -n install", content)
+            self.assertIn("sudo -n bash", content)
+            self.assertIn("cleanup_remote_stage", content)
 
     def test_release_workflow_triggers_for_version_tags(self) -> None:
         """正式版本标签必须触发校验、发布和受保护环境部署。"""
@@ -177,6 +217,16 @@ class RemoteReleaseScriptTests(unittest.TestCase):
         self.assertNotIn("operation_id", workflow)
         self.assertNotIn("GHCR_READ_TOKEN", workflow)
 
+    def test_release_script_resolves_the_running_sqlite_database_path(self) -> None:
+        """发布备份必须遵从容器实际数据库配置，而非假设固定文件名。"""
+
+        script = RELEASE_SCRIPT.read_text(encoding="utf-8")
+
+        self.assertIn("from study_qb_assistant.config import get_global_config", script)
+        self.assertIn("config.database_path_resolved", script)
+        self.assertIn('SQLite database is outside the data mount', script)
+        self.assertIn('source = sqlite3.connect(sys.argv[1])', script)
+
     def test_first_release_failure_restores_original_files(self) -> None:
         """首次发布无法启动时不应在服务器留下候选发布配置。"""
 
@@ -190,7 +240,13 @@ class RemoteReleaseScriptTests(unittest.TestCase):
         self.assertFalse((self.project_dir / ".env.release").exists())
         self.assertFalse((self.deploy_dir / "docker-compose.release.yaml").exists())
 
-    def run_release(self, *, health_version: str, fail_first_up: bool = False) -> subprocess.CompletedProcess[str]:
+    def run_release(
+        self,
+        *,
+        health_version: str,
+        fail_first_up: bool = False,
+        running_database_path: str = "",
+    ) -> subprocess.CompletedProcess[str]:
         """通过伪造外部命令执行完整发布流程。"""
 
         environment = {
@@ -202,6 +258,8 @@ class RemoteReleaseScriptTests(unittest.TestCase):
             "FAKE_DOCKER_LOG": self.bash_path(self.docker_log),
             "FAKE_UP_COUNTER": self.bash_path(self.up_counter),
             "FAKE_FAIL_FIRST_UP": "1" if fail_first_up else "0",
+            "FAKE_PROJECT_DIR": self.bash_path(self.project_dir),
+            "FAKE_RUNNING_DATABASE_PATH": running_database_path,
         }
         command = [
             str(self.bash),
@@ -278,6 +336,32 @@ set -euo pipefail
 printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
 command="${1:-}"
 case "$command" in
+  inspect)
+    if [[ -n "${FAKE_RUNNING_DATABASE_PATH:-}" ]]; then
+      printf 'true\n'
+    fi
+    ;;
+  exec)
+    shift
+    service_name="${1:-}"
+    shift || true
+    if [[ "$service_name" != "study-qb-assistant" ]]; then
+      exit 1
+    fi
+    if [[ "${1:-}" == "python" && " $* " == *get_global_config* ]]; then
+      printf '%s\n' "$FAKE_RUNNING_DATABASE_PATH"
+    elif [[ "${1:-}" == "mkdir" ]]; then
+      container_path="${!#}"
+      mkdir -p "$FAKE_PROJECT_DIR/deploy-data${container_path#/app/data}"
+    elif [[ "${1:-}" == "python" ]]; then
+      source_path="${@: -2:1}"
+      target_path="${!#}"
+      source_path="$FAKE_PROJECT_DIR/deploy-data${source_path#/app/data}"
+      target_path="$FAKE_PROJECT_DIR/deploy-data${target_path#/app/data}"
+      mkdir -p "$(dirname "$target_path")"
+      cp "$source_path" "$target_path"
+    fi
+    ;;
   run)
     printf '%s:%s\n' "$FAKE_VERSION" "$FAKE_SHA"
     ;;
