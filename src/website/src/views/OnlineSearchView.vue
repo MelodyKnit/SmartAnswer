@@ -104,7 +104,7 @@ function reset() {
           <el-form label-position="top" @submit.prevent>
             <el-form-item required>
               <template #label>
-                <span class="flex items-center gap-1">
+                <span class="inline-flex items-center gap-1">
                   <span>题目内容</span>
                   <el-tooltip
                     content="选项请按行保留 A.、B、或 (C) 等标签；无法可靠识别时，系统会完整保留原文进行检索。"
@@ -132,7 +132,7 @@ function reset() {
                 <p class="mb-3 text-xs leading-5 text-ink-soft">
                   题干未明确标注题型时，可手动指定。未设置时不会根据选项数量猜测单选或多选。
                 </p>
-                <el-form-item label="题型覆盖" class="!mb-0">
+                <el-form-item label="题型覆盖" class="mb-0!">
                   <el-select v-model="form.typeOverride" class="w-full">
                     <el-option
                       v-for="type in QUESTION_TYPES"

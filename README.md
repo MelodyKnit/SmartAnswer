@@ -165,3 +165,12 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/v1/status"
 Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/v1/configs/ocs-local-study-bank.json"
 Invoke-RestMethod -Uri "http://127.0.0.1:8765/ocs/query?title=示例题&type=single"
 ```
+
+## 许可证与商业授权
+
+1. **开源许可证**：
+   本项目采用 [CC BY-NC-SA 4.0](LICENSE) 许可证发布。个人开发者、学生及非盈利组织可免费学习、研究和自用，但**未经授权严禁用于任何商业转售、付费部署或盈利性服务**。
+
+2. **商业授权（Commercial License）**：
+   作者本人保留本项目的商业化及再授权权利。如需将本项目用于商业盈利、企业付费服务或闭源产品中，请联系作者获取商业授权。
+
