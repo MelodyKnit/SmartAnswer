@@ -12,6 +12,7 @@ from study_qb_assistant.platform.image_generation.protocols import (
     OPENAI_COMPATIBLE_IMAGES_PROVIDER,
     OPENAI_IMAGES_PROVIDER,
     ImageGenerationProtocolError,
+    normalize_input_capabilities,
     normalize_output_options,
     normalize_protocol_config,
     public_output_capabilities,
@@ -124,6 +125,23 @@ class ImageGenerationProtocolTests(unittest.TestCase):
 
         self.assertEqual(label, "model-controlled")
         self.assertEqual(output, {"mode": "model-controlled"})
+
+    def test_single_input_limit_disables_operations_that_need_two_images(self) -> None:
+        """模型输入上限不足两张时，不得开放蒙版或多图参考能力。"""
+
+        capabilities = normalize_input_capabilities(
+            OPENAI_IMAGES_PROVIDER,
+            {
+                "whole_edit": True,
+                "masked_edit": True,
+                "multi_reference": True,
+                "max_input_images": 1,
+            },
+        )
+
+        self.assertTrue(capabilities["whole_edit"])
+        self.assertFalse(capabilities["masked_edit"])
+        self.assertFalse(capabilities["multi_reference"])
 
     def test_existing_sqlite_tables_gain_protocol_and_output_columns(self) -> None:
         """旧运行库启动后必须补齐字段，避免发布后任务接口读取失败。"""

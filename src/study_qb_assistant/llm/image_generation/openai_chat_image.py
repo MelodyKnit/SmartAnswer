@@ -26,6 +26,11 @@ class OpenAIChatImageGenerationProvider(OpenAIImageGenerationProvider):
     def generate(self, request: ImageGenerationRequest) -> GeneratedImage:
         """请求聊天生图，并读取 Markdown 或内容块中的首张图片。"""
 
+        if request.input_images or request.mask_image is not None:
+            raise ImageGenerationProviderError(
+                "IMAGE_EDIT_UNSUPPORTED", "当前聊天生图协议不支持图片编辑"
+            )
+
         response = self._post_json(
             {
                 "model": self.model,
@@ -34,6 +39,7 @@ class OpenAIChatImageGenerationProvider(OpenAIImageGenerationProvider):
                 "stream": False,
             },
             endpoint="chat/completions",
+            request=request,
         )
         item = image_item_from_chat_response(response)
         content, mime_type = self._read_image(item)

@@ -1,7 +1,9 @@
-"""文本生图任务的业务编排、积分结算与私有资产生命周期。"""
+"""文本生图与私有图片编辑任务的编排、结算和资产生命周期。"""
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import secrets
 import time
@@ -9,8 +11,11 @@ from collections.abc import Callable, Mapping
 from threading import RLock
 from typing import Any
 
+from PIL import Image
+
 from ...llm.image_generation import (
     GeminiNativeImageGenerationProvider,
+    ImageInputAsset,
     ImageGenerationProvider,
     ImageGenerationProviderError,
     ImageGenerationRequest,
@@ -24,6 +29,12 @@ from ...media.generated_images import (
     generated_image_path,
     store_generated_image,
 )
+from ...media.image_assets import PrivateImageError, validate_private_image
+from ...media.generation_inputs import (
+    delete_generation_input_image,
+    generation_input_image_path,
+    store_generation_input_image,
+)
 from ...storage.repositories.image_generation import (
     ImageGenerationRepository,
     ImageGenerationRepositoryError,
@@ -35,14 +46,21 @@ from .protocols import (
     OPENAI_COMPATIBLE_IMAGES_PROVIDER,
     OPENAI_IMAGES_PROVIDER,
     ImageGenerationProtocolError,
+    IMAGE_EDIT_MODES,
+    MODE_TO_CAPABILITY,
     SUPPORTED_IMAGE_PROVIDERS,
     capabilities_for_protocol,
     normalize_output_options,
     normalize_protocol_config,
+    operation_supported_by_protocol,
+    public_input_capabilities,
     public_output_capabilities,
 )
 from .records import (
     ImageGenerationAssetRecord,
+    ImageGenerationCapabilityCheckRecord,
+    ImageGenerationInputAssetRecord,
+    ImageGenerationJobInputRecord,
     ImageGenerationJobRecord,
     ImageGenerationModelRecord,
     ImageGenerationTraceRecord,
@@ -234,25 +252,39 @@ class ImageGenerationService(PlatformDomainService):
         username: str,
         prompt: str,
         size: str = "",
+        mode: str = "text_to_image",
+        input_assets: list[dict[str, object]] | tuple[dict[str, object], ...] | None = None,
         output: dict[str, object] | None = None,
         idempotency_key: str = "",
     ) -> tuple[dict, bool]:
-        """提交一条生图任务，并在同一事务中预扣当前单张积分。"""
+        """提交生图或图片编辑任务，只持久化私有资产引用而不是图片内容。"""
 
         normalized_prompt = self._validate_prompt(prompt)
+        normalized_mode = self._normalize_mode(mode)
+        now = time.time()
+        job_id = secrets.token_hex(12)
+        references = self._normalize_input_references(
+            job_id=job_id,
+            raw_references=input_assets or (),
+            mode=normalized_mode,
+            created_at=now,
+        )
+
         with self.lock:
             model = self.repository.get_active_model()
             if model is None:
                 raise ImageGenerationError(
                     "IMAGE_GENERATION_UNAVAILABLE", "当前没有可用的生图模型", http_status=503
                 )
-            selected_size, output_options = self._normalize_output(
+            protocol_config = self._model_protocol_config(model)
+            self._validate_mode_capability(
                 model,
-                size=size,
-                output=output,
+                protocol_config,
+                normalized_mode,
+                input_count=len(references),
             )
+            selected_size, output_options = self._normalize_output(model, size=size, output=output)
             policy = self.settings_service.get_image_generation_policy()
-            now = time.time()
             normalized_key = self._normalize_idempotency_key(idempotency_key)
             expires_at = (
                 now + policy["retention_days"] * 86_400
@@ -260,10 +292,11 @@ class ImageGenerationService(PlatformDomainService):
                 else 0.0
             )
             record = ImageGenerationJobRecord(
-                job_id=secrets.token_hex(12),
+                job_id=job_id,
                 user_id=user_id,
                 username=username,
                 prompt=normalized_prompt,
+                mode=normalized_mode,
                 size=selected_size,
                 model_id=model.model_id,
                 model_name=model.name,
@@ -274,7 +307,7 @@ class ImageGenerationService(PlatformDomainService):
                         "model": model.model,
                         "timeout_seconds": model.timeout_seconds,
                         "capabilities": self._capabilities(model),
-                        "protocol_config": self._model_protocol_config(model),
+                        "protocol_config": protocol_config,
                     },
                     ensure_ascii=False,
                     separators=(",", ":"),
@@ -288,6 +321,7 @@ class ImageGenerationService(PlatformDomainService):
                 created_at=now,
                 started_at=0.0,
                 completed_at=0.0,
+                provider_dispatched_at=0.0,
                 updated_at=now,
                 expires_at=expires_at,
                 output_options=self._serialize_protocol_config(output_options),
@@ -297,6 +331,7 @@ class ImageGenerationService(PlatformDomainService):
                     record,
                     active_limit=policy["max_active_jobs"],
                     daily_limit=policy["daily_limit"],
+                    input_references=references,
                 )
             except ImageGenerationRepositoryError as exc:
                 raise self._repository_error(exc) from exc
@@ -306,6 +341,8 @@ class ImageGenerationService(PlatformDomainService):
                 "job_id": job.job_id,
                 "user_id": user_id,
                 "model_id": job.model_id,
+                "mode": normalized_mode,
+                "input_count": len(references),
                 "size": job.size,
                 "output": output_options,
                 "points_cost": job.points_cost,
@@ -316,7 +353,7 @@ class ImageGenerationService(PlatformDomainService):
         return self._job_payload(job), created
 
     def process_next_job(self) -> bool:
-        """执行一条队列任务；任何失败均由本方法负责退款。"""
+        """执行一条队列任务，成功保存输出资产后才确认积分扣费。"""
 
         now = time.time()
         job = self.repository.claim_next_job(now)
@@ -346,17 +383,39 @@ class ImageGenerationService(PlatformDomainService):
             )
             return True
         stored_key = ""
+        provider_dispatch_recorded = False
+
+        def mark_provider_dispatch() -> None:
+            """在协议适配器真正准备发出 HTTP 请求时记录审计时点。"""
+
+            nonlocal provider_dispatch_recorded
+            if not provider_dispatch_recorded:
+                self.repository.mark_provider_dispatched(
+                    job.job_id, dispatched_at=time.time()
+                )
+                provider_dispatch_recorded = True
+
         try:
             provider = self.provider_factory(execution_model)
             output_options = self._job_output_options(job, execution_model)
+
+            # 输入资产在供应商调用前加载和校验；失败任务最终统一退回预扣积分。
+            input_images, mask_asset = self._load_job_input_assets(job)
             generated = provider.generate(
                 ImageGenerationRequest(
                     prompt=job.prompt,
                     size=job.size,
                     request_id=job.job_id,
+                    mode=job.mode,
+                    input_images=input_images,
+                    mask_image=mask_asset,
                     output_options=output_options,
+                    on_provider_dispatch=mark_provider_dispatch,
                 )
             )
+            # 内部协议适配器都会在真实 HTTP 调用前通知。若将来引入第三方适配器，
+            # 成功返回本身也足以证明已产生上游调用，此处补齐审计时点。
+            mark_provider_dispatch()
             stored = store_generated_image(asset_id=secrets.token_hex(16), content=generated.content)
             stored_key = stored.storage_key
             asset = ImageGenerationAssetRecord(
@@ -444,7 +503,7 @@ class ImageGenerationService(PlatformDomainService):
         return True
 
     def recover_abandoned_jobs(self, *, max_running_seconds: float = 300.0) -> int:
-        """启动时结算异常退出遗留的运行任务，避免积分永久冻结。"""
+        """启动时结算异常退出遗留的运行任务，避免积分或状态永久冻结。"""
 
         recovered = 0
         before = time.time() - max(1.0, max_running_seconds)
@@ -456,7 +515,7 @@ class ImageGenerationService(PlatformDomainService):
                 job,
                 status="failed",
                 code="WORKER_INTERRUPTED",
-                message="服务重启前的生图任务未完成，积分已自动退还",
+                message="服务重启前的生图任务未完成，预扣积分已退回",
                 elapsed_ms=0.0,
                 expected_status="running",
             ):
@@ -471,6 +530,61 @@ class ImageGenerationService(PlatformDomainService):
             delete_generated_image(asset.storage_key)
         return len(assets)
 
+    def _load_job_input_assets(
+        self, job: ImageGenerationJobRecord
+    ) -> tuple[tuple[ImageInputAsset, ...], ImageInputAsset | None]:
+        """从受控私有文件读取任务输入，不接受 URL、Base64 或浏览器路径。"""
+
+        references = self.repository.list_job_inputs(job.job_id)
+        source_assets: list[ImageInputAsset] = []
+        mask_asset: ImageInputAsset | None = None
+        primary_dimensions: tuple[int, int] | None = None
+        for reference in references:
+            path = (
+                generation_input_image_path(reference.storage_key)
+                if reference.source_kind == "uploaded"
+                else generated_image_path(reference.storage_key)
+            )
+            if path is None or not path.is_file():
+                raise ImageGenerationError(
+                    "IMAGE_INPUT_UNREADABLE", "参考图片已不可用，未向生图服务发送请求"
+                )
+            try:
+                content = path.read_bytes()
+            except OSError as exc:
+                raise ImageGenerationError(
+                    "IMAGE_INPUT_UNREADABLE", "参考图片读取失败，未向生图服务发送请求"
+                ) from exc
+            asset = ImageInputAsset(
+                content=content,
+                mime_type=reference.mime_type,
+                role=reference.role,
+            )
+            if reference.role == "mask":
+                mask_asset = asset
+                continue
+            if reference.role == "source":
+                primary_dimensions = (reference.width, reference.height)
+            source_assets.append(asset)
+        if job.mode == "masked_edit":
+            if mask_asset is None or primary_dimensions is None:
+                raise ImageGenerationError(
+                    "INVALID_IMAGE_INPUT", "局部编辑任务缺少主图或蒙版"
+                )
+            mask_reference = next(
+                (
+                    item
+                    for item in references
+                    if item.role == "mask"
+                ),
+                None,
+            )
+            if mask_reference is None or (mask_reference.width, mask_reference.height) != primary_dimensions:
+                raise ImageGenerationError(
+                    "INVALID_MASK_IMAGE", "蒙版尺寸必须与主图完全一致"
+                )
+        return tuple(source_assets), mask_asset
+
     def get_capabilities(self, *, user_points: int) -> dict:
         """返回用户页面初始化所需的可用模型、限额和余额。"""
 
@@ -478,6 +592,14 @@ class ImageGenerationService(PlatformDomainService):
             model = self.repository.get_active_model()
             policy = self.settings_service.get_image_generation_policy()
             protocol_config = self._model_protocol_config(model) if model else {}
+            verified_operations = (
+                self.repository.passed_capability_operations(
+                    model_id=model.model_id,
+                    configuration_stamp=self._configuration_stamp(model),
+                )
+                if model
+                else set()
+            )
             return {
                 "available": model is not None,
                 "model_name": model.name if model else "",
@@ -488,12 +610,125 @@ class ImageGenerationService(PlatformDomainService):
                     if model
                     else {"kind": "unavailable"}
                 ),
+                "input": (
+                    public_input_capabilities(
+                        model.provider,
+                        protocol_config,
+                        verified_operations=verified_operations,
+                    )
+                    if model
+                    else {
+                        "available_modes": [],
+                        "verified_operations": [],
+                        "max_input_images": 0,
+                        "mask_mode": "none",
+                        "requires_capability_test": False,
+                    }
+                ),
                 "points_per_image": policy["points"],
                 "max_active_jobs": policy["max_active_jobs"],
                 "daily_limit": policy["daily_limit"],
                 "retention_days": policy["retention_days"],
                 "balance": max(0, int(user_points)),
             }
+
+    def create_input_asset(
+        self, *, user_id: str, content: bytes, kind: str = "source"
+    ) -> dict:
+        """保存用户上传的参考图或蒙版，不将图片字节存入数据库。"""
+
+        normalized_kind = str(kind or "source").strip().lower()
+        if normalized_kind not in {"source", "mask"}:
+            raise ImageGenerationError("INVALID_INPUT", "上传图片类型仅支持 source 或 mask")
+        input_id = secrets.token_hex(16)
+        try:
+            stored = store_generation_input_image(
+                input_id=input_id, content=content, kind=normalized_kind
+            )
+        except Exception as exc:
+            message = str(exc) or "上传图片无法保存"
+            raise ImageGenerationError("INVALID_IMAGE_INPUT", message) from exc
+        record = ImageGenerationInputAssetRecord(
+            input_id=input_id,
+            user_id=user_id,
+            kind=normalized_kind,
+            storage_key=stored.storage_key,
+            content_hash=stored.content_hash,
+            mime_type=stored.mime_type,
+            width=stored.width,
+            height=stored.height,
+            byte_size=stored.byte_size,
+            created_at=time.time(),
+        )
+        try:
+            with self.lock:
+                self.repository.save_input_asset(record)
+        except Exception as exc:
+            delete_generation_input_image(stored.storage_key)
+            raise ImageGenerationError("IMAGE_INPUT_SAVE_FAILED", "上传图片元数据保存失败") from exc
+        log_event(
+            "image_generation_input_uploaded",
+            {
+                "input_id": record.input_id,
+                "user_id": user_id,
+                "kind": record.kind,
+                "width": record.width,
+                "height": record.height,
+                "byte_size": record.byte_size,
+            },
+        )
+        return record.to_dict()
+
+    def list_input_assets(
+        self, *, user_id: str, page: int = 1, limit: int = 60
+    ) -> dict:
+        """列出用户可复用的上传图片与蒙版元数据。"""
+
+        safe_page = max(1, int(page))
+        safe_limit = max(1, min(int(limit), 100))
+        records = self.repository.list_input_assets(
+            user_id=user_id,
+            offset=(safe_page - 1) * safe_limit,
+            limit=safe_limit,
+        )
+        return {
+            "assets": [item.to_dict() for item in records],
+            "total": self.repository.count_input_assets(user_id=user_id),
+            "page": safe_page,
+            "limit": safe_limit,
+        }
+
+    def input_asset_path(self, input_id: str, *, user_id: str, allow_admin: bool) -> tuple[dict, str]:
+        """返回已鉴权上传图片的安全文件路径。"""
+
+        record = self.repository.get_input_asset(input_id)
+        if record is None:
+            raise ImageGenerationError("IMAGE_INPUT_NOT_FOUND", "参考图片不存在", http_status=404)
+        if not allow_admin and record.user_id != user_id:
+            raise ImageGenerationError("IMAGE_INPUT_FORBIDDEN", "无权访问该参考图片", http_status=403)
+        path = generation_input_image_path(record.storage_key)
+        if path is None or not path.is_file():
+            raise ImageGenerationError("IMAGE_INPUT_NOT_FOUND", "参考图片文件不存在", http_status=404)
+        return record.to_dict(), str(path)
+
+    def delete_input_asset(self, input_id: str, *, user_id: str, allow_admin: bool) -> dict:
+        """删除用户上传的私有输入图；活动任务仍引用时拒绝删除。"""
+
+        record = self.repository.get_input_asset(input_id)
+        if record is None:
+            raise ImageGenerationError("IMAGE_INPUT_NOT_FOUND", "参考图片不存在", http_status=404)
+        if not allow_admin and record.user_id != user_id:
+            raise ImageGenerationError("IMAGE_INPUT_FORBIDDEN", "无权删除该参考图片", http_status=403)
+        try:
+            deleted = self.repository.delete_input_asset(
+                input_id,
+                user_id=record.user_id,
+                now=time.time(),
+            )
+        except ImageGenerationRepositoryError as exc:
+            raise self._repository_error(exc) from exc
+        delete_generation_input_image(deleted.storage_key)
+        return deleted.to_dict()
 
     def get_job(self, job_id: str) -> dict:
         """读取任务及其仍可访问资产。"""
@@ -614,50 +849,89 @@ class ImageGenerationService(PlatformDomainService):
 
         return self.repository.stats()
 
-    def test_model(self, model_id: str) -> dict:
-        """执行一次明确触发的连通性测试，响应图片不会保存或展示。"""
+    def test_model(self, model_id: str, *, operation: str = "text_to_image") -> dict:
+        """执行显式模型能力测试；编辑能力仅在成功测试后向用户开放。"""
 
         model = self.repository.get_model(model_id)
         if model is None:
             raise ImageGenerationError("IMAGE_MODEL_NOT_FOUND", "生图模型不存在", http_status=404)
+        normalized_operation = self._normalize_test_operation(operation)
+        protocol_config = self._model_protocol_config(model)
+        if not operation_supported_by_protocol(
+            model.provider, protocol_config, normalized_operation
+        ):
+            raise ImageGenerationError(
+                "IMAGE_EDIT_UNSUPPORTED", "当前协议未声明该图片编辑能力", http_status=400
+            )
         started = time.monotonic()
+        input_images, mask_image = self._capability_probe_inputs(normalized_operation)
+        result: dict
         try:
             selected_size, output_options = self._normalize_output(model, size="", output=None)
             provider = self.provider_factory(model)
-            result = provider.generate(
+            provider_result = provider.generate(
                 ImageGenerationRequest(
-                    prompt="A small blue geometric square on a plain white background.",
+                    prompt=self._capability_probe_prompt(normalized_operation),
                     size=selected_size,
                     request_id=f"test-{model_id}",
+                    mode=(
+                        "image_edit"
+                        if normalized_operation == "whole_edit"
+                        else normalized_operation
+                    ),
+                    input_images=input_images,
+                    mask_image=mask_image,
                     output_options=output_options,
                 )
             )
-            return {
+            validate_private_image(provider_result.content, subject="生图模型测试结果")
+            result = {
                 "ok": True,
+                "operation": normalized_operation,
                 "elapsed_ms": round((time.monotonic() - started) * 1000, 2),
-                "provider_request_id": result.provider_request_id,
+                "provider_request_id": provider_result.provider_request_id,
             }
         except ImageGenerationProviderError as exc:
-            return {
+            result = {
                 "ok": False,
+                "operation": normalized_operation,
                 "elapsed_ms": round((time.monotonic() - started) * 1000, 2),
                 "error_code": exc.code,
                 "error": exc.message,
             }
-        except ImageGenerationError as exc:
-            return {
+        except (ImageGenerationError, PrivateImageError) as exc:
+            result = {
                 "ok": False,
+                "operation": normalized_operation,
                 "elapsed_ms": round((time.monotonic() - started) * 1000, 2),
-                "error_code": exc.code,
-                "error": exc.message,
+                "error_code": (
+                    exc.code if isinstance(exc, ImageGenerationError) else "INVALID_GENERATED_IMAGE"
+                ),
+                "error": (
+                    exc.message if isinstance(exc, ImageGenerationError) else "生图模型未返回有效图片"
+                ),
             }
         except Exception:
-            return {
+            result = {
                 "ok": False,
+                "operation": normalized_operation,
                 "elapsed_ms": round((time.monotonic() - started) * 1000, 2),
                 "error_code": "IMAGE_GENERATION_FAILED",
                 "error": "生图模型测试失败",
             }
+        self.repository.save_capability_check(
+            ImageGenerationCapabilityCheckRecord(
+                check_id=secrets.token_hex(12),
+                model_id=model.model_id,
+                configuration_stamp=self._configuration_stamp(model),
+                operation=normalized_operation,
+                passed=bool(result["ok"]),
+                error_code=str(result.get("error_code") or ""),
+                error=str(result.get("error") or ""),
+                checked_at=time.time(),
+            )
+        )
+        return result
 
     def _finish_failure(
         self,
@@ -671,7 +945,7 @@ class ImageGenerationService(PlatformDomainService):
         trace_error: str = "",
         expected_status: str | None = None,
     ) -> bool:
-        """写入失败追溯，退款并记录不含提示词的运行事件。"""
+        """写入失败追溯，并原子退回尚未成功确认的预扣积分。"""
 
         try:
             completed = self.repository.fail_job_and_refund(
@@ -812,6 +1086,213 @@ class ImageGenerationService(PlatformDomainService):
                 "INVALID_INPUT", f"图片描述不能超过 {MAX_PROMPT_LENGTH} 个字符", http_status=400
             )
         return prompt
+
+    @staticmethod
+    def _normalize_mode(value: object) -> str:
+        """将外部模式收敛为四个稳定的用户任务类型。"""
+
+        mode = str(value or "text_to_image").strip().lower()
+        allowed = {"text_to_image", *IMAGE_EDIT_MODES}
+        if mode not in allowed:
+            raise ImageGenerationError("INVALID_INPUT", "不支持的生图模式")
+        return mode
+
+    @staticmethod
+    def _normalize_input_references(
+        *,
+        job_id: str,
+        raw_references: object,
+        mode: str,
+        created_at: float,
+    ) -> list[ImageGenerationJobInputRecord]:
+        """验证任务只引用已保存私有资产，拒绝 URL、Base64 和浏览器文件路径。"""
+
+        if not isinstance(raw_references, (list, tuple)):
+            raise ImageGenerationError("INVALID_INPUT", "图片输入必须是资产引用数组")
+
+        normalized: list[ImageGenerationJobInputRecord] = []
+        positions: dict[str, int] = {"source": 0, "reference": 0, "mask": 0}
+        allowed_keys = {"source_kind", "source_id", "source_job_id", "role"}
+        for item in raw_references:
+            if not isinstance(item, Mapping):
+                raise ImageGenerationError("INVALID_INPUT", "图片输入必须使用资产引用对象")
+            unknown = set(item) - allowed_keys
+            if unknown:
+                raise ImageGenerationError("INVALID_INPUT", "图片输入包含不支持的内容字段")
+            source_kind = str(item.get("source_kind") or "").strip().lower()
+            source_id = str(item.get("source_id") or "").strip()
+            source_job_id = str(item.get("source_job_id") or "").strip()
+            role = str(item.get("role") or "").strip().lower()
+            if source_kind not in {"uploaded", "generated"}:
+                raise ImageGenerationError("INVALID_INPUT", "图片来源类型无效")
+            if role not in {"source", "reference", "mask"}:
+                raise ImageGenerationError("INVALID_INPUT", "图片输入角色无效")
+            if not source_id or len(source_id) > 128 or len(source_job_id) > 128:
+                raise ImageGenerationError("INVALID_INPUT", "图片资产标识无效")
+            if role == "mask" and source_kind != "uploaded":
+                raise ImageGenerationError("INVALID_INPUT", "蒙版只能使用私有上传图片")
+            if source_kind == "generated" and not source_job_id:
+                raise ImageGenerationError("INVALID_INPUT", "历史生成图片必须提供来源任务标识")
+            if source_kind == "uploaded" and source_job_id:
+                raise ImageGenerationError("INVALID_INPUT", "上传图片不能关联来源任务")
+            position = positions[role]
+            positions[role] += 1
+            normalized.append(
+                ImageGenerationJobInputRecord(
+                    job_id=job_id,
+                    source_kind=source_kind,
+                    source_id=source_id,
+                    source_job_id=source_job_id,
+                    role=role,
+                    position=position,
+                    mime_type="",
+                    width=0,
+                    height=0,
+                    byte_size=0,
+                    storage_key="",
+                    created_at=created_at,
+                )
+            )
+
+        role_counts = {role: positions[role] for role in positions}
+        if mode == "text_to_image":
+            valid = not normalized
+        elif mode == "image_edit":
+            valid = role_counts == {"source": 1, "reference": 0, "mask": 0}
+        elif mode == "masked_edit":
+            valid = role_counts == {"source": 1, "reference": 0, "mask": 1}
+        else:  # multi_reference
+            valid = (
+                role_counts["source"] == 1
+                and 1 <= role_counts["reference"] <= 3
+                and role_counts["mask"] == 0
+            )
+        if not valid:
+            message = {
+                "text_to_image": "文生图不能携带参考图片",
+                "image_edit": "整图编辑需要且只能包含一张主图",
+                "masked_edit": "局部编辑需要一张主图和一张同尺寸蒙版",
+                "multi_reference": "多图参考需要一张主图和一到三张参考图",
+            }[mode]
+            raise ImageGenerationError("INVALID_IMAGE_INPUT", message)
+        return normalized
+
+    def _validate_mode_capability(
+        self,
+        model: ImageGenerationModelRecord,
+        protocol_config: Mapping[str, Any],
+        mode: str,
+        *,
+        input_count: int,
+    ) -> None:
+        """仅允许通过当前模型配置实测的编辑能力进入供应商调用链路。"""
+
+        if mode == "text_to_image":
+            return
+        capability = MODE_TO_CAPABILITY[mode]
+        if not operation_supported_by_protocol(model.provider, protocol_config, capability):
+            raise ImageGenerationError("IMAGE_EDIT_UNSUPPORTED", "当前生图协议不支持该图片编辑模式")
+        max_inputs = int(
+            (protocol_config.get("input_capabilities") or {}).get("max_input_images") or 0
+        )
+        if input_count > max_inputs:
+            raise ImageGenerationError("INVALID_IMAGE_INPUT", "图片输入数量超过当前模型允许范围")
+        passed = self.repository.passed_capability_operations(
+            model_id=model.model_id,
+            configuration_stamp=self._configuration_stamp(model),
+        )
+        if capability not in passed:
+            raise ImageGenerationError(
+                "IMAGE_EDIT_NOT_VERIFIED",
+                "当前模型尚未通过此图片编辑能力测试",
+                http_status=409,
+            )
+
+    @staticmethod
+    def _normalize_test_operation(value: object) -> str:
+        """规范管理员能力测试操作；兼容 ``image_edit`` 作为整图编辑别名。"""
+
+        operation = str(value or "text_to_image").strip().lower()
+        aliases = {"image_edit": "whole_edit"}
+        operation = aliases.get(operation, operation)
+        allowed = {"text_to_image", *MODE_TO_CAPABILITY.values()}
+        if operation not in allowed:
+            raise ImageGenerationError("INVALID_INPUT", "不支持的模型能力测试类型")
+        return operation
+
+    @staticmethod
+    def _capability_probe_inputs(
+        operation: str,
+    ) -> tuple[tuple[ImageInputAsset, ...], ImageInputAsset | None]:
+        """构建只在内存使用的最小测试图片，绝不落盘或写入任务记录。"""
+
+        if operation == "text_to_image":
+            return (), None
+
+        source = Image.new("RGB", (32, 32), "#2563eb")
+        source_bytes = io.BytesIO()
+        source.save(source_bytes, format="PNG")
+        source_asset = ImageInputAsset(
+            content=source_bytes.getvalue(), mime_type="image/png", role="source"
+        )
+        if operation == "whole_edit":
+            return (source_asset,), None
+        if operation == "masked_edit":
+            mask = Image.new("L", (32, 32), 0)
+            for x in range(16, 32):
+                for y in range(32):
+                    mask.putpixel((x, y), 255)
+            mask_bytes = io.BytesIO()
+            mask.save(mask_bytes, format="PNG")
+            return (
+                (source_asset,),
+                ImageInputAsset(
+                    content=mask_bytes.getvalue(), mime_type="image/png", role="mask"
+                ),
+            )
+        if operation == "multi_reference":
+            reference = Image.new("RGB", (32, 32), "#f97316")
+            reference_bytes = io.BytesIO()
+            reference.save(reference_bytes, format="PNG")
+            return (
+                (
+                    source_asset,
+                    ImageInputAsset(
+                        content=reference_bytes.getvalue(),
+                        mime_type="image/png",
+                        role="reference",
+                    ),
+                ),
+                None,
+            )
+        raise ImageGenerationError("INVALID_INPUT", "不支持的模型能力测试类型")
+
+    @staticmethod
+    def _capability_probe_prompt(operation: str) -> str:
+        """给各能力测试提供最小且与操作匹配的测试指令。"""
+
+        prompts = {
+            "text_to_image": "Generate a small blue geometric square on a plain white background.",
+            "whole_edit": "Change the blue square in the input image to a red circle.",
+            "masked_edit": "Only change the white-mask area to orange. Preserve the black-mask area exactly.",
+            "multi_reference": "Use the main image composition and apply the reference image color style.",
+        }
+        return prompts[operation]
+
+    @staticmethod
+    def _configuration_stamp(model: ImageGenerationModelRecord) -> str:
+        """生成不含密钥的模型配置指纹，配置变化会自然使旧能力测试失效。"""
+
+        payload = {
+            "provider": model.provider,
+            "base_url": model.base_url,
+            "model": model.model,
+            "timeout_seconds": model.timeout_seconds,
+            "protocol_config": model.protocol_config,
+            "updated_at": model.updated_at,
+        }
+        raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _validate_model_name(value: object) -> str:

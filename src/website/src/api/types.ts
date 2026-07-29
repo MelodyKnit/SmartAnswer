@@ -523,6 +523,42 @@ export type ImageGenerationProvider =
   | 'openai-compatible-images'
   | 'openai-chat-image'
 
+export type ImageGenerationMode =
+  | 'text_to_image'
+  | 'image_edit'
+  | 'masked_edit'
+  | 'multi_reference'
+
+export type ImageGenerationInputRole = 'source' | 'reference' | 'mask'
+
+export interface ImageGenerationInputReference {
+  source_kind: 'uploaded' | 'generated'
+  source_id: string
+  source_job_id?: string
+  role: ImageGenerationInputRole
+}
+
+export interface ImageGenerationInputAsset {
+  input_id: string
+  user_id: string
+  kind: 'source' | 'mask' | string
+  mime_type: string
+  width: number
+  height: number
+  byte_size: number
+  created_at: number
+  expires_at: number
+  deleted_at: number
+}
+
+export interface ImageGenerationInputCapabilities {
+  available_modes: ImageGenerationMode[]
+  verified_operations: string[]
+  max_input_images: number
+  mask_mode: 'guided' | 'native' | 'none' | string
+  requires_capability_test: boolean
+}
+
 export interface ImageGenerationOutputOptions {
   size?: string
   aspect_ratio?: string
@@ -588,6 +624,7 @@ export interface ImageGenerationJob {
   user_id: string
   username: string
   prompt: string
+  mode: ImageGenerationMode
   size: string
   output: ImageGenerationOutputOptions
   model_id: string
@@ -610,6 +647,7 @@ export interface ImageGenerationCapabilities {
   provider: ImageGenerationProvider | ''
   sizes: string[]
   output: ImageGenerationOutputCapabilities
+  input: ImageGenerationInputCapabilities
   points_per_image: number
   max_active_jobs: number
   daily_limit: number

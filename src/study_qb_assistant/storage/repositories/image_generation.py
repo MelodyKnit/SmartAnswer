@@ -10,13 +10,19 @@ from sqlalchemy.engine import CursorResult
 
 from ...platform.image_generation.records import (
     ImageGenerationAssetRecord,
+    ImageGenerationCapabilityCheckRecord,
+    ImageGenerationInputAssetRecord,
+    ImageGenerationJobInputRecord,
     ImageGenerationJobRecord,
     ImageGenerationModelRecord,
     ImageGenerationTraceRecord,
 )
 from ..orm import (
     ImageGenerationAssetEntity,
+    ImageGenerationInputAssetEntity,
     ImageGenerationJobEntity,
+    ImageGenerationJobInputEntity,
+    ImageGenerationModelCapabilityCheckEntity,
     ImageGenerationModelEntity,
     ImageGenerationTraceEntity,
     UserEntity,
@@ -143,6 +149,7 @@ class ImageGenerationRepository(SqlAlchemyRepository):
         *,
         active_limit: int,
         daily_limit: int,
+        input_references: list[ImageGenerationJobInputRecord] | None = None,
     ) -> tuple[ImageGenerationJobRecord, bool]:
         """原子创建任务与积分预扣，重复幂等键返回原任务。"""
 
@@ -212,6 +219,11 @@ class ImageGenerationRepository(SqlAlchemyRepository):
                 raise ImageGenerationRepositoryError(
                     "INSUFFICIENT_POINTS", "积分不足，无法生成图片", http_status=400
                 )
+            resolved_inputs = self._resolve_job_inputs(
+                session,
+                user_id=record.user_id,
+                references=input_references or [],
+            )
             user.points = int(user.points or 0) - record.points_cost
             order = WalletOrderEntity(
                 order_id=record.reservation_order_id,
@@ -228,6 +240,8 @@ class ImageGenerationRepository(SqlAlchemyRepository):
             entity = image_job_entity(record)
             session.add(order)
             session.add(entity)
+            for input_record in resolved_inputs:
+                session.add(image_job_input_entity(input_record))
             session.commit()
             return image_job_record(entity), True
 
@@ -294,6 +308,23 @@ class ImageGenerationRepository(SqlAlchemyRepository):
             session.commit()
             return image_job_record(job)
 
+    def mark_provider_dispatched(
+        self, job_id: str, *, dispatched_at: float
+    ) -> ImageGenerationJobRecord:
+        """记录任务已发送给供应商的审计时点，不改变预扣订单状态。"""
+
+        with self.session_factory() as session:
+            job = self._get_job_entity(session, job_id, lock=True)
+            if job.status != "running":
+                raise ImageGenerationRepositoryError(
+                    "JOB_NOT_RUNNING", "生图任务状态已变化", http_status=409
+                )
+            if float(getattr(job, "provider_dispatched_at", 0.0) or 0.0) <= 0:
+                job.provider_dispatched_at = dispatched_at
+                job.updated_at = dispatched_at
+            session.commit()
+            return image_job_record(job)
+
     def fail_job_and_refund(
         self,
         job_id: str,
@@ -326,6 +357,7 @@ class ImageGenerationRepository(SqlAlchemyRepository):
                     WalletOrderEntity.order_id == job.reservation_order_id
                 )
             )
+            # 只有成功落库输出资产才会确认预扣订单；所有失败路径都应退回余额。
             if order is not None and order.status == "reserved":
                 user = session.scalar(
                     select(UserEntity).where(UserEntity.user_id == job.user_id)
@@ -421,6 +453,159 @@ class ImageGenerationRepository(SqlAlchemyRepository):
                 .where(ImageGenerationAssetEntity.deleted_at <= 0)
             )
             return image_asset_record(entity) if entity else None
+
+    def list_input_assets(
+        self,
+        *,
+        user_id: str,
+        limit: int = 60,
+        offset: int = 0,
+    ) -> list[ImageGenerationInputAssetRecord]:
+        """列出当前用户仍可选择的私有上传图片。"""
+
+        with self.session_factory() as session:
+            entities = session.scalars(
+                select(ImageGenerationInputAssetEntity)
+                .where(ImageGenerationInputAssetEntity.user_id == user_id)
+                .where(ImageGenerationInputAssetEntity.deleted_at <= 0)
+                .order_by(ImageGenerationInputAssetEntity.created_at.desc())
+                .offset(max(0, offset))
+                .limit(max(1, min(limit, 100)))
+            ).all()
+            return [image_input_asset_record(entity) for entity in entities]
+
+    def count_input_assets(self, *, user_id: str) -> int:
+        """统计当前用户可用的上传图片数量。"""
+
+        with self.session_factory() as session:
+            return int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(ImageGenerationInputAssetEntity)
+                    .where(ImageGenerationInputAssetEntity.user_id == user_id)
+                    .where(ImageGenerationInputAssetEntity.deleted_at <= 0)
+                )
+                or 0
+            )
+
+    def save_input_asset(
+        self, record: ImageGenerationInputAssetRecord
+    ) -> ImageGenerationInputAssetRecord:
+        """保存已经落盘的私有输入资产元数据。"""
+
+        with self.session_factory() as session:
+            session.add(image_input_asset_entity(record))
+            session.commit()
+            return record
+
+    def get_input_asset(
+        self, input_id: str, *, user_id: str | None = None
+    ) -> ImageGenerationInputAssetRecord | None:
+        """读取未删除输入资产；可按所有者限制查询。"""
+
+        with self.session_factory() as session:
+            statement = (
+                select(ImageGenerationInputAssetEntity)
+                .where(ImageGenerationInputAssetEntity.input_id == input_id)
+                .where(ImageGenerationInputAssetEntity.deleted_at <= 0)
+            )
+            if user_id:
+                statement = statement.where(ImageGenerationInputAssetEntity.user_id == user_id)
+            entity = session.scalar(statement)
+            return image_input_asset_record(entity) if entity else None
+
+    def delete_input_asset(
+        self, input_id: str, *, user_id: str, now: float
+    ) -> ImageGenerationInputAssetRecord:
+        """软删除未被活动任务使用的上传图片并返回待删除文件键。"""
+
+        with self.session_factory() as session:
+            entity = session.scalar(
+                select(ImageGenerationInputAssetEntity)
+                .where(ImageGenerationInputAssetEntity.input_id == input_id)
+                .where(ImageGenerationInputAssetEntity.user_id == user_id)
+                .where(ImageGenerationInputAssetEntity.deleted_at <= 0)
+                .with_for_update()
+            )
+            if entity is None:
+                raise ImageGenerationRepositoryError(
+                    "IMAGE_INPUT_NOT_FOUND", "参考图片不存在", http_status=404
+                )
+            active_reference = session.scalar(
+                select(ImageGenerationJobInputEntity.id)
+                .join(
+                    ImageGenerationJobEntity,
+                    ImageGenerationJobEntity.job_id == ImageGenerationJobInputEntity.job_id,
+                )
+                .where(ImageGenerationJobInputEntity.source_kind == "uploaded")
+                .where(ImageGenerationJobInputEntity.source_id == input_id)
+                .where(ImageGenerationJobEntity.status.in_(ACTIVE_JOB_STATUSES))
+                .limit(1)
+            )
+            if active_reference is not None:
+                raise ImageGenerationRepositoryError(
+                    "IMAGE_INPUT_IN_USE", "参考图片正在被生图任务使用，暂不能删除", http_status=409
+                )
+            entity.deleted_at = now
+            session.commit()
+            return image_input_asset_record(entity)
+
+    def list_job_inputs(self, job_id: str) -> list[ImageGenerationJobInputRecord]:
+        """读取任务提交时冻结的输入引用快照。"""
+
+        with self.session_factory() as session:
+            entities = session.scalars(
+                select(ImageGenerationJobInputEntity)
+                .where(ImageGenerationJobInputEntity.job_id == job_id)
+                .order_by(ImageGenerationJobInputEntity.role.asc(), ImageGenerationJobInputEntity.position.asc())
+            ).all()
+            return [image_job_input_record(entity) for entity in entities]
+
+    def save_capability_check(
+        self, record: ImageGenerationCapabilityCheckRecord
+    ) -> ImageGenerationCapabilityCheckRecord:
+        """保存或覆盖同一模型配置的单项能力验证结果。"""
+
+        with self.session_factory() as session:
+            entity = session.scalar(
+                select(ImageGenerationModelCapabilityCheckEntity)
+                .where(ImageGenerationModelCapabilityCheckEntity.model_id == record.model_id)
+                .where(
+                    ImageGenerationModelCapabilityCheckEntity.configuration_stamp
+                    == record.configuration_stamp
+                )
+                .where(ImageGenerationModelCapabilityCheckEntity.operation == record.operation)
+            )
+            if entity is None:
+                entity = ImageGenerationModelCapabilityCheckEntity(check_id=record.check_id)
+                session.add(entity)
+            entity.model_id = record.model_id
+            entity.configuration_stamp = record.configuration_stamp
+            entity.operation = record.operation
+            entity.passed = 1 if record.passed else 0
+            entity.error_code = record.error_code[:64]
+            entity.error = record.error[:2000]
+            entity.checked_at = record.checked_at
+            session.commit()
+            return image_capability_check_record(entity)
+
+    def passed_capability_operations(
+        self, *, model_id: str, configuration_stamp: str
+    ) -> set[str]:
+        """只返回当前模型配置下实际通过过测试的编辑能力。"""
+
+        with self.session_factory() as session:
+            return set(
+                session.scalars(
+                    select(ImageGenerationModelCapabilityCheckEntity.operation)
+                    .where(ImageGenerationModelCapabilityCheckEntity.model_id == model_id)
+                    .where(
+                        ImageGenerationModelCapabilityCheckEntity.configuration_stamp
+                        == configuration_stamp
+                    )
+                    .where(ImageGenerationModelCapabilityCheckEntity.passed == 1)
+                ).all()
+            )
 
     def delete_job(self, job_id: str, *, now: float) -> tuple[ImageGenerationJobRecord, list[str]]:
         """软删除终态任务并返回待清理的资产文件键。"""
@@ -574,6 +759,104 @@ class ImageGenerationRepository(SqlAlchemyRepository):
                 "avg_elapsed_ms": round(avg_elapsed, 2),
             }
 
+    def _resolve_job_inputs(
+        self,
+        session,
+        *,
+        user_id: str,
+        references: list[ImageGenerationJobInputRecord],
+    ) -> list[ImageGenerationJobInputRecord]:
+        """校验任务引用的私有资产归属，并冻结执行时需要的文件快照。"""
+
+        resolved: list[ImageGenerationJobInputRecord] = []
+        for reference in references:
+            if reference.source_kind == "uploaded":
+                source = session.scalar(
+                    select(ImageGenerationInputAssetEntity)
+                    .where(ImageGenerationInputAssetEntity.input_id == reference.source_id)
+                    .where(ImageGenerationInputAssetEntity.user_id == user_id)
+                    .where(ImageGenerationInputAssetEntity.deleted_at <= 0)
+                )
+                if source is None:
+                    raise ImageGenerationRepositoryError(
+                        "IMAGE_INPUT_NOT_FOUND", "参考图片不存在或无权使用", http_status=404
+                    )
+                if reference.role == "mask" and source.kind != "mask":
+                    raise ImageGenerationRepositoryError(
+                        "INVALID_IMAGE_INPUT",
+                        "局部编辑蒙版必须使用已上传的蒙版图片",
+                        http_status=400,
+                    )
+                if reference.role != "mask" and source.kind != "source":
+                    raise ImageGenerationRepositoryError(
+                        "INVALID_IMAGE_INPUT",
+                        "主图和参考图必须使用已上传的参考图片",
+                        http_status=400,
+                    )
+                resolved.append(
+                    ImageGenerationJobInputRecord(
+                        job_id=reference.job_id,
+                        source_kind="uploaded",
+                        source_id=source.input_id,
+                        source_job_id="",
+                        role=reference.role,
+                        position=reference.position,
+                        mime_type=source.mime_type,
+                        width=int(source.width or 0),
+                        height=int(source.height or 0),
+                        byte_size=int(source.byte_size or 0),
+                        storage_key=source.storage_key,
+                        created_at=reference.created_at,
+                    )
+                )
+                continue
+
+            if reference.source_kind == "generated":
+                source = session.execute(
+                    select(ImageGenerationAssetEntity, ImageGenerationJobEntity)
+                    .join(
+                        ImageGenerationJobEntity,
+                        ImageGenerationJobEntity.job_id == ImageGenerationAssetEntity.job_id,
+                    )
+                    .where(ImageGenerationAssetEntity.asset_id == reference.source_id)
+                    .where(ImageGenerationAssetEntity.deleted_at <= 0)
+                    .where(ImageGenerationJobEntity.user_id == user_id)
+                    .where(ImageGenerationJobEntity.status == "succeeded")
+                ).first()
+                if source is None:
+                    raise ImageGenerationRepositoryError(
+                        "IMAGE_INPUT_NOT_FOUND", "历史生成图片不存在或无权使用", http_status=404
+                    )
+                asset, source_job = source
+                if reference.source_job_id and reference.source_job_id != source_job.job_id:
+                    raise ImageGenerationRepositoryError(
+                        "INVALID_IMAGE_INPUT",
+                        "历史生成图片与声明的来源任务不一致",
+                        http_status=400,
+                    )
+                resolved.append(
+                    ImageGenerationJobInputRecord(
+                        job_id=reference.job_id,
+                        source_kind="generated",
+                        source_id=asset.asset_id,
+                        source_job_id=source_job.job_id,
+                        role=reference.role,
+                        position=reference.position,
+                        mime_type=asset.mime_type,
+                        width=int(asset.width or 0),
+                        height=int(asset.height or 0),
+                        byte_size=int(asset.byte_size or 0),
+                        storage_key=asset.storage_key,
+                        created_at=reference.created_at,
+                    )
+                )
+                continue
+
+            raise ImageGenerationRepositoryError(
+                "INVALID_INPUT", "图片来源类型不受支持", http_status=400
+            )
+        return resolved
+
     @staticmethod
     def _get_job_entity(
         session, job_id: str, *, lock: bool = False
@@ -618,6 +901,7 @@ def image_job_entity(record: ImageGenerationJobRecord) -> ImageGenerationJobEnti
         user_id=record.user_id,
         username=record.username,
         prompt=record.prompt,
+        mode=record.mode,
         size=record.size,
         output_options=record.output_options,
         model_id=record.model_id,
@@ -632,6 +916,7 @@ def image_job_entity(record: ImageGenerationJobRecord) -> ImageGenerationJobEnti
         created_at=record.created_at,
         started_at=record.started_at,
         completed_at=record.completed_at,
+        provider_dispatched_at=record.provider_dispatched_at,
         updated_at=record.updated_at,
         expires_at=record.expires_at,
     )
@@ -645,6 +930,7 @@ def image_job_record(entity: ImageGenerationJobEntity) -> ImageGenerationJobReco
         user_id=entity.user_id,
         username=entity.username,
         prompt=entity.prompt or "",
+        mode=getattr(entity, "mode", "text_to_image") or "text_to_image",
         size=entity.size or "1024x1024",
         output_options=getattr(entity, "output_options", "{}") or "{}",
         model_id=entity.model_id or "",
@@ -659,6 +945,7 @@ def image_job_record(entity: ImageGenerationJobEntity) -> ImageGenerationJobReco
         created_at=float(entity.created_at or 0.0),
         started_at=float(entity.started_at or 0.0),
         completed_at=float(entity.completed_at or 0.0),
+        provider_dispatched_at=float(getattr(entity, "provider_dispatched_at", 0.0) or 0.0),
         updated_at=float(entity.updated_at or 0.0),
         expires_at=float(entity.expires_at or 0.0),
     )
@@ -695,6 +982,107 @@ def image_asset_record(entity: ImageGenerationAssetEntity) -> ImageGenerationAss
         byte_size=int(entity.byte_size or 0),
         created_at=float(entity.created_at or 0.0),
         deleted_at=float(entity.deleted_at or 0.0),
+    )
+
+
+def image_input_asset_entity(
+    record: ImageGenerationInputAssetRecord,
+) -> ImageGenerationInputAssetEntity:
+    """从上传输入资产记录构建 ORM 实体。"""
+
+    return ImageGenerationInputAssetEntity(
+        input_id=record.input_id,
+        user_id=record.user_id,
+        kind=record.kind,
+        storage_key=record.storage_key,
+        content_hash=record.content_hash,
+        mime_type=record.mime_type,
+        width=record.width,
+        height=record.height,
+        byte_size=record.byte_size,
+        created_at=record.created_at,
+        expires_at=record.expires_at,
+        deleted_at=record.deleted_at,
+    )
+
+
+def image_input_asset_record(
+    entity: ImageGenerationInputAssetEntity,
+) -> ImageGenerationInputAssetRecord:
+    """将 ORM 实体转换为私有输入资产记录。"""
+
+    return ImageGenerationInputAssetRecord(
+        input_id=entity.input_id,
+        user_id=entity.user_id,
+        kind=entity.kind or "source",
+        storage_key=entity.storage_key,
+        content_hash=entity.content_hash,
+        mime_type=entity.mime_type or "image/png",
+        width=int(entity.width or 0),
+        height=int(entity.height or 0),
+        byte_size=int(entity.byte_size or 0),
+        created_at=float(entity.created_at or 0.0),
+        expires_at=float(entity.expires_at or 0.0),
+        deleted_at=float(entity.deleted_at or 0.0),
+    )
+
+
+def image_job_input_entity(
+    record: ImageGenerationJobInputRecord,
+) -> ImageGenerationJobInputEntity:
+    """从冻结的任务输入引用构建 ORM 实体。"""
+
+    return ImageGenerationJobInputEntity(
+        job_id=record.job_id,
+        source_kind=record.source_kind,
+        source_id=record.source_id,
+        source_job_id=record.source_job_id,
+        role=record.role,
+        position=record.position,
+        mime_type=record.mime_type,
+        width=record.width,
+        height=record.height,
+        byte_size=record.byte_size,
+        storage_key=record.storage_key,
+        created_at=record.created_at,
+    )
+
+
+def image_job_input_record(
+    entity: ImageGenerationJobInputEntity,
+) -> ImageGenerationJobInputRecord:
+    """将任务输入 ORM 实体转换为私有执行快照。"""
+
+    return ImageGenerationJobInputRecord(
+        job_id=entity.job_id,
+        source_kind=entity.source_kind,
+        source_id=entity.source_id,
+        source_job_id=entity.source_job_id or "",
+        role=entity.role,
+        position=int(entity.position or 0),
+        mime_type=entity.mime_type or "image/png",
+        width=int(entity.width or 0),
+        height=int(entity.height or 0),
+        byte_size=int(entity.byte_size or 0),
+        storage_key=entity.storage_key,
+        created_at=float(entity.created_at or 0.0),
+    )
+
+
+def image_capability_check_record(
+    entity: ImageGenerationModelCapabilityCheckEntity,
+) -> ImageGenerationCapabilityCheckRecord:
+    """将模型能力测试 ORM 实体转换为领域记录。"""
+
+    return ImageGenerationCapabilityCheckRecord(
+        check_id=entity.check_id,
+        model_id=entity.model_id,
+        configuration_stamp=entity.configuration_stamp,
+        operation=entity.operation,
+        passed=bool(entity.passed),
+        error_code=entity.error_code or "",
+        error=entity.error or "",
+        checked_at=float(entity.checked_at or 0.0),
     )
 
 

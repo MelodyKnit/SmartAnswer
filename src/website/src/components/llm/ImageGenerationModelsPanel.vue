@@ -14,6 +14,14 @@ const geminiAspectRatioOptions = [
 ]
 const geminiImageSizeOptions = ['512', '1K', '2K', '4K']
 const defaultPresetSizes = ['1024x1024', '1024x1536', '1536x1024']
+const modelTestOperations = [
+  { value: 'text_to_image', label: '文生图' },
+  { value: 'whole_edit', label: '整图编辑' },
+  { value: 'masked_edit', label: '局部修图' },
+  { value: 'multi_reference', label: '多图参考' },
+] as const
+
+type ModelTestOperation = (typeof modelTestOperations)[number]['value']
 
 const loading = ref(false)
 const saving = ref(false)
@@ -41,6 +49,10 @@ const form = reactive({
   step: 16,
   min_pixels: 655360,
   max_pixels: 8294400,
+  whole_edit: true,
+  masked_edit: true,
+  multi_reference: true,
+  max_input_images: 4,
 })
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -81,6 +93,20 @@ function displayOutput(model: ImageGenerationModel): string {
   return stringList(config.preset_sizes, model.capabilities.filter((item) => item.includes('x'))).join(' / ')
 }
 
+function displayInput(model: ImageGenerationModel): string {
+  if (model.provider === 'openai-chat-image') return '不支持图片编辑'
+  const config = isRecord(model.protocol_config) ? model.protocol_config : {}
+  const input = isRecord(config.input_capabilities) ? config.input_capabilities : {}
+  const labels = [
+    input.whole_edit === true ? '整图编辑' : '',
+    input.masked_edit === true ? '局部修图' : '',
+    input.multi_reference === true ? '多图参考' : '',
+  ].filter(Boolean)
+  const maxInputImages = numberValue(input.max_input_images, 0)
+  if (!labels.length) return '未声明'
+  return `${labels.join(' / ')}${maxInputImages ? ` · 最多 ${maxInputImages} 张` : ''}`
+}
+
 function resetProtocolForm() {
   form.gemini_auth_mode = 'x-goog-api-key'
   form.gemini_aspect_ratios = ['1:1']
@@ -94,6 +120,10 @@ function resetProtocolForm() {
   form.step = 16
   form.min_pixels = 655360
   form.max_pixels = 8294400
+  form.whole_edit = true
+  form.masked_edit = true
+  form.multi_reference = true
+  form.max_input_images = 4
 }
 
 function resetForm() {
@@ -113,11 +143,18 @@ function resetProtocolForProvider() {
 }
 
 function protocolConfig(): Record<string, unknown> {
+  const inputCapabilities = {
+    whole_edit: form.whole_edit,
+    masked_edit: form.masked_edit,
+    multi_reference: form.multi_reference,
+    max_input_images: form.max_input_images,
+  }
   if (form.provider === 'gemini-native') {
     return {
       auth_mode: form.gemini_auth_mode,
       aspect_ratios: [...form.gemini_aspect_ratios],
       image_sizes: [...form.gemini_image_sizes],
+      input_capabilities: inputCapabilities,
     }
   }
   if (form.provider === 'openai-images') {
@@ -133,10 +170,15 @@ function protocolConfig(): Record<string, unknown> {
         min_pixels: form.min_pixels,
         max_pixels: form.max_pixels,
       },
+      input_capabilities: inputCapabilities,
     }
   }
   if (form.provider === 'openai-compatible-images') {
-    return { preset_sizes: sizesFromText(form.preset_sizes_text), allow_custom_size: false }
+    return {
+      preset_sizes: sizesFromText(form.preset_sizes_text),
+      allow_custom_size: false,
+      input_capabilities: inputCapabilities,
+    }
   }
   return { mode: 'model-controlled' }
 }
@@ -183,6 +225,11 @@ function openEdit(model: ImageGenerationModel) {
   form.step = numberValue(constraints.step, 16)
   form.min_pixels = numberValue(constraints.min_pixels, 655360)
   form.max_pixels = numberValue(constraints.max_pixels, 8294400)
+  const input = isRecord(config.input_capabilities) ? config.input_capabilities : {}
+  form.whole_edit = input.whole_edit !== false
+  form.masked_edit = input.masked_edit !== false
+  form.multi_reference = input.multi_reference !== false
+  form.max_input_images = numberValue(input.max_input_images, 4)
   visible.value = true
 }
 
@@ -234,12 +281,13 @@ async function save() {
   }
 }
 
-async function test(model: ImageGenerationModel) {
-  testingId.value = model.model_id
+async function test(model: ImageGenerationModel, operation: ModelTestOperation = 'text_to_image') {
+  testingId.value = `${model.model_id}:${operation}`
   try {
-    const result = await imageGenerationApi.testModel(model.model_id)
+    const result = await imageGenerationApi.testModel(model.model_id, operation)
     if (result.ok) {
-      ElMessage.success(`模型连通性正常，耗时 ${Math.round(result.elapsed_ms)} ms`)
+      const label = modelTestOperations.find((item) => item.value === operation)?.label || operation
+      ElMessage.success(`${label}测试通过，耗时 ${Math.round(result.elapsed_ms)} ms`)
     } else {
       ElMessage.error(result.error || '模型测试失败')
     }
@@ -248,6 +296,12 @@ async function test(model: ImageGenerationModel) {
   } finally {
     testingId.value = ''
   }
+}
+
+function testOperation(model: ImageGenerationModel, operation: string | number | object) {
+  if (typeof operation !== 'string') return
+  const matched = modelTestOperations.find((item) => item.value === operation)
+  if (matched) void test(model, matched.value)
 }
 
 async function remove(model: ImageGenerationModel) {
@@ -297,6 +351,9 @@ onMounted(load)
         <el-table-column label="输出能力" min-width="180" show-overflow-tooltip>
           <template #default="{ row }"><span class="text-xs text-ink-soft">{{ displayOutput(row) }}</span></template>
         </el-table-column>
+        <el-table-column label="编辑能力" min-width="180" show-overflow-tooltip>
+          <template #default="{ row }"><span class="text-xs text-ink-soft">{{ displayInput(row) }}</span></template>
+        </el-table-column>
         <el-table-column label="状态" width="84" align="center">
           <template #default="{ row }">
             <el-tag size="small" :type="row.status === 'active' ? 'success' : 'info'" effect="plain">
@@ -307,10 +364,24 @@ onMounted(load)
         <el-table-column label="更新时间" width="150" align="right">
           <template #default="{ row }">{{ formatDateTime(row.updated_at) }}</template>
         </el-table-column>
-        <el-table-column v-if="canManage" label="操作" width="150" align="right">
+        <el-table-column v-if="canManage" label="操作" width="190" align="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="warning" :loading="testingId === row.model_id" @click="test(row)">测试</el-button>
+            <el-dropdown trigger="click" @command="testOperation(row, $event)">
+              <el-button link type="warning" :loading="testingId.startsWith(`${row.model_id}:`)">测试</el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item
+                    v-for="item in modelTestOperations"
+                    :key="item.value"
+                    :command="item.value"
+                    :disabled="row.provider === 'openai-chat-image' && item.value !== 'text_to_image'"
+                  >
+                    {{ item.label }}
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
             <el-button link type="danger" @click="remove(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -330,8 +401,8 @@ onMounted(load)
           </el-select>
         </el-form-item>
         <el-alert v-if="form.provider === 'gemini-native'" type="info" :closable="false" show-icon title="使用 generateContent 与 imageConfig，支持画幅比例和像素档位。" />
-        <el-alert v-else-if="form.provider === 'openai-images'" type="info" :closable="false" show-icon title="使用 /images/generations；可按模型能力声明预设尺寸或受控自定义尺寸。" />
-        <el-alert v-else-if="form.provider === 'openai-compatible-images'" type="info" :closable="false" show-icon title="使用兼容 /images/generations，仅向用户开放管理员声明的预设尺寸。" />
+        <el-alert v-else-if="form.provider === 'openai-images'" type="info" :closable="false" show-icon title="文生图使用 /images/generations；图片编辑使用 /images/edits，可按模型能力声明预设尺寸或受控自定义尺寸。" />
+        <el-alert v-else-if="form.provider === 'openai-compatible-images'" type="info" :closable="false" show-icon title="文生图使用兼容 /images/generations；编辑能力须通过逐项实测后才会向用户开放。" />
         <el-alert v-else type="warning" :closable="false" show-icon title="旧配置兼容入口，尺寸由上游聊天模型决定，不建议用于新增模型。" />
         <el-form-item class="mt-4" label="接口地址 (base_url)" required><el-input v-model="form.base_url" placeholder="https://api.example.com/v1" /></el-form-item>
         <el-form-item label="模型标识" required><el-input v-model="form.model" placeholder="例如 gemini-3.1-flash-image" /></el-form-item>
@@ -367,6 +438,24 @@ onMounted(load)
               <el-form-item label="最大像素"><el-input-number v-model="form.max_pixels" :min="1" class="w-full" /></el-form-item>
             </div>
           </template>
+        </section>
+
+        <section v-if="form.provider !== 'openai-chat-image'" class="mt-4 rounded-lg border border-line bg-card-soft p-4">
+          <div class="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h4 class="text-sm font-medium text-ink">图片编辑能力</h4>
+              <p class="mt-1 text-xs text-ink-muted">保存模型配置后，须在列表中逐项测试通过，用户侧才会开放相应功能。</p>
+            </div>
+            <el-tag size="small" type="info" effect="plain">配置变更会使旧测试失效</el-tag>
+          </div>
+          <div class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div class="flex items-center justify-between rounded-md border border-line px-3 py-2.5"><span class="text-sm text-ink">整图编辑</span><el-switch v-model="form.whole_edit" /></div>
+            <div class="flex items-center justify-between rounded-md border border-line px-3 py-2.5"><span class="text-sm text-ink">局部修图</span><el-switch v-model="form.masked_edit" /></div>
+            <div class="flex items-center justify-between rounded-md border border-line px-3 py-2.5"><span class="text-sm text-ink">多图参考</span><el-switch v-model="form.multi_reference" /></div>
+          </div>
+          <el-form-item label="最多输入图片数" class="mb-0 mt-4">
+            <el-input-number v-model="form.max_input_images" :min="1" :max="4" class="w-full sm:w-56" />
+          </el-form-item>
         </section>
       </el-form>
       <template #footer>

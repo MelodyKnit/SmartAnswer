@@ -14,7 +14,10 @@ import type {
   Feedback,
   ImportScript,
   ImageGenerationCapabilities,
+  ImageGenerationInputAsset,
+  ImageGenerationInputReference,
   ImageGenerationJob,
+  ImageGenerationMode,
   ImageGenerationModel,
   ImageGenerationOutputOptions,
   ImageGenerationStats,
@@ -480,19 +483,49 @@ export const llmApi = {
     api.get<{ ok: true; traces: LlmCallTrace[]; total: number }>('/llm-traces', params),
 }
 
-/* ---------------- 文本生图 ---------------- */
+/* ---------------- 生图与私有图片编辑 ---------------- */
 export const imageGenerationApi = {
   capabilities: () =>
     api.get<{ ok: true; capabilities: ImageGenerationCapabilities }>('/image-generation-capabilities'),
   create: (body: {
     prompt: string
     size?: string
+    mode?: ImageGenerationMode
+    input_assets?: ImageGenerationInputReference[]
     output?: ImageGenerationOutputOptions
     idempotency_key: string
   }) =>
     api.post<{ ok: true; job: ImageGenerationJob; idempotent_replay: boolean }>(
       '/image-generations',
       body,
+    ),
+  uploadInput: async (file: File, kind: 'source' | 'mask') => {
+    const form = new FormData()
+    form.append('image', file)
+    const response = await http.post<{ ok: true; asset: ImageGenerationInputAsset }>(
+      `/image-generation-inputs?kind=${encodeURIComponent(kind)}`,
+      form,
+    )
+    return response.data
+  },
+  inputs: (params: { page?: number; limit?: number } = {}) =>
+    api.get<{
+      ok: true
+      assets: ImageGenerationInputAsset[]
+      total: number
+      page: number
+      limit: number
+    }>('/image-generation-inputs', params),
+  inputContent: async (inputId: string): Promise<Blob> => {
+    const response = await http.get<Blob>(
+      `/image-generation-inputs/${encodeURIComponent(inputId)}/content`,
+      { responseType: 'blob' },
+    )
+    return response.data
+  },
+  deleteInput: (inputId: string) =>
+    api.delete<{ ok: true; asset: ImageGenerationInputAsset }>(
+      `/image-generation-inputs/${encodeURIComponent(inputId)}`,
     ),
   list: (params: { status?: string; page?: number; limit?: number; user_id?: string } = {}) =>
     api.get<{ ok: true; jobs: ImageGenerationJob[]; total: number; page: number; limit: number }>(
@@ -524,9 +557,13 @@ export const imageGenerationApi = {
     ),
   deleteModel: (modelId: string) =>
     api.delete<{ ok: true }>(`/image-generation-models/${encodeURIComponent(modelId)}`),
-  testModel: (modelId: string) =>
-    api.post<{ ok: boolean; elapsed_ms: number; error?: string }>(
+  testModel: (
+    modelId: string,
+    operation: 'text_to_image' | 'whole_edit' | 'masked_edit' | 'multi_reference' = 'text_to_image',
+  ) =>
+    api.post<{ ok: boolean; operation: string; elapsed_ms: number; error?: string }>(
       `/image-generation-models/${encodeURIComponent(modelId)}/test`,
+      { operation },
     ),
   stats: () => api.get<{ ok: true; stats: ImageGenerationStats }>('/image-generation-stats'),
   traces: (params: { job_id?: string; model_id?: string; page?: number; limit?: number } = {}) =>

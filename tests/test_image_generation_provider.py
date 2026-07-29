@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import unittest
 from unittest.mock import patch
 
+from PIL import Image
+
 from study_qb_assistant.llm.http_client import HttpClientError
 from study_qb_assistant.llm.image_generation import (
     GeminiNativeImageGenerationProvider,
+    ImageInputAsset,
     ImageGenerationProviderError,
     ImageGenerationRequest,
     OpenAIChatImageGenerationProvider,
@@ -17,6 +21,17 @@ from study_qb_assistant.llm.image_generation import (
 )
 from study_qb_assistant.platform.image_generation.records import ImageGenerationModelRecord
 from study_qb_assistant.platform.image_generation.service import build_image_generation_provider
+
+
+def png_bytes(*, mode: str = "RGB", size: tuple[int, int] = (2, 1)) -> bytes:
+    """构造供协议请求形状测试使用的最小有效图片。"""
+
+    image = Image.new(mode, size, "black")
+    if mode == "L":
+        image.putpixel((0, 0), 255)
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 class OpenAIImageGenerationProviderTests(unittest.TestCase):
@@ -131,6 +146,43 @@ class OpenAIImageGenerationProviderTests(unittest.TestCase):
         self.assertEqual(error.exception.code, "PROVIDER_REJECTED")
         self.assertEqual(error.exception.message, "生图模型或调用协议不受当前服务支持")
 
+    def test_edit_request_uses_private_bytes_and_transparent_openai_mask(self) -> None:
+        """OpenAI Images 编辑请求应使用 multipart，白色蒙版区域转换为透明可编辑区域。"""
+
+        callbacks: list[str] = []
+        request = ImageGenerationRequest(
+            prompt="将主图中的蓝色方块改成红色圆形",
+            size="1024x1024",
+            request_id="openai-edit-request",
+            mode="masked_edit",
+            input_images=(
+                ImageInputAsset(content=png_bytes(), mime_type="image/png", role="source"),
+            ),
+            mask_image=ImageInputAsset(
+                content=png_bytes(mode="L"), mime_type="image/png", role="mask"
+            ),
+            on_provider_dispatch=lambda: callbacks.append("sent"),
+        )
+        response_body = json.dumps(
+            {"id": "provider-edit-1", "data": [{"b64_json": base64.b64encode(b"image").decode()}]}
+        )
+        with patch(
+            "study_qb_assistant.llm.image_generation.openai_images.request_multipart_text",
+            return_value=response_body,
+        ) as request_multipart:
+            self.provider.generate(request)
+
+        _, url = request_multipart.call_args.args[:2]
+        self.assertEqual(url, "https://images.example.test/v1/images/edits")
+        self.assertEqual(callbacks, ["sent"])
+        self.assertEqual(request_multipart.call_args.kwargs["data"]["model"], "test-image-model")
+        files = request_multipart.call_args.kwargs["files"]
+        self.assertEqual([field for field, _value in files], ["image", "mask"])
+        mask_content = files[1][1][1]
+        with Image.open(io.BytesIO(mask_content)) as mask:
+            self.assertEqual(mask.getchannel("A").getpixel((0, 0)), 0)
+            self.assertEqual(mask.getchannel("A").getpixel((1, 0)), 255)
+
 
 class OpenAIChatImageGenerationProviderTests(unittest.TestCase):
     """验证聊天补全协议生成的图片可复用同一资产校验链路。"""
@@ -198,6 +250,25 @@ class OpenAIChatImageGenerationProviderTests(unittest.TestCase):
                 self.provider.generate(self.request)
 
         self.assertEqual(error.exception.code, "PROVIDER_INVALID_RESPONSE")
+
+    def test_chat_protocol_rejects_image_edit_before_network_dispatch(self) -> None:
+        """旧聊天协议不能把编辑输入伪装成文本请求发送给上游。"""
+
+        request = ImageGenerationRequest(
+            prompt="编辑图片",
+            size="model-controlled",
+            request_id="chat-edit-request",
+            mode="image_edit",
+            input_images=(ImageInputAsset(content=png_bytes(), role="source"),),
+        )
+        with patch(
+            "study_qb_assistant.llm.image_generation.openai_images.request_text"
+        ) as request_text:
+            with self.assertRaises(ImageGenerationProviderError) as error:
+                self.provider.generate(request)
+
+        self.assertEqual(error.exception.code, "IMAGE_EDIT_UNSUPPORTED")
+        request_text.assert_not_called()
 
     def test_provider_factory_selects_protocol_without_model_name_branching(self) -> None:
         """调用协议应由配置选择，不应根据模型名称做硬编码判断。"""
@@ -317,6 +388,57 @@ class GeminiNativeImageGenerationProviderTests(unittest.TestCase):
         headers = request_text.call_args.kwargs["headers"]
         self.assertEqual(headers["x-goog-api-key"], "test-secret-key")
         self.assertNotIn("Authorization", headers)
+
+    def test_edit_request_includes_private_source_mask_and_dispatch_boundary(self) -> None:
+        """Gemini 编辑请求以 inlineData 携带私有输入，且在 HTTP 前通知结算边界。"""
+
+        provider = GeminiNativeImageGenerationProvider(
+            base_url="https://images.example.test/v1beta",
+            model="gemini-image-model",
+            api_key="test-secret-key",
+        )
+        source = png_bytes()
+        mask = png_bytes(mode="L")
+        callbacks: list[str] = []
+        request = ImageGenerationRequest(
+            prompt="只修改白色蒙版区域",
+            size="1:1 · 1K",
+            request_id="gemini-edit-request",
+            mode="masked_edit",
+            input_images=(ImageInputAsset(content=source, mime_type="image/png", role="source"),),
+            mask_image=ImageInputAsset(content=mask, mime_type="image/png", role="mask"),
+            on_provider_dispatch=lambda: callbacks.append("sent"),
+        )
+        response_body = json.dumps(
+            {
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [
+                                {
+                                    "inlineData": {
+                                        "mimeType": "image/png",
+                                        "data": base64.b64encode(b"image").decode("ascii"),
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        )
+        with patch(
+            "study_qb_assistant.llm.image_generation.gemini_native.request_text",
+            return_value=response_body,
+        ) as request_text:
+            provider.generate(request)
+
+        self.assertEqual(callbacks, ["sent"])
+        parts = request_text.call_args.kwargs["json_body"]["contents"][0]["parts"]
+        inline_data = [part["inlineData"]["data"] for part in parts if "inlineData" in part]
+        self.assertEqual(inline_data, [base64.b64encode(source).decode("ascii"), base64.b64encode(mask).decode("ascii")])
+        text_parts = [part["text"] for part in parts if "text" in part]
+        self.assertTrue(any("白色区域" in text for text in text_parts))
 
     def test_provider_factory_supports_gemini_and_compatible_images(self) -> None:
         """协议选择只依赖显式配置，不根据模型名称或地址猜测。"""

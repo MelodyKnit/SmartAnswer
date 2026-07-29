@@ -1,17 +1,44 @@
-"""文本生图接口请求模型。"""
+"""生图与图片编辑接口请求模型。"""
 
-from pydantic import BaseModel, ConfigDict
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class ImageGenerationInputReferencePayload(BaseModel):
+    """一次任务对私有上传图或历史生成图的引用。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_kind: Literal["uploaded", "generated"]
+    source_id: str
+    source_job_id: str = ""
+    role: Literal["source", "reference", "mask"]
 
 
 class ImageGenerationCreatePayload(BaseModel):
-    """用户提交的一次文本生图请求。"""
+    """用户提交的一次生图/修图请求。"""
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
 
-    prompt: str
+    prompt: str = ""
     size: str = ""
+    mode: Literal["text_to_image", "image_edit", "masked_edit", "multi_reference"] = (
+        "text_to_image"
+    )
+    input_assets: list[ImageGenerationInputReferencePayload] = Field(default_factory=list)
     output: dict[str, object] | None = None
     idempotency_key: str = ""
+
+
+class ImageGenerationModelTestPayload(BaseModel):
+    """管理员明确选择的模型能力测试类型。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    operation: Literal["text_to_image", "whole_edit", "masked_edit", "multi_reference"] = (
+        "text_to_image"
+    )
 
 
 class ImageGenerationModelCreatePayload(BaseModel):

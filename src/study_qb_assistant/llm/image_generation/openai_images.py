@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
-import base64
 import binascii
+import base64
+import io
 import json
 from dataclasses import dataclass
 from typing import Any
 
+from PIL import Image
+
 from ..http_client import (
     HttpClientError,
     normalize_container_loopback_url,
+    request_multipart_text,
     request_bytes,
     request_text,
 )
@@ -44,14 +48,21 @@ class OpenAIImageGenerationProvider:
     def generate(self, request: ImageGenerationRequest) -> GeneratedImage:
         """调用上游并将 URL 或 Base64 响应规范化为图片字节。"""
 
-        payload = {
+        payload: dict[str, Any] = {
             "model": self.model,
             "prompt": request.prompt,
             "size": request.size,
             "n": 1,
             "response_format": "b64_json",
         }
-        response = self._post_json(payload)
+        if request.input_images or request.mask_image:
+            response = self._post_multipart_edit(request, payload)
+        else:
+            response = self._post_json(
+                payload,
+                endpoint="images/generations",
+                request=request,
+            )
         data = response.get("data")
         if not isinstance(data, list) or not data or not isinstance(data[0], dict):
             raise ImageGenerationProviderError(
@@ -68,14 +79,63 @@ class OpenAIImageGenerationProvider:
             revised_prompt=str(item.get("revised_prompt") or ""),
         )
 
+    def _post_multipart_edit(
+        self, request: ImageGenerationRequest, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """以官方 Images edits 的 multipart 形态提交主图、参考图和可选蒙版。"""
+
+        files: list[tuple[str, tuple[str, bytes, str]]] = []
+        for index, asset in enumerate(request.input_images):
+            extension = mime_extension(asset.mime_type)
+            files.append(
+                (
+                    "image",
+                    (f"{asset.role or 'image'}-{index}.{extension}", asset.content, asset.mime_type),
+                )
+            )
+        if request.mask_image is not None:
+            files.append(
+                (
+                    "mask",
+                    ("mask.png", openai_alpha_mask(request.mask_image.content), "image/png"),
+                )
+            )
+        if not files:
+            raise ImageGenerationProviderError("IMAGE_EDIT_UNSUPPORTED", "当前请求缺少编辑图片")
+
+        headers: dict[str, str] = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        form_data = {key: str(value) for key, value in payload.items()}
+        request.notify_provider_dispatch()
+        try:
+            body = request_multipart_text(
+                "POST",
+                f"{self.base_url.rstrip('/')}/images/edits",
+                headers=headers,
+                data=form_data,
+                files=files,
+                timeout=self.timeout_seconds,
+                proxy_env="STQB_LLM_PROXY",
+            )
+        except HttpClientError as exc:
+            raise self._provider_error(exc) from exc
+        return self._decode_response(body)
+
     def _post_json(
-        self, payload: dict[str, Any], *, endpoint: str = "images/generations"
+        self,
+        payload: dict[str, Any],
+        *,
+        endpoint: str = "images/generations",
+        request: ImageGenerationRequest | None = None,
     ) -> dict[str, Any]:
         """向兼容 OpenAI 的指定端点提交 JSON 请求并解析响应。"""
 
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
+        if request is not None:
+            request.notify_provider_dispatch()
         try:
             body = request_text(
                 "POST",
@@ -86,33 +146,12 @@ class OpenAIImageGenerationProvider:
                 proxy_env="STQB_LLM_PROXY",
             )
         except HttpClientError as exc:
-            detail = str(exc)
-            lowered = f"{detail} {exc.response_body}".lower()
-            if any(marker in lowered for marker in ("content policy", "safety", "moderation")):
-                code = "CONTENT_POLICY_REJECTED"
-                message = "图片描述不符合生图服务的内容规范"
-            elif any(
-                marker in lowered
-                for marker in (
-                    "not supported model",
-                    "unsupported model",
-                    "unsupported endpoint",
-                    "only imagen models",
-                )
-            ):
-                code = "PROVIDER_REJECTED"
-                message = "生图模型或调用协议不受当前服务支持"
-            elif "timeout" in lowered or exc.status_code in {408, 504}:
-                code = "PROVIDER_TIMEOUT"
-                message = "生图服务响应超时"
-            elif exc.status_code is not None and 400 <= exc.status_code < 500:
-                code = "PROVIDER_REJECTED"
-                message = "生图服务拒绝了当前请求"
-            else:
-                code = "PROVIDER_UNAVAILABLE"
-                message = "生图服务暂时不可用"
-            raise ImageGenerationProviderError(code, message) from exc
+            raise self._provider_error(exc) from exc
+        return self._decode_response(body)
 
+    @staticmethod
+    def _decode_response(body: str) -> dict[str, Any]:
+        """解码 Images API 统一 JSON 响应。"""
         try:
             value = json.loads(body)
         except json.JSONDecodeError as exc:
@@ -137,6 +176,34 @@ class OpenAIImageGenerationProvider:
             )
             raise ImageGenerationProviderError(code, message)
         return value
+
+    @staticmethod
+    def _provider_error(exc: HttpClientError) -> ImageGenerationProviderError:
+        """将 HTTP 失败映射为不泄露网关细节的稳定业务错误。"""
+
+        detail = str(exc)
+        lowered = f"{detail} {exc.response_body}".lower()
+        if any(marker in lowered for marker in ("content policy", "safety", "moderation")):
+            return ImageGenerationProviderError(
+                "CONTENT_POLICY_REJECTED", "图片描述不符合生图服务的内容规范"
+            )
+        if any(
+            marker in lowered
+            for marker in (
+                "not supported model",
+                "unsupported model",
+                "unsupported endpoint",
+                "only imagen models",
+            )
+        ):
+            return ImageGenerationProviderError(
+                "PROVIDER_REJECTED", "生图模型或调用协议不受当前服务支持"
+            )
+        if "timeout" in lowered or exc.status_code in {408, 504}:
+            return ImageGenerationProviderError("PROVIDER_TIMEOUT", "生图服务响应超时")
+        if exc.status_code is not None and 400 <= exc.status_code < 500:
+            return ImageGenerationProviderError("PROVIDER_REJECTED", "生图服务拒绝了当前请求")
+        return ImageGenerationProviderError("PROVIDER_UNAVAILABLE", "生图服务暂时不可用")
 
     def _read_image(self, item: dict[str, Any]) -> tuple[bytes, str]:
         """读取 Base64 或临时 URL 图片，绝不向调用方泄露第三方 URL。"""
@@ -177,6 +244,7 @@ class OpenAIImageGenerationProvider:
                 timeout=self.timeout_seconds,
                 proxy_env="STQB_LLM_PROXY",
                 max_bytes=MAX_GENERATED_IMAGE_BYTES,
+                redirect_validator=is_public_http_url,
             )
         except HttpClientError as exc:
             raise ImageGenerationProviderError(
@@ -190,3 +258,25 @@ class OpenAIImageGenerationProvider:
         if not mime_type:
             mime_type = "image/png"
         return content, mime_type
+
+
+def mime_extension(mime_type: str) -> str:
+    """为 multipart 文件名选择安全的扩展名。"""
+
+    return {"image/jpeg": "jpg", "image/webp": "webp"}.get(mime_type, "png")
+
+
+def openai_alpha_mask(content: bytes) -> bytes:
+    """把系统的白色编辑区域蒙版转换为 OpenAI 所需的透明编辑区域。"""
+
+    try:
+        with Image.open(io.BytesIO(content)) as source:
+            luminance = source.convert("L")
+            alpha = luminance.point(lambda value: 0 if value >= 128 else 255)
+            rgba = Image.new("RGBA", source.size, (0, 0, 0, 255))
+            rgba.putalpha(alpha)
+            buffer = io.BytesIO()
+            rgba.save(buffer, format="PNG", optimize=True)
+            return buffer.getvalue()
+    except OSError as exc:
+        raise ImageGenerationProviderError("INVALID_MASK_IMAGE", "蒙版图片无法用于编辑") from exc

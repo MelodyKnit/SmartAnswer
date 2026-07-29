@@ -1,17 +1,20 @@
 <script setup lang="ts">
-/** AI 生图：提交私有文本生图任务、轮询状态并通过受保护接口预览结果。 */
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
-import { Picture, Refresh, MagicStick, QuestionFilled } from '@element-plus/icons-vue'
+/** AI 生图与修图页面：只提交私有资产引用，轮询受保护的个人任务结果。 */
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { MagicStick, Picture, QuestionFilled, Refresh } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import ImageInputWorkspace from '@/components/image-generation/ImageInputWorkspace.vue'
+import PageHeader from '@/components/PageHeader.vue'
 import { imageGenerationApi } from '@/api/endpoints'
 import { ApiException } from '@/api/http'
 import type {
   ImageGenerationCapabilities,
+  ImageGenerationInputReference,
   ImageGenerationJob,
   ImageGenerationJobStatus,
+  ImageGenerationMode,
   ImageGenerationOutputOptions,
 } from '@/api/types'
-import PageHeader from '@/components/PageHeader.vue'
 import { useAuthStore } from '@/stores/auth'
 import { formatDateTime } from '@/utils/format'
 
@@ -21,10 +24,21 @@ const submitting = ref(false)
 const capabilities = ref<ImageGenerationCapabilities | null>(null)
 const jobs = ref<ImageGenerationJob[]>([])
 const activeJobId = ref('')
+const inputReferences = ref<ImageGenerationInputReference[]>([])
 const previewUrls = ref<Record<string, string>>({})
 let pollTimer: number | undefined
 
-const form = reactive({
+const form = reactive<{
+  mode: ImageGenerationMode
+  prompt: string
+  size: string
+  aspectRatio: string
+  imageSize: string
+  useCustomSize: boolean
+  customWidth: number
+  customHeight: number
+}>({
+  mode: 'text_to_image',
   prompt: '',
   size: '',
   aspectRatio: '',
@@ -33,6 +47,13 @@ const form = reactive({
   customWidth: 1024,
   customHeight: 1024,
 })
+
+const modeLabels: Record<ImageGenerationMode, string> = {
+  text_to_image: '文生图',
+  image_edit: '整图编辑',
+  masked_edit: '局部编辑',
+  multi_reference: '多图参考',
+}
 
 const statusLabels: Record<ImageGenerationJobStatus, string> = {
   queued: '排队中',
@@ -56,14 +77,45 @@ const statusTypes: Record<ImageGenerationJobStatus, 'info' | 'warning' | 'succes
 
 const isAvailable = computed(() => capabilities.value?.available === true)
 const pointsPerImage = computed(() => capabilities.value?.points_per_image ?? 0)
+const availableModes = computed<ImageGenerationMode[]>(
+  () => capabilities.value?.input.available_modes ?? ['text_to_image'],
+)
+const modeAvailable = computed(() => availableModes.value.includes(form.mode))
 const activeJob = computed(() => jobs.value.find((job) => job.job_id === activeJobId.value) || null)
 const hasActiveJob = computed(() => jobs.value.some((job) => job.status === 'queued' || job.status === 'running'))
+const generatedSources = computed(() =>
+  jobs.value.flatMap((job) =>
+    job.status === 'succeeded'
+      ? job.assets.map((asset) => ({
+          jobId: job.job_id,
+          assetId: asset.asset_id,
+          width: asset.width,
+          height: asset.height,
+          previewUrl: previewUrls.value[asset.asset_id] || '',
+          label: `历史生成 · ${formatDateTime(job.created_at)}`,
+        }))
+      : [],
+  ),
+)
+
+const hasRequiredInputs = computed(() => {
+  if (form.mode === 'text_to_image') return inputReferences.value.length === 0
+  const sourceCount = inputReferences.value.filter((item) => item.role === 'source').length
+  const referenceCount = inputReferences.value.filter((item) => item.role === 'reference').length
+  const maskCount = inputReferences.value.filter((item) => item.role === 'mask').length
+  if (form.mode === 'image_edit') return sourceCount === 1 && referenceCount === 0 && maskCount === 0
+  if (form.mode === 'masked_edit') return sourceCount === 1 && referenceCount === 0 && maskCount === 1
+  return sourceCount === 1 && referenceCount >= 1 && maskCount === 0
+})
+
 const canSubmit = computed(
   () =>
     isAvailable.value &&
-    form.prompt.trim().length > 0 &&
+    modeAvailable.value &&
     !submitting.value &&
     !hasActiveJob.value &&
+    form.prompt.trim().length > 0 &&
+    hasRequiredInputs.value &&
     (capabilities.value?.balance ?? 0) >= pointsPerImage.value,
 )
 
@@ -76,6 +128,10 @@ function createIdempotencyKey(): string {
 
 function syncOutputDefaults(value: ImageGenerationCapabilities) {
   const output = value.output
+  if (!value.input.available_modes.includes(form.mode)) {
+    form.mode = 'text_to_image'
+    inputReferences.value = []
+  }
   if (output.kind === 'gemini') {
     if (!output.aspect_ratios.includes(form.aspectRatio)) form.aspectRatio = output.aspect_ratios[0] || ''
     if (!output.image_sizes.includes(form.imageSize)) form.imageSize = output.image_sizes[0] || ''
@@ -99,10 +155,10 @@ function buildOutput(): ImageGenerationOutputOptions | undefined {
       image_size: form.imageSize || output.image_sizes[0],
     }
   }
-  if (output.kind === 'openai-images' && form.useCustomSize) {
-    return { size: `${form.customWidth}x${form.customHeight}` }
-  }
   if (output.kind === 'openai-images' || output.kind === 'compatible-images') {
+    if (output.kind === 'openai-images' && form.useCustomSize) {
+      return { size: `${form.customWidth}x${form.customHeight}` }
+    }
     return { size: form.size || output.preset_sizes[0] }
   }
   return undefined
@@ -154,6 +210,12 @@ async function refreshJobs() {
   activeJobId.value = newestActive?.job_id || ''
 }
 
+async function refreshCapabilities() {
+  const result = await imageGenerationApi.capabilities()
+  capabilities.value = result.capabilities
+  syncOutputDefaults(result.capabilities)
+}
+
 async function load() {
   loading.value = true
   try {
@@ -166,43 +228,28 @@ async function load() {
   }
 }
 
-async function refreshCapabilities() {
-  const result = await imageGenerationApi.capabilities()
-  capabilities.value = result.capabilities
-  syncOutputDefaults(result.capabilities)
-}
-
 async function refreshActiveJob() {
   if (!activeJobId.value) return
   try {
     const result = await imageGenerationApi.detail(activeJobId.value)
     const index = jobs.value.findIndex((item) => item.job_id === result.job.job_id)
-    if (index >= 0) {
-      jobs.value.splice(index, 1, result.job)
-    } else {
-      jobs.value.unshift(result.job)
-    }
-    if (result.job.status === 'succeeded') {
-      await loadPreview(result.job)
-    }
+    if (index >= 0) jobs.value.splice(index, 1, result.job)
+    else jobs.value.unshift(result.job)
+    if (result.job.status === 'succeeded') await loadPreview(result.job)
     if (!['queued', 'running'].includes(result.job.status)) {
       activeJobId.value = ''
       stopPolling()
       await Promise.all([auth.refreshProfile(), refreshCapabilities()])
     }
   } catch (error) {
-    if (error instanceof ApiException && error.code !== 'JOB_NOT_FOUND') {
-      ElMessage.warning(error.message)
-    }
+    if (error instanceof ApiException && error.code !== 'JOB_NOT_FOUND') ElMessage.warning(error.message)
     activeJobId.value = ''
   }
 }
 
 function startPolling() {
   if (pollTimer !== undefined) return
-  pollTimer = window.setInterval(() => {
-    void refreshActiveJob()
-  }, 1_200)
+  pollTimer = window.setInterval(() => void refreshActiveJob(), 1_200)
 }
 
 function stopPolling() {
@@ -211,24 +258,32 @@ function stopPolling() {
   pollTimer = undefined
 }
 
+function handleInputReferences(references: ImageGenerationInputReference[]) {
+  inputReferences.value = references
+}
+
 async function submit() {
   if (!form.prompt.trim()) {
-    ElMessage.warning('请输入图片描述')
+    ElMessage.warning('请输入图片描述或编辑指令')
     return
   }
-  if (!isAvailable.value) {
-    ElMessage.warning('当前没有可用的生图模型')
+  if (!modeAvailable.value) {
+    ElMessage.warning('当前模型尚未通过此编辑能力测试')
     return
   }
-  if (hasActiveJob.value) {
-    ElMessage.warning('当前仍有生成中的任务，请等待完成后再提交')
+  if (!hasRequiredInputs.value) {
+    ElMessage.warning('请按当前模式补齐需要的主图、参考图或蒙版')
     return
   }
+  if (!isAvailable.value || hasActiveJob.value) return
   submitting.value = true
   try {
+    const output = buildOutput()
     const result = await imageGenerationApi.create({
       prompt: form.prompt.trim(),
-      ...(buildOutput() ? { output: buildOutput() } : {}),
+      mode: form.mode,
+      input_assets: inputReferences.value,
+      ...(output ? { output } : {}),
       idempotency_key: createIdempotencyKey(),
     })
     const existingIndex = jobs.value.findIndex((item) => item.job_id === result.job.job_id)
@@ -240,7 +295,7 @@ async function submit() {
       : capabilities.value
     await auth.refreshProfile()
     startPolling()
-    ElMessage.success(result.idempotent_replay ? '已恢复原生图任务' : '生图任务已提交')
+    ElMessage.success(result.idempotent_replay ? '已恢复原生图任务' : '任务已提交')
   } catch (error) {
     ElMessage.error(error instanceof ApiException ? error.message : '创建生图任务失败')
   } finally {
@@ -253,7 +308,7 @@ async function removeJob(job: ImageGenerationJob) {
   try {
     await ElMessageBox.confirm(
       job.status === 'queued'
-        ? '取消排队任务会自动退还预扣积分。'
+        ? '取消尚未提交给供应商的任务会退还预扣积分。'
         : '删除后将立即撤销该图片的访问权限。',
       `${action}生图任务`,
       { type: 'warning', confirmButtonText: action, cancelButtonText: '返回' },
@@ -272,6 +327,13 @@ async function removeJob(job: ImageGenerationJob) {
   }
 }
 
+watch(
+  () => form.mode,
+  () => {
+    inputReferences.value = []
+  },
+)
+
 onMounted(async () => {
   await load()
   if (hasActiveJob.value) startPolling()
@@ -285,191 +347,109 @@ onUnmounted(() => {
 
 <template>
   <div v-loading="loading" class="space-y-4">
-    <PageHeader title="AI 生图" description="使用私有生图模型生成一张图片；任务失败会自动退还预扣积分。">
+    <PageHeader title="AI 生图" description="使用私有模型创建图片，或基于私有图片进行编辑。">
       <template #actions>
         <el-button :icon="Refresh" @click="load">刷新</el-button>
       </template>
     </PageHeader>
 
-    <div class="grid items-start gap-4 xl:grid-cols-[minmax(360px,0.9fr)_minmax(480px,1.1fr)]">
+    <div class="grid items-start gap-4 xl:grid-cols-[minmax(390px,0.9fr)_minmax(480px,1.1fr)]">
       <section class="app-card overflow-hidden">
         <div class="border-b border-line bg-canvas/30 px-5 py-4">
           <div class="flex items-start justify-between gap-4">
             <div>
-              <p class="text-xs font-semibold uppercase tracking-[0.18em] text-brand-500">Image Generation</p>
+              <p class="text-xs font-semibold uppercase tracking-[0.18em] text-brand-500">Image Studio</p>
               <h3 class="mt-1 flex items-center gap-2 text-lg font-semibold text-ink">
                 <el-icon class="text-brand-500"><Picture /></el-icon>
-                <span>文本生成图片</span>
+                <span>生成与编辑</span>
                 <el-tooltip
-                  content="仅支持单张文本生图。提交后会锁定一次任务，模型拒绝、超时或图片校验失败会自动退款。"
+                  content="提交到供应商前的校验、读取失败会退还预扣积分；请求已发出后，即使上游超时或失败也不会自动重试或退款，避免重复产生供应商费用。"
                   placement="top"
                   :show-after="100"
                 >
-                  <el-icon class="text-ink-muted/60 hover:text-brand-500 cursor-help transition-colors text-sm">
-                    <QuestionFilled />
-                  </el-icon>
+                  <el-icon class="cursor-help text-sm text-ink-muted/60 transition-colors hover:text-brand-500"><QuestionFilled /></el-icon>
                 </el-tooltip>
               </h3>
             </div>
-            <el-tag :type="isAvailable ? 'success' : 'info'" effect="plain">
-              {{ isAvailable ? '模型可用' : '暂不可用' }}
-            </el-tag>
+            <el-tag :type="isAvailable ? 'success' : 'info'" effect="plain">{{ isAvailable ? '模型可用' : '暂不可用' }}</el-tag>
           </div>
         </div>
 
         <div class="space-y-5 p-5">
           <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <div class="rounded-lg border border-line bg-card-soft px-3 py-3">
-              <div class="text-xs text-ink-muted">可用余额</div>
-              <div class="mt-1 text-lg font-semibold text-ink">{{ capabilities?.balance ?? '—' }}</div>
-            </div>
-            <div class="rounded-lg border border-line bg-card-soft px-3 py-3">
-              <div class="text-xs text-ink-muted">单张扣费</div>
-              <div class="mt-1 text-lg font-semibold text-ink">{{ pointsPerImage }}</div>
-            </div>
-            <div class="rounded-lg border border-line bg-card-soft px-3 py-3">
-              <div class="text-xs text-ink-muted">每日上限</div>
-              <div class="mt-1 text-lg font-semibold text-ink">{{ capabilities?.daily_limit || '不限' }}</div>
-            </div>
-            <div class="rounded-lg border border-line bg-card-soft px-3 py-3">
-              <div class="text-xs text-ink-muted">保留期限</div>
-              <div class="mt-1 text-lg font-semibold text-ink">{{ capabilities?.retention_days || '永久' }}{{ capabilities?.retention_days ? ' 天' : '' }}</div>
-            </div>
+            <div class="rounded-lg border border-line bg-card-soft px-3 py-3"><div class="text-xs text-ink-muted">可用余额</div><div class="mt-1 text-lg font-semibold text-ink">{{ capabilities?.balance ?? '—' }}</div></div>
+            <div class="rounded-lg border border-line bg-card-soft px-3 py-3"><div class="text-xs text-ink-muted">单张扣费</div><div class="mt-1 text-lg font-semibold text-ink">{{ pointsPerImage }}</div></div>
+            <div class="rounded-lg border border-line bg-card-soft px-3 py-3"><div class="text-xs text-ink-muted">每日上限</div><div class="mt-1 text-lg font-semibold text-ink">{{ capabilities?.daily_limit || '不限' }}</div></div>
+            <div class="rounded-lg border border-line bg-card-soft px-3 py-3"><div class="text-xs text-ink-muted">保留期限</div><div class="mt-1 text-lg font-semibold text-ink">{{ capabilities?.retention_days || '永久' }}{{ capabilities?.retention_days ? ' 天' : '' }}</div></div>
           </div>
 
           <el-form label-position="top" @submit.prevent>
-            <el-form-item label="图片描述" required>
+            <el-form-item label="生成模式">
+              <el-radio-group v-model="form.mode" class="flex flex-wrap gap-2">
+                <el-radio-button v-for="mode in availableModes" :key="mode" :value="mode">{{ modeLabels[mode] }}</el-radio-button>
+              </el-radio-group>
+              <p v-if="capabilities?.input.requires_capability_test && availableModes.length === 1" class="mt-2 text-xs text-ink-muted">当前模型尚未完成图片编辑能力测试，暂只开放文生图。</p>
+            </el-form-item>
+
+            <ImageInputWorkspace
+              :mode="form.mode"
+              :max-input-images="capabilities?.input.max_input_images ?? 0"
+              :generated-sources="generatedSources"
+              @change="handleInputReferences"
+            />
+
+            <el-form-item :label="form.mode === 'text_to_image' ? '图片描述' : '编辑指令'" required class="mt-5">
               <el-input
                 v-model="form.prompt"
                 type="textarea"
-                :rows="8"
+                :rows="6"
                 maxlength="4000"
                 show-word-limit
-                placeholder="描述画面主体、场景、风格、光线和构图，例如：雨后城市街道，水彩插画风格，暖色灯光。"
+                :placeholder="form.mode === 'text_to_image' ? '描述画面主体、场景、风格、光线和构图，例如：雨后城市街道，水彩插画风格，暖色灯光。' : '明确描述希望改变的内容，例如：将背景替换为冬天雪景，保持人物姿势与主体构图不变。'"
               />
             </el-form-item>
+
             <el-form-item label="输出尺寸">
               <div v-if="capabilities?.output.kind === 'gemini'" class="grid w-full gap-3 sm:grid-cols-2">
-                <div>
-                  <p class="mb-1.5 text-xs text-ink-soft">画幅比例</p>
-                  <el-select v-model="form.aspectRatio" class="w-full">
-                    <el-option
-                      v-for="ratio in capabilities.output.aspect_ratios"
-                      :key="ratio"
-                      :label="ratio"
-                      :value="ratio"
-                    />
-                  </el-select>
-                </div>
-                <div>
-                  <p class="mb-1.5 text-xs text-ink-soft">像素档位</p>
-                  <el-select v-model="form.imageSize" class="w-full">
-                    <el-option
-                      v-for="imageSize in capabilities.output.image_sizes"
-                      :key="imageSize"
-                      :label="imageSize"
-                      :value="imageSize"
-                    />
-                  </el-select>
-                </div>
+                <div><p class="mb-1.5 text-xs text-ink-soft">画幅比例</p><el-select v-model="form.aspectRatio" class="w-full"><el-option v-for="ratio in capabilities.output.aspect_ratios" :key="ratio" :label="ratio" :value="ratio" /></el-select></div>
+                <div><p class="mb-1.5 text-xs text-ink-soft">像素档位</p><el-select v-model="form.imageSize" class="w-full"><el-option v-for="imageSize in capabilities.output.image_sizes" :key="imageSize" :label="imageSize" :value="imageSize" /></el-select></div>
               </div>
               <div v-else-if="capabilities?.output.kind === 'openai-images'" class="w-full space-y-3">
-                <el-radio-group v-model="form.size" :disabled="form.useCustomSize" class="flex flex-wrap gap-2">
-                  <el-radio-button
-                    v-for="size in capabilities.output.preset_sizes"
-                    :key="size"
-                    :value="size"
-                  >
-                    {{ size }}
-                  </el-radio-button>
-                </el-radio-group>
+                <el-radio-group v-model="form.size" :disabled="form.useCustomSize" class="flex flex-wrap gap-2"><el-radio-button v-for="size in capabilities.output.preset_sizes" :key="size" :value="size">{{ size }}</el-radio-button></el-radio-group>
                 <div v-if="capabilities.output.allow_custom_size" class="rounded-lg border border-line bg-card-soft px-3 py-3">
-                  <div class="flex flex-wrap items-center justify-between gap-3">
-                    <span class="text-sm text-ink">自定义宽高</span>
-                    <el-switch v-model="form.useCustomSize" />
-                  </div>
-                  <div v-if="form.useCustomSize" class="mt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-                    <el-input-number v-model="form.customWidth" :min="capabilities.output.custom_size_constraints.min_width" :max="capabilities.output.custom_size_constraints.max_width" :step="capabilities.output.custom_size_constraints.step" controls-position="right" />
-                    <span class="text-ink-muted">x</span>
-                    <el-input-number v-model="form.customHeight" :min="capabilities.output.custom_size_constraints.min_height" :max="capabilities.output.custom_size_constraints.max_height" :step="capabilities.output.custom_size_constraints.step" controls-position="right" />
-                  </div>
+                  <div class="flex flex-wrap items-center justify-between gap-3"><span class="text-sm text-ink">自定义宽高</span><el-switch v-model="form.useCustomSize" /></div>
+                  <div v-if="form.useCustomSize" class="mt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2"><el-input-number v-model="form.customWidth" :min="capabilities.output.custom_size_constraints.min_width" :max="capabilities.output.custom_size_constraints.max_width" :step="capabilities.output.custom_size_constraints.step" controls-position="right" /><span class="text-ink-muted">x</span><el-input-number v-model="form.customHeight" :min="capabilities.output.custom_size_constraints.min_height" :max="capabilities.output.custom_size_constraints.max_height" :step="capabilities.output.custom_size_constraints.step" controls-position="right" /></div>
                 </div>
               </div>
-              <el-radio-group v-else-if="capabilities?.output.kind === 'compatible-images'" v-model="form.size" class="flex flex-wrap gap-2">
-                <el-radio-button
-                  v-for="size in capabilities.output.preset_sizes"
-                  :key="size"
-                  :value="size"
-                >
-                  {{ size }}
-                </el-radio-button>
-              </el-radio-group>
-              <div v-else class="rounded-lg border border-line bg-card-soft px-3 py-2.5 text-sm text-ink-soft">
-                尺寸由当前模型决定，生成完成后会显示实际输出宽高。
-              </div>
+              <el-radio-group v-else-if="capabilities?.output.kind === 'compatible-images'" v-model="form.size" class="flex flex-wrap gap-2"><el-radio-button v-for="size in capabilities.output.preset_sizes" :key="size" :value="size">{{ size }}</el-radio-button></el-radio-group>
+              <div v-else class="rounded-lg border border-line bg-card-soft px-3 py-2.5 text-sm text-ink-soft">尺寸由当前模型决定，完成后会显示实际输出宽高。</div>
               <p v-if="isAvailable" class="mt-2 text-xs text-ink-muted">本次请求：{{ outputSelectionLabel() }}</p>
             </el-form-item>
+
             <el-button type="primary" class="min-h-10 w-full" :loading="submitting" :disabled="!canSubmit" @click="submit">
-              <el-icon class="mr-1"><MagicStick /></el-icon>
-              {{ hasActiveJob ? '等待当前任务完成' : `生成图片${pointsPerImage ? `（${pointsPerImage} 积分）` : ''}` }}
+              <el-icon class="mr-1"><MagicStick /></el-icon>{{ hasActiveJob ? '等待当前任务完成' : `提交${modeLabels[form.mode]}${pointsPerImage ? `（${pointsPerImage} 积分）` : ''}` }}
             </el-button>
           </el-form>
 
-          <div v-if="!isAvailable" class="rounded-lg border border-warning/30 bg-warning/5 p-3 text-xs leading-5 text-ink-soft">
-            管理员尚未配置可用的生图模型。模型配置完成后，此页面会显示可选画幅或尺寸。
-          </div>
+          <div v-if="!isAvailable" class="rounded-lg border border-warning/30 bg-warning/5 p-3 text-xs leading-5 text-ink-soft">管理员尚未配置可用的生图模型。模型配置完成后，此页面会显示可选尺寸和已验证的编辑模式。</div>
         </div>
       </section>
 
       <section class="app-card overflow-hidden">
         <div class="flex items-center justify-between border-b border-line px-5 py-4">
-          <div>
-            <h3 class="text-lg font-semibold text-ink">我的生成记录</h3>
-            <p class="mt-1 text-xs text-ink-soft">生成结果仅本人和管理员可查看。</p>
-          </div>
+          <div><h3 class="text-lg font-semibold text-ink">我的生成记录</h3><p class="mt-1 text-xs text-ink-soft">结果仅本人和管理员可查看，可在后续编辑中复用。</p></div>
           <el-tag v-if="activeJob" type="warning" effect="plain">{{ statusLabels[activeJob.status] }}</el-tag>
         </div>
-
-        <div v-if="!jobs.length" class="flex min-h-80 items-center justify-center px-5">
-          <el-empty description="暂无生图记录" />
-        </div>
+        <div v-if="!jobs.length" class="flex min-h-80 items-center justify-center px-5"><el-empty description="暂无生图记录" /></div>
         <div v-else class="grid gap-4 p-5 sm:grid-cols-2">
           <article v-for="job in jobs" :key="job.job_id" class="overflow-hidden rounded-lg border border-line bg-card-soft">
             <div class="flex items-start justify-between gap-3 border-b border-line px-4 py-3">
-              <div class="min-w-0">
-                <p class="line-clamp-2 text-sm font-medium leading-5 text-ink">{{ job.prompt }}</p>
-                <p class="mt-1 text-xs text-ink-muted">{{ jobOutputLabel(job) }} · {{ formatDateTime(job.created_at) }}</p>
-              </div>
-              <el-tag size="small" :type="statusTypes[job.status]" effect="plain">
-                {{ statusLabels[job.status] }}
-              </el-tag>
+              <div class="min-w-0"><p class="line-clamp-2 text-sm font-medium leading-5 text-ink">{{ job.prompt }}</p><p class="mt-1 text-xs text-ink-muted">{{ modeLabels[job.mode] || job.mode }} · {{ jobOutputLabel(job) }} · {{ formatDateTime(job.created_at) }}</p></div>
+              <el-tag size="small" :type="statusTypes[job.status]" effect="plain">{{ statusLabels[job.status] }}</el-tag>
             </div>
-            <div v-if="job.status === 'succeeded' && job.assets.length" class="aspect-square bg-canvas">
-              <img
-                v-if="previewUrls[job.assets[0].asset_id]"
-                :src="previewUrls[job.assets[0].asset_id]"
-                class="h-full w-full object-cover"
-                alt="AI 生成图片"
-              />
-              <div v-else class="flex h-full items-center justify-center text-sm text-ink-muted">加载预览中</div>
-            </div>
-            <div v-else class="min-h-28 px-4 py-3 text-xs leading-5 text-ink-soft">
-              <template v-if="job.status === 'queued' || job.status === 'running'">
-                正在处理此任务，完成后会自动显示私有预览。
-              </template>
-              <template v-else>{{ job.error_message || '该任务未产生可访问图片。' }}</template>
-            </div>
-            <div class="flex items-center justify-between gap-3 border-t border-line px-4 py-3">
-              <span class="text-xs text-ink-muted">{{ job.points_cost }} 积分</span>
-              <el-button
-                v-if="job.status !== 'running' && job.status !== 'deleted'"
-                link
-                type="danger"
-                @click="removeJob(job)"
-              >
-                {{ job.status === 'queued' ? '取消' : '删除' }}
-              </el-button>
-            </div>
+            <div v-if="job.status === 'succeeded' && job.assets.length" class="aspect-square bg-canvas"><img v-if="previewUrls[job.assets[0].asset_id]" :src="previewUrls[job.assets[0].asset_id]" class="h-full w-full object-cover" alt="AI 生成图片" /><div v-else class="flex h-full items-center justify-center text-sm text-ink-muted">加载预览中</div></div>
+            <div v-else class="min-h-28 px-4 py-3 text-xs leading-5 text-ink-soft"><template v-if="job.status === 'queued' || job.status === 'running'">正在处理此任务，完成后会自动显示私有预览。</template><template v-else>{{ job.error_message || '该任务未产生可访问图片。' }}</template></div>
+            <div class="flex items-center justify-between gap-3 border-t border-line px-4 py-3"><span class="text-xs text-ink-muted">{{ job.points_cost }} 积分</span><el-button v-if="job.status !== 'running' && job.status !== 'deleted'" link type="danger" @click="removeJob(job)">{{ job.status === 'queued' ? '取消' : '删除' }}</el-button></div>
           </article>
         </div>
       </section>

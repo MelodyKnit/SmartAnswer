@@ -35,20 +35,51 @@ class GeminiNativeImageGenerationProvider:
         self.base_url = normalize_container_loopback_url(self.base_url)
 
     def generate(self, request: ImageGenerationRequest) -> GeneratedImage:
-        """提交原生生图请求，返回第一张合法的内联图片。"""
+        """提交原生生图/图生图请求，返回第一张合法的内联图片。"""
 
         image_config = {
             "aspectRatio": request.output_options.get("aspect_ratio", "1:1"),
             "imageSize": request.output_options.get("image_size", "1K"),
         }
+        parts: list[dict[str, Any]] = []
+        for img in request.input_images:
+            parts.append({"text": input_asset_label(img.role)})
+            b64_data = base64.b64encode(img.content).decode("ascii")
+            parts.append(
+                {
+                    "inlineData": {
+                        "mimeType": img.mime_type or "image/png",
+                        "data": b64_data,
+                    }
+                }
+            )
+        if request.mask_image is not None:
+            parts.append(
+                {
+                    "text": (
+                        "编辑蒙版：白色区域表示允许修改，黑色区域必须保持原样。"
+                    )
+                }
+            )
+            parts.append(
+                {
+                    "inlineData": {
+                        "mimeType": request.mask_image.mime_type or "image/png",
+                        "data": base64.b64encode(request.mask_image.content).decode("ascii"),
+                    }
+                }
+            )
+        if request.prompt:
+            parts.append({"text": request.prompt})
+
         payload = {
-            "contents": [{"role": "user", "parts": [{"text": request.prompt}]}],
+            "contents": [{"role": "user", "parts": parts}],
             "generationConfig": {
                 "responseModalities": ["TEXT", "IMAGE"],
                 "imageConfig": image_config,
             },
         }
-        response = self._post_json(payload)
+        response = self._post_json(payload, request=request)
         item = first_inline_image(response)
         content, mime_type = decode_inline_image(item)
         return GeneratedImage(
@@ -59,7 +90,9 @@ class GeminiNativeImageGenerationProvider:
             provider_request_id=str(response.get("responseId") or response.get("id") or ""),
         )
 
-    def _post_json(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def _post_json(
+        self, payload: dict[str, Any], *, request: ImageGenerationRequest
+    ) -> dict[str, Any]:
         """发送请求并将上游错误归一为稳定的业务错误。"""
 
         headers = {"Content-Type": "application/json"}
@@ -69,6 +102,7 @@ class GeminiNativeImageGenerationProvider:
             else:
                 headers["Authorization"] = f"Bearer {self.api_key}"
         endpoint = f"models/{self.model}:generateContent"
+        request.notify_provider_dispatch()
         try:
             body = request_text(
                 "POST",
@@ -175,3 +209,11 @@ def gemini_error_payload(error: dict[str, Any]) -> ImageGenerationProviderError:
             "CONTENT_POLICY_REJECTED", "图片描述不符合生图服务的内容规范"
         )
     return ImageGenerationProviderError("PROVIDER_REJECTED", "生图服务拒绝了当前请求")
+
+
+def input_asset_label(role: str) -> str:
+    """为 Gemini 的多图输入提供稳定但不含用户内容的角色说明。"""
+
+    if role == "source":
+        return "主图：请以这张图片作为编辑基础。"
+    return "参考图：请仅将这张图片作为风格或内容参考。"

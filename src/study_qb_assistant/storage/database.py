@@ -155,6 +155,8 @@ def ensure_sqlite_compat_columns(engine: Engine) -> None:
         },
         "image_generation_jobs": {
             "output_options": "TEXT DEFAULT '{}'",
+            "mode": "TEXT DEFAULT 'text_to_image'",
+            "provider_dispatched_at": "REAL DEFAULT 0.0",
         },
     }
     with engine.begin() as connection:
@@ -261,6 +263,8 @@ def ensure_sql_compat_columns(engine: Engine) -> None:
         },
         "image_generation_jobs": {
             "output_options": "TEXT DEFAULT '{}'",
+            "mode": "VARCHAR(32) DEFAULT 'text_to_image'",
+            "provider_dispatched_at": "FLOAT DEFAULT 0.0",
         },
     }
     inspector = inspect(engine)

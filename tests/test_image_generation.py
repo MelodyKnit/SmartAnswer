@@ -23,11 +23,11 @@ from study_qb_assistant.platform.container import PlatformServices
 from study_qb_assistant.search import LocalQuestionIndex
 
 
-def png_bytes() -> bytes:
+def png_bytes(width: int = 8, height: int = 8) -> bytes:
     """构造一个通过生产图片校验的小型 PNG。"""
 
     buffer = io.BytesIO()
-    Image.new("RGB", (8, 8), color=(36, 127, 255)).save(buffer, format="PNG")
+    Image.new("RGB", (width, height), color=(36, 127, 255)).save(buffer, format="PNG")
     return buffer.getvalue()
 
 
@@ -36,9 +36,10 @@ class SuccessfulImageProvider:
 
     provider_name = "test-image-provider"
 
-    def generate(self, _request) -> GeneratedImage:
+    def generate(self, request) -> GeneratedImage:
         """返回可被私有资产层存储的标准 PNG。"""
 
+        request.notify_provider_dispatch()
         return GeneratedImage(
             content=png_bytes(),
             mime_type="image/png",
@@ -64,9 +65,10 @@ class FailingImageProvider:
 
     provider_name = "test-image-provider"
 
-    def generate(self, _request) -> GeneratedImage:
+    def generate(self, request) -> GeneratedImage:
         """返回可安全暴露的提供商错误分类。"""
 
+        request.notify_provider_dispatch()
         raise ImageGenerationProviderError("PROVIDER_TIMEOUT", "生图服务响应超时")
 
 
@@ -75,9 +77,10 @@ class RejectedImageProvider:
 
     provider_name = "test-image-provider"
 
-    def generate(self, _request) -> GeneratedImage:
+    def generate(self, request) -> GeneratedImage:
         """拒绝请求，不产生图片。"""
 
+        request.notify_provider_dispatch()
         raise ImageGenerationProviderError(
             "CONTENT_POLICY_REJECTED", "图片描述不符合生图服务的内容规范"
         )
@@ -88,15 +91,27 @@ class InvalidImageProvider:
 
     provider_name = "test-image-provider"
 
-    def generate(self, _request) -> GeneratedImage:
+    def generate(self, request) -> GeneratedImage:
         """返回伪造字节，让资产层验证失败。"""
 
+        request.notify_provider_dispatch()
         return GeneratedImage(
             content=b"not-a-valid-image",
             mime_type="image/png",
             width=0,
             height=0,
         )
+
+
+class PreDispatchFailureProvider:
+    """模拟请求构造阶段失败，验证该阶段不会消耗积分。"""
+
+    provider_name = "test-image-provider"
+
+    def generate(self, _request) -> GeneratedImage:
+        """在通知上游请求前抛出可预期的输入错误。"""
+
+        raise ImageGenerationProviderError("INVALID_MASK_IMAGE", "蒙版图片无法用于编辑")
 
 
 class ImageGenerationApiTests(unittest.TestCase):
@@ -314,8 +329,8 @@ class ImageGenerationApiTests(unittest.TestCase):
             self.assertEqual(mixed.status_code, 400)
             self.assertEqual(mixed.json()["error"]["code"], "INVALID_INPUT")
 
-    def test_failed_job_refunds_points_and_trace_is_sanitized(self) -> None:
-        """供应商异常必须失败退款，追溯仅保留稳定错误分类。"""
+    def test_failed_job_is_refunded_after_provider_timeout_and_trace_is_sanitized(self) -> None:
+        """供应商超时后应退回预扣积分，追溯仅保留稳定错误分类。"""
 
         with tempfile.TemporaryDirectory() as directory, patch.dict(
             os.environ, {"STQB_DATA_DIR": directory}, clear=False
@@ -328,7 +343,7 @@ class ImageGenerationApiTests(unittest.TestCase):
             created = client.post(
                 "/api/v1/image-generations",
                 headers=headers,
-                json={"prompt": "供应商失败时需要退款", "idempotency_key": "job-failure-1"},
+                json={"prompt": "供应商失败仍需结算", "idempotency_key": "job-failure-1"},
             )
             self.assertEqual(created.status_code, 202)
             job_id = created.json()["job"]["job_id"]
@@ -437,8 +452,8 @@ class ImageGenerationApiTests(unittest.TestCase):
             self.assertEqual(detail.json()["job"]["error_code"], "WORKER_INTERRUPTED")
             self.assertEqual(auth.get_user("owner")["points"], initial_points)
 
-    def test_rejected_and_invalid_images_are_not_charged(self) -> None:
-        """内容策略拒绝和非法图片都必须终态化并撤销预扣积分。"""
+    def test_rejected_and_invalid_images_refund_the_reservation(self) -> None:
+        """内容拒绝与非法输出都不能保留未成功任务的积分扣费。"""
 
         with tempfile.TemporaryDirectory() as directory, patch.dict(
             os.environ, {"STQB_DATA_DIR": directory}, clear=False
@@ -470,8 +485,8 @@ class ImageGenerationApiTests(unittest.TestCase):
                 self.assertEqual(job["error_code"], expected_code)
                 self.assertEqual(auth.get_user("owner")["points"], initial_points)
 
-    def test_storage_failure_refunds_points(self) -> None:
-        """图片字节有效但存储失败时，也不能留下已扣积分的悬挂任务。"""
+    def test_storage_failure_refunds_the_reservation(self) -> None:
+        """供应商返回后本地落盘失败时，应退回预扣积分。"""
 
         with tempfile.TemporaryDirectory() as directory, patch.dict(
             os.environ, {"STQB_DATA_DIR": directory}, clear=False
@@ -499,6 +514,330 @@ class ImageGenerationApiTests(unittest.TestCase):
             self.assertEqual(job["status"], "failed")
             self.assertEqual(job["error_code"], "IMAGE_GENERATION_FAILED")
             self.assertEqual(auth.get_user("owner")["points"], initial_points)
+
+    def test_pre_dispatch_failure_refunds_points(self) -> None:
+        """请求构造或本地校验失败时，应释放预扣积分且不产生供应商调用。"""
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ, {"STQB_DATA_DIR": directory}, clear=False
+        ):
+            client, auth, platform, headers = self.build_client(directory)
+            self.create_active_model(client, headers)
+            platform.image_generation.provider_factory = lambda _model: PreDispatchFailureProvider()
+            initial_points = auth.get_user("owner")["points"]
+            created = client.post(
+                "/api/v1/image-generations",
+                headers=headers,
+                json={"prompt": "发送前失败", "idempotency_key": "job-pre-dispatch-failure"},
+            )
+            self.assertEqual(created.status_code, 202)
+            self.assertTrue(platform.image_generation.process_next_job())
+            job = client.get(
+                f"/api/v1/image-generations/{created.json()['job']['job_id']}", headers=headers
+            ).json()["job"]
+            self.assertEqual(job["error_code"], "INVALID_MASK_IMAGE")
+            self.assertEqual(auth.get_user("owner")["points"], initial_points)
+
+    def test_verified_edit_mode_uses_private_source_and_rejects_raw_content(self) -> None:
+        """编辑任务只可引用私有资产，且必须先通过当前模型能力测试。"""
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ, {"STQB_DATA_DIR": directory}, clear=False
+        ):
+            client, auth, platform, headers = self.build_client(directory)
+            model = self.create_active_model(client, headers)
+            provider = CapturingImageProvider()
+            platform.image_generation.provider_factory = lambda _model: provider
+            initial_points = auth.get_user("owner")["points"]
+
+            uploaded = client.post(
+                "/api/v1/image-generation-inputs",
+                headers=headers,
+                params={"kind": "source"},
+                files={"image": ("source.png", png_bytes(), "image/png")},
+            )
+            self.assertEqual(uploaded.status_code, 201, uploaded.text)
+            source_id = uploaded.json()["asset"]["input_id"]
+            client.post(
+                "/api/v1/auth/register",
+                json={"username": "other", "password": "password123"},
+            )
+            other_login = client.post(
+                "/api/v1/auth/login",
+                json={"username": "other", "password": "password123"},
+            )
+            other_headers = {"Authorization": f"Bearer {other_login.json()['token']}"}
+            self.assertEqual(
+                client.get(
+                    f"/api/v1/image-generation-inputs/{source_id}/content",
+                    headers=other_headers,
+                ).status_code,
+                403,
+            )
+            reference = {
+                "source_kind": "uploaded",
+                "source_id": source_id,
+                "role": "source",
+            }
+
+            unverified = client.post(
+                "/api/v1/image-generations",
+                headers=headers,
+                json={
+                    "prompt": "把蓝色方块改成红色圆形",
+                    "mode": "image_edit",
+                    "input_assets": [reference],
+                },
+            )
+            self.assertEqual(unverified.status_code, 409)
+            self.assertEqual(unverified.json()["error"]["code"], "IMAGE_EDIT_NOT_VERIFIED")
+            self.assertEqual(auth.get_user("owner")["points"], initial_points)
+
+            raw_content = client.post(
+                "/api/v1/image-generations",
+                headers=headers,
+                json={
+                    "prompt": "不允许传递原始图片内容",
+                    "mode": "image_edit",
+                    "input_assets": [{**reference, "data_url": "data:image/png;base64,AA=="}],
+                },
+            )
+            self.assertEqual(raw_content.status_code, 422)
+
+            verified = client.post(
+                f"/api/v1/image-generation-models/{model['model_id']}/test",
+                headers=headers,
+                json={"operation": "whole_edit"},
+            )
+            self.assertEqual(verified.status_code, 200)
+            self.assertTrue(verified.json()["ok"])
+            capabilities = client.get(
+                "/api/v1/image-generation-capabilities", headers=headers
+            ).json()["capabilities"]
+            self.assertIn("image_edit", capabilities["input"]["available_modes"])
+
+            created = client.post(
+                "/api/v1/image-generations",
+                headers=headers,
+                json={
+                    "prompt": "把蓝色方块改成红色圆形",
+                    "mode": "image_edit",
+                    "input_assets": [reference],
+                    "idempotency_key": "private-edit-source",
+                },
+            )
+            self.assertEqual(created.status_code, 202, created.text)
+            self.assertEqual(auth.get_user("owner")["points"], initial_points - 7)
+            self.assertEqual(
+                client.delete(
+                    f"/api/v1/image-generation-inputs/{source_id}", headers=headers
+                ).status_code,
+                409,
+            )
+            self.assertTrue(platform.image_generation.process_next_job())
+            execution_request = provider.requests[-1]
+            self.assertEqual(execution_request.mode, "image_edit")
+            self.assertEqual(len(execution_request.input_images), 1)
+            self.assertEqual(execution_request.input_images[0].role, "source")
+            self.assertIsNone(execution_request.mask_image)
+
+    def test_mask_dimension_mismatch_refunds_before_provider_dispatch(self) -> None:
+        """局部编辑的主图和蒙版尺寸不一致时，不应向供应商发送请求。"""
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ, {"STQB_DATA_DIR": directory}, clear=False
+        ):
+            client, auth, platform, headers = self.build_client(directory)
+            model = self.create_active_model(client, headers)
+            provider = CapturingImageProvider()
+            platform.image_generation.provider_factory = lambda _model: provider
+            initial_points = auth.get_user("owner")["points"]
+
+            source = client.post(
+                "/api/v1/image-generation-inputs",
+                headers=headers,
+                params={"kind": "source"},
+                files={"image": ("source.png", png_bytes(8, 8), "image/png")},
+            ).json()["asset"]
+            mask = client.post(
+                "/api/v1/image-generation-inputs",
+                headers=headers,
+                params={"kind": "mask"},
+                files={"image": ("mask.png", png_bytes(4, 4), "image/png")},
+            ).json()["asset"]
+            verified = client.post(
+                f"/api/v1/image-generation-models/{model['model_id']}/test",
+                headers=headers,
+                json={"operation": "masked_edit"},
+            )
+            self.assertTrue(verified.json()["ok"])
+            capability_test_call_count = len(provider.requests)
+
+            created = client.post(
+                "/api/v1/image-generations",
+                headers=headers,
+                json={
+                    "prompt": "只修改白色区域",
+                    "mode": "masked_edit",
+                    "input_assets": [
+                        {"source_kind": "uploaded", "source_id": source["input_id"], "role": "source"},
+                        {"source_kind": "uploaded", "source_id": mask["input_id"], "role": "mask"},
+                    ],
+                    "idempotency_key": "mask-dimension-mismatch",
+                },
+            )
+            self.assertEqual(created.status_code, 202, created.text)
+            self.assertTrue(platform.image_generation.process_next_job())
+            job = client.get(
+                f"/api/v1/image-generations/{created.json()['job']['job_id']}", headers=headers
+            ).json()["job"]
+            self.assertEqual(job["error_code"], "INVALID_MASK_IMAGE")
+            self.assertEqual(auth.get_user("owner")["points"], initial_points)
+            self.assertEqual(len(provider.requests), capability_test_call_count)
+
+    def test_masked_edit_rejects_source_asset_used_as_mask(self) -> None:
+        """蒙版引用必须来自规范化蒙版资产，不能把普通参考图伪装成蒙版。"""
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ, {"STQB_DATA_DIR": directory}, clear=False
+        ):
+            client, auth, platform, headers = self.build_client(directory)
+            model = self.create_active_model(client, headers)
+            platform.image_generation.provider_factory = lambda _model: CapturingImageProvider()
+            initial_points = auth.get_user("owner")["points"]
+            source = client.post(
+                "/api/v1/image-generation-inputs",
+                headers=headers,
+                params={"kind": "source"},
+                files={"image": ("source.png", png_bytes(), "image/png")},
+            ).json()["asset"]
+            verified = client.post(
+                f"/api/v1/image-generation-models/{model['model_id']}/test",
+                headers=headers,
+                json={"operation": "masked_edit"},
+            )
+            self.assertTrue(verified.json()["ok"])
+
+            created = client.post(
+                "/api/v1/image-generations",
+                headers=headers,
+                json={
+                    "prompt": "只修改白色区域",
+                    "mode": "masked_edit",
+                    "input_assets": [
+                        {"source_kind": "uploaded", "source_id": source["input_id"], "role": "source"},
+                        {"source_kind": "uploaded", "source_id": source["input_id"], "role": "mask"},
+                    ],
+                    "idempotency_key": "source-is-not-mask",
+                },
+            )
+
+            self.assertEqual(created.status_code, 400, created.text)
+            self.assertEqual(created.json()["error"]["code"], "INVALID_IMAGE_INPUT")
+            self.assertEqual(auth.get_user("owner")["points"], initial_points)
+
+    def test_generated_asset_can_be_reused_only_with_its_own_source_job(self) -> None:
+        """历史生成结果可复用，但资产 ID 与来源任务 ID 必须同时匹配。"""
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ, {"STQB_DATA_DIR": directory}, clear=False
+        ):
+            client, _auth, platform, headers = self.build_client(directory)
+            model = self.create_active_model(client, headers)
+            provider = CapturingImageProvider()
+            platform.image_generation.provider_factory = lambda _model: provider
+            verified = client.post(
+                f"/api/v1/image-generation-models/{model['model_id']}/test",
+                headers=headers,
+                json={"operation": "whole_edit"},
+            )
+            self.assertTrue(verified.json()["ok"])
+
+            base = client.post(
+                "/api/v1/image-generations",
+                headers=headers,
+                json={"prompt": "蓝色方块", "idempotency_key": "history-base-image"},
+            )
+            self.assertEqual(base.status_code, 202)
+            self.assertTrue(platform.image_generation.process_next_job())
+            base_job = client.get(
+                f"/api/v1/image-generations/{base.json()['job']['job_id']}", headers=headers
+            ).json()["job"]
+            source_asset_id = base_job["assets"][0]["asset_id"]
+
+            mismatched = client.post(
+                "/api/v1/image-generations",
+                headers=headers,
+                json={
+                    "prompt": "把图形改成红色圆形",
+                    "mode": "image_edit",
+                    "input_assets": [
+                        {
+                            "source_kind": "generated",
+                            "source_id": source_asset_id,
+                            "source_job_id": "another-job",
+                            "role": "source",
+                        }
+                    ],
+                },
+            )
+            self.assertEqual(mismatched.status_code, 400)
+            self.assertEqual(mismatched.json()["error"]["code"], "INVALID_IMAGE_INPUT")
+
+            edited = client.post(
+                "/api/v1/image-generations",
+                headers=headers,
+                json={
+                    "prompt": "把图形改成红色圆形",
+                    "mode": "image_edit",
+                    "input_assets": [
+                        {
+                            "source_kind": "generated",
+                            "source_id": source_asset_id,
+                            "source_job_id": base_job["job_id"],
+                            "role": "source",
+                        }
+                    ],
+                    "idempotency_key": "history-image-edit",
+                },
+            )
+            self.assertEqual(edited.status_code, 202, edited.text)
+            self.assertTrue(platform.image_generation.process_next_job())
+            execution_request = provider.requests[-1]
+            self.assertEqual(execution_request.mode, "image_edit")
+            self.assertEqual(len(execution_request.input_images), 1)
+            self.assertEqual(execution_request.input_images[0].role, "source")
+
+    def test_model_configuration_change_invalidates_verified_edit_modes(self) -> None:
+        """编辑能力测试必须绑定当前模型配置，避免修改网关后继续误开放。"""
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ, {"STQB_DATA_DIR": directory}, clear=False
+        ):
+            client, _auth, platform, headers = self.build_client(directory)
+            model = self.create_active_model(client, headers)
+            platform.image_generation.provider_factory = lambda _model: SuccessfulImageProvider()
+            tested = client.post(
+                f"/api/v1/image-generation-models/{model['model_id']}/test",
+                headers=headers,
+                json={"operation": "whole_edit"},
+            )
+            self.assertTrue(tested.json()["ok"])
+            before_update = client.get(
+                "/api/v1/image-generation-capabilities", headers=headers
+            ).json()["capabilities"]
+            self.assertIn("image_edit", before_update["input"]["available_modes"])
+
+            updated = client.patch(
+                f"/api/v1/image-generation-models/{model['model_id']}",
+                headers=headers,
+                json={"timeout_seconds": 61},
+            )
+            self.assertEqual(updated.status_code, 200)
+            after_update = client.get(
+                "/api/v1/image-generation-capabilities", headers=headers
+            ).json()["capabilities"]
+            self.assertNotIn("image_edit", after_update["input"]["available_modes"])
 
     def test_deleted_and_expired_assets_revoke_private_access(self) -> None:
         """用户删除或保留期清理后，数据库与磁盘资源都不应继续可访问。"""

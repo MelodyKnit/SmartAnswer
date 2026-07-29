@@ -37,7 +37,7 @@ class ImageGenerationModelRecord:
 
 @dataclass(slots=True)
 class ImageGenerationJobRecord:
-    """用户一次生图任务的完整状态快照。"""
+    """用户一次生图或图片编辑任务的完整状态快照。"""
 
     job_id: str
     user_id: str
@@ -59,6 +59,8 @@ class ImageGenerationJobRecord:
     updated_at: float
     expires_at: float
     output_options: str = "{}"
+    mode: str = "text_to_image"
+    provider_dispatched_at: float = 0.0
 
     def to_dict(self) -> dict:
         """序列化用户任务，隐藏账务和供应商内部实现细节。"""
@@ -67,6 +69,7 @@ class ImageGenerationJobRecord:
         payload.pop("model_snapshot", None)
         payload.pop("reservation_order_id", None)
         payload.pop("idempotency_key", None)
+        payload.pop("provider_dispatched_at", None)
         payload["output"] = json_object(self.output_options)
         payload.pop("output_options", None)
         return payload
@@ -92,6 +95,76 @@ class ImageGenerationAssetRecord:
         payload.pop("storage_key", None)
         payload.pop("content_hash", None)
         return payload
+
+
+@dataclass(slots=True)
+class ImageGenerationInputAssetRecord:
+    """用户私有上传的参考图或蒙版。"""
+
+    input_id: str
+    user_id: str
+    kind: str
+    storage_key: str
+    content_hash: str
+    mime_type: str
+    width: int
+    height: int
+    byte_size: int
+    created_at: float
+    expires_at: float = 0.0
+    deleted_at: float = 0.0
+
+    def to_dict(self) -> dict:
+        """返回可安全给所有者展示的图片元数据。"""
+
+        payload = asdict(self)
+        payload.pop("storage_key", None)
+        payload.pop("content_hash", None)
+        return payload
+
+
+@dataclass(slots=True)
+class ImageGenerationJobInputRecord:
+    """任务对上传图或历史生成图的不可变引用快照。"""
+
+    job_id: str
+    source_kind: str
+    source_id: str
+    source_job_id: str
+    role: str
+    position: int
+    mime_type: str
+    width: int
+    height: int
+    byte_size: int
+    storage_key: str
+    created_at: float
+
+    def to_dict(self) -> dict:
+        """向用户显示来源角色和尺寸，不暴露物理路径或内容哈希。"""
+
+        payload = asdict(self)
+        payload.pop("storage_key", None)
+        return payload
+
+
+@dataclass(slots=True)
+class ImageGenerationCapabilityCheckRecord:
+    """一个模型配置下某项图片编辑能力的探测结果。"""
+
+    check_id: str
+    model_id: str
+    configuration_stamp: str
+    operation: str
+    passed: bool
+    error_code: str
+    error: str
+    checked_at: float
+
+    def to_dict(self) -> dict:
+        """输出脱敏的能力测试结果。"""
+
+        return asdict(self)
 
 
 @dataclass(slots=True)

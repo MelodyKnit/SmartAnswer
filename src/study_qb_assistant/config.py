@@ -184,6 +184,12 @@ class GlobalConfig(BaseModel):
         return self.data_dir / "images" / "generations"
 
     @property
+    def generation_input_images_dir(self) -> Path:
+        """返回用户上传的生图参考图与蒙版运行时目录。"""
+
+        return self.data_dir / "images" / "generation-inputs"
+
+    @property
     def brand_images_dir(self) -> Path:
         """上传品牌Logo等资源的本地存储物理路径。"""
         return self.data_dir / "images" / "brand"

@@ -376,7 +376,7 @@ class ImageGenerationModelEntity(Base):
 
 
 class ImageGenerationJobEntity(Base):
-    """用户文本生图任务表。"""
+    """用户生图与图片编辑任务表。"""
 
     __tablename__ = "image_generation_jobs"
     __table_args__ = (
@@ -388,6 +388,7 @@ class ImageGenerationJobEntity(Base):
     user_id: Mapped[str] = mapped_column(String(64), index=True)
     username: Mapped[str] = mapped_column(String(64), index=True)
     prompt: Mapped[str] = mapped_column(Text, default="")
+    mode: Mapped[str] = mapped_column(String(32), default="text_to_image", index=True)
     size: Mapped[str] = mapped_column(String(32), default="1024x1024")
     output_options: Mapped[str] = mapped_column(Text, default="{}")
     model_id: Mapped[str] = mapped_column(String(64), index=True)
@@ -402,6 +403,7 @@ class ImageGenerationJobEntity(Base):
     created_at: Mapped[float] = mapped_column(Float, index=True)
     started_at: Mapped[float] = mapped_column(Float, default=0.0, index=True)
     completed_at: Mapped[float] = mapped_column(Float, default=0.0, index=True)
+    provider_dispatched_at: Mapped[float] = mapped_column(Float, default=0.0, index=True)
     updated_at: Mapped[float] = mapped_column(Float, index=True)
     expires_at: Mapped[float] = mapped_column(Float, default=0.0, index=True)
 
@@ -422,6 +424,71 @@ class ImageGenerationAssetEntity(Base):
     byte_size: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[float] = mapped_column(Float, index=True)
     deleted_at: Mapped[float] = mapped_column(Float, default=0.0, index=True)
+
+
+class ImageGenerationInputAssetEntity(Base):
+    """用户上传的私有参考图和蒙版资产。"""
+
+    __tablename__ = "image_generation_input_assets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    input_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True)
+    kind: Mapped[str] = mapped_column(String(16), default="source", index=True)
+    storage_key: Mapped[str] = mapped_column(String(255), unique=True)
+    content_hash: Mapped[str] = mapped_column(String(64), index=True)
+    mime_type: Mapped[str] = mapped_column(String(64), default="image/png")
+    width: Mapped[int] = mapped_column(Integer, default=0)
+    height: Mapped[int] = mapped_column(Integer, default=0)
+    byte_size: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[float] = mapped_column(Float, index=True)
+    expires_at: Mapped[float] = mapped_column(Float, default=0.0, index=True)
+    deleted_at: Mapped[float] = mapped_column(Float, default=0.0, index=True)
+
+
+class ImageGenerationJobInputEntity(Base):
+    """任务与私有上传图/历史生成图之间的受控引用。"""
+
+    __tablename__ = "image_generation_job_inputs"
+    __table_args__ = (
+        UniqueConstraint("job_id", "role", "position", name="uq_image_generation_job_input_role"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    job_id: Mapped[str] = mapped_column(String(64), index=True)
+    source_kind: Mapped[str] = mapped_column(String(16), index=True)
+    source_id: Mapped[str] = mapped_column(String(64), index=True)
+    source_job_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    role: Mapped[str] = mapped_column(String(16), index=True)
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    mime_type: Mapped[str] = mapped_column(String(64), default="image/png")
+    width: Mapped[int] = mapped_column(Integer, default=0)
+    height: Mapped[int] = mapped_column(Integer, default=0)
+    byte_size: Mapped[int] = mapped_column(Integer, default=0)
+    storage_key: Mapped[str] = mapped_column(String(255), default="")
+    created_at: Mapped[float] = mapped_column(Float, index=True)
+
+
+class ImageGenerationModelCapabilityCheckEntity(Base):
+    """模型图像编辑能力的显式连通性验证结果。"""
+
+    __tablename__ = "image_generation_model_capability_checks"
+    __table_args__ = (
+        UniqueConstraint(
+            "model_id", "configuration_stamp", "operation",
+            name="uq_image_generation_capability_check",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    check_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    model_id: Mapped[str] = mapped_column(String(64), index=True)
+    configuration_stamp: Mapped[str] = mapped_column(String(64), index=True)
+    operation: Mapped[str] = mapped_column(String(32), index=True)
+    passed: Mapped[int] = mapped_column(Integer, default=0)
+    error_code: Mapped[str] = mapped_column(String(64), default="")
+    error: Mapped[str] = mapped_column(Text, default="")
+    checked_at: Mapped[float] = mapped_column(Float, index=True)
 
 
 class ImageGenerationTraceEntity(Base):

@@ -2,6 +2,7 @@
 
 from .contracts import (
     GeneratedImage,
+    ImageInputAsset,
     ImageGenerationProvider,
     ImageGenerationProviderError,
     ImageGenerationRequest,
@@ -12,6 +13,7 @@ from .gemini_native import GeminiNativeImageGenerationProvider
 
 __all__ = (
     "GeneratedImage",
+    "ImageInputAsset",
     "ImageGenerationProvider",
     "ImageGenerationProviderError",
     "ImageGenerationRequest",

@@ -24,6 +24,12 @@ SUPPORTED_IMAGE_PROVIDERS = frozenset(
 OPENAI_IMAGES_PROVIDERS = frozenset(
     {OPENAI_IMAGES_PROVIDER, OPENAI_COMPATIBLE_IMAGES_PROVIDER}
 )
+IMAGE_EDIT_MODES = frozenset({"image_edit", "masked_edit", "multi_reference"})
+MODE_TO_CAPABILITY = {
+    "image_edit": "whole_edit",
+    "masked_edit": "masked_edit",
+    "multi_reference": "multi_reference",
+}
 
 GEMINI_ASPECT_RATIOS = frozenset(
     {
@@ -72,7 +78,9 @@ def normalize_protocol_config(
     config = json_object(value, field_name="协议配置")
     legacy_sizes = legacy_preset_sizes(legacy_capabilities)
     if provider == GEMINI_NATIVE_PROVIDER:
-        reject_unknown_keys(config, {"auth_mode", "aspect_ratios", "image_sizes"})
+        reject_unknown_keys(
+            config, {"auth_mode", "aspect_ratios", "image_sizes", "input_capabilities"}
+        )
         auth_mode = str(config.get("auth_mode") or "x-goog-api-key").strip().lower()
         if auth_mode not in {"x-goog-api-key", "bearer"}:
             raise ImageGenerationProtocolError("Gemini 鉴权方式仅支持 x-goog-api-key 或 bearer")
@@ -96,12 +104,20 @@ def normalize_protocol_config(
             "auth_mode": auth_mode,
             "aspect_ratios": unique_values(aspect_ratios),
             "image_sizes": unique_values(image_sizes),
+            "input_capabilities": normalize_input_capabilities(
+                provider, config.get("input_capabilities")
+            ),
         }
 
     if provider in OPENAI_IMAGES_PROVIDERS:
         reject_unknown_keys(
             config,
-            {"preset_sizes", "allow_custom_size", "custom_size_constraints"},
+            {
+                "preset_sizes",
+                "allow_custom_size",
+                "custom_size_constraints",
+                "input_capabilities",
+            },
         )
         preset_sizes = normalize_size_list(
             config.get("preset_sizes"),
@@ -120,11 +136,17 @@ def normalize_protocol_config(
                 config.get("custom_size_constraints"),
                 enabled=allow_custom_size,
             )
+        normalized["input_capabilities"] = normalize_input_capabilities(
+            provider, config.get("input_capabilities")
+        )
         return normalized
 
     if provider == LEGACY_OPENAI_CHAT_IMAGE_PROVIDER:
         reject_unknown_keys(config, {"mode"})
-        return {"mode": "model-controlled"}
+        return {
+            "mode": "model-controlled",
+            "input_capabilities": normalize_input_capabilities(provider, None),
+        }
 
     raise ImageGenerationProtocolError(f"暂不支持的生图提供商: {provider}")
 
@@ -169,6 +191,140 @@ def public_output_capabilities(provider: str, protocol_config: Mapping[str, Any]
     return {"kind": "model-controlled"}
 
 
+def public_input_capabilities(
+    provider: str,
+    protocol_config: Mapping[str, Any],
+    *,
+    verified_operations: set[str] | None = None,
+) -> dict[str, Any]:
+    """返回经模型实测后可供用户使用的图片编辑能力。"""
+
+    configured = dict(protocol_config.get("input_capabilities") or {})
+    verified = verified_operations or set()
+    available_modes = ["text_to_image"]
+    for mode, capability in MODE_TO_CAPABILITY.items():
+        if configured.get(capability) and capability in verified:
+            available_modes.append(mode)
+    return {
+        "available_modes": available_modes,
+        "verified_operations": sorted(verified),
+        "max_input_images": int(configured.get("max_input_images") or 0),
+        "mask_mode": str(configured.get("mask_mode") or "none"),
+        "requires_capability_test": bool(
+            configured.get("whole_edit")
+            or configured.get("masked_edit")
+            or configured.get("multi_reference")
+        ),
+    }
+
+
+def operation_supported_by_protocol(
+    provider: str, protocol_config: Mapping[str, Any], operation: str
+) -> bool:
+    """判断管理员是否可以对某个编辑操作发起一次显式能力测试。"""
+
+    if operation == "text_to_image":
+        return True
+    capability = (
+        operation
+        if operation in set(MODE_TO_CAPABILITY.values())
+        else MODE_TO_CAPABILITY.get(operation)
+    )
+    if capability is None:
+        return False
+    return bool((protocol_config.get("input_capabilities") or {}).get(capability))
+
+
+def normalize_input_capabilities(provider: str, value: object) -> dict[str, Any]:
+    """将编辑能力限制为固定协议语义，不允许用户透传自定义上游字段。"""
+
+    defaults = default_input_capabilities(provider)
+    if value is None:
+        return defaults
+    raw = json_object(value, field_name="图片编辑能力")
+    allowed = {
+        "whole_edit",
+        "masked_edit",
+        "multi_reference",
+        "max_input_images",
+        # 这是归一化后持久化的协议派生值，不是可由管理员自由修改的上游参数。
+        "mask_mode",
+    }
+    reject_unknown_keys(raw, allowed)
+    if provider == LEGACY_OPENAI_CHAT_IMAGE_PROVIDER:
+        if raw:
+            raise ImageGenerationProtocolError("旧聊天生图协议不支持图片编辑能力配置")
+        return defaults
+    saved_mask_mode = str(raw.get("mask_mode") or "").strip()
+    if saved_mask_mode and saved_mask_mode != defaults["mask_mode"]:
+        raise ImageGenerationProtocolError("当前协议不支持指定的蒙版语义")
+    normalized = {
+        "whole_edit": normalize_bool(raw.get("whole_edit"), default=defaults["whole_edit"]),
+        "masked_edit": normalize_bool(raw.get("masked_edit"), default=defaults["masked_edit"]),
+        "multi_reference": normalize_bool(
+            raw.get("multi_reference"), default=defaults["multi_reference"]
+        ),
+        "max_input_images": normalize_max_input_images(
+            raw.get("max_input_images"), default=defaults["max_input_images"]
+        ),
+        "mask_mode": defaults["mask_mode"],
+    }
+    if normalized["max_input_images"] < 2:
+        # 局部编辑与多图参考都至少需要两张输入图片，不能只靠前端隐藏。
+        normalized["masked_edit"] = False
+        normalized["multi_reference"] = False
+    return normalized
+
+
+def default_input_capabilities(provider: str) -> dict[str, Any]:
+    """声明协议传输层能测试的能力；用户侧仍必须通过模型实测才能启用。"""
+
+    if provider == GEMINI_NATIVE_PROVIDER:
+        return {
+            "whole_edit": True,
+            "masked_edit": True,
+            "multi_reference": True,
+            "max_input_images": 4,
+            "mask_mode": "guided",
+        }
+    if provider in OPENAI_IMAGES_PROVIDERS:
+        return {
+            "whole_edit": True,
+            "masked_edit": True,
+            "multi_reference": True,
+            "max_input_images": 4,
+            "mask_mode": "native",
+        }
+    return {
+        "whole_edit": False,
+        "masked_edit": False,
+        "multi_reference": False,
+        "max_input_images": 0,
+        "mask_mode": "none",
+    }
+
+
+def normalize_max_input_images(value: object, *, default: int) -> int:
+    """图片编辑输入最多四张，避免单次请求失控增长。"""
+
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        raise ImageGenerationProtocolError("最大参考图片数量必须是整数")
+    if isinstance(value, int):
+        result = value
+    elif isinstance(value, str):
+        try:
+            result = int(value.strip())
+        except ValueError as exc:
+            raise ImageGenerationProtocolError("最大参考图片数量必须是整数") from exc
+    else:
+        raise ImageGenerationProtocolError("最大参考图片数量必须是整数")
+    if result < 1 or result > 4:
+        raise ImageGenerationProtocolError("最大参考图片数量必须在 1 到 4 之间")
+    return result
+
+
 def normalize_output_options(
     provider: str,
     protocol_config: Mapping[str, Any],
@@ -211,8 +367,7 @@ def normalize_output_options(
         return normalized_size, {"size": normalized_size}
 
     if provider == LEGACY_OPENAI_CHAT_IMAGE_PROVIDER:
-        if raw_output:
-            raise ImageGenerationProtocolError("当前聊天生图协议不支持指定图片尺寸")
+        reject_unknown_keys(raw_output, set())
         return "model-controlled", {"mode": "model-controlled"}
 
     raise ImageGenerationProtocolError(f"暂不支持的生图提供商: {provider}")

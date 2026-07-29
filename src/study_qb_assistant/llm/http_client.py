@@ -8,6 +8,7 @@ testable boundary.
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.parse import SplitResult, urlsplit, urlunsplit
@@ -74,46 +75,102 @@ def request_bytes(
     timeout: float,
     proxy_env: str,
     max_bytes: int | None = None,
+    redirect_validator: Callable[[str], bool] | None = None,
+    max_redirects: int = 3,
 ) -> tuple[bytes, str]:
-    """发送请求并返回受限长度的二进制响应与 Content-Type。"""
+    """发送请求并返回受限长度的二进制响应与 Content-Type。
+
+    ``redirect_validator`` 用于下载不可信服务返回的临时资源地址。
+    指定后会逐跳校验重定向目标，避免首个公网地址跳转到内网资源。
+    """
 
     try:
-        with httpx.stream(
+        request_url = normalize_container_loopback_url(url)
+        redirect_count = 0
+        while True:
+            with httpx.stream(
+                method,
+                request_url,
+                headers=headers,
+                json=json_body,
+                params=params,
+                timeout=timeout,
+                proxy=_proxy_from_env(proxy_env),
+                follow_redirects=redirect_validator is None,
+            ) as response:
+                if response.is_redirect and redirect_validator is not None:
+                    location = str(response.headers.get("location") or "").strip()
+                    if not location:
+                        raise HttpClientError("Redirect response is missing its Location header")
+                    if redirect_count >= max_redirects:
+                        raise HttpClientError("Response exceeded the configured redirect limit")
+                    redirect_url = str(response.url.join(location))
+                    if not redirect_validator(redirect_url):
+                        raise HttpClientError("Redirect target is not allowed")
+                    request_url = normalize_container_loopback_url(redirect_url)
+                    redirect_count += 1
+                    continue
+                if response.is_error:
+                    error_chunks: list[bytes] = []
+                    error_size = 0
+                    for chunk in response.iter_bytes():
+                        remaining = 1_000 - error_size
+                        if remaining <= 0:
+                            break
+                        error_chunks.append(chunk[:remaining])
+                        error_size += min(len(chunk), remaining)
+                    body = b"".join(error_chunks).decode("utf-8", errors="replace")
+                    raise HttpClientError(
+                        f"HTTP {response.status_code}: {response.reason_phrase}; body={body}",
+                        status_code=response.status_code,
+                        response_body=body,
+                    )
+                declared_size = response.headers.get("content-length", "")
+                if max_bytes is not None and declared_size.isdigit() and int(declared_size) > max_bytes:
+                    raise HttpClientError("Response body exceeds the configured size limit")
+                chunks: list[bytes] = []
+                total = 0
+                for chunk in response.iter_bytes():
+                    total += len(chunk)
+                    if max_bytes is not None and total > max_bytes:
+                        raise HttpClientError("Response body exceeds the configured size limit")
+                    chunks.append(chunk)
+                return b"".join(chunks), str(response.headers.get("content-type") or "")
+    except httpx.HTTPError as exc:
+        raise HttpClientError(str(exc)) from exc
+
+
+def request_multipart_text(
+    method: str,
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    data: dict[str, str] | None = None,
+    files: list[tuple[str, tuple[str, bytes, str]]] | None = None,
+    timeout: float,
+    proxy_env: str,
+) -> str:
+    """发送 multipart 请求并返回文本，供标准 Images 编辑接口使用。"""
+
+    try:
+        response = httpx.request(
             method,
             normalize_container_loopback_url(url),
             headers=headers,
-            json=json_body,
-            params=params,
+            data=data,
+            files=files,
             timeout=timeout,
             proxy=_proxy_from_env(proxy_env),
-            follow_redirects=True,
-        ) as response:
-            if response.is_error:
-                error_chunks: list[bytes] = []
-                error_size = 0
-                for chunk in response.iter_bytes():
-                    remaining = 1_000 - error_size
-                    if remaining <= 0:
-                        break
-                    error_chunks.append(chunk[:remaining])
-                    error_size += min(len(chunk), remaining)
-                body = b"".join(error_chunks).decode("utf-8", errors="replace")
-                raise HttpClientError(
-                    f"HTTP {response.status_code}: {response.reason_phrase}; body={body}",
-                    status_code=response.status_code,
-                    response_body=body,
-                )
-            declared_size = response.headers.get("content-length", "")
-            if max_bytes is not None and declared_size.isdigit() and int(declared_size) > max_bytes:
-                raise HttpClientError("Response body exceeds the configured size limit")
-            chunks: list[bytes] = []
-            total = 0
-            for chunk in response.iter_bytes():
-                total += len(chunk)
-                if max_bytes is not None and total > max_bytes:
-                    raise HttpClientError("Response body exceeds the configured size limit")
-                chunks.append(chunk)
-            return b"".join(chunks), str(response.headers.get("content-type") or "")
+        )
+        response.raise_for_status()
+        return response.text
+    except httpx.HTTPStatusError as exc:
+        body = exc.response.text
+        raise HttpClientError(
+            f"HTTP {exc.response.status_code}: {exc.response.reason_phrase}; body={body[:1000]}",
+            status_code=exc.response.status_code,
+            response_body=body,
+        ) from exc
     except httpx.HTTPError as exc:
         raise HttpClientError(str(exc)) from exc
 

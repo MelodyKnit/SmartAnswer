@@ -212,12 +212,16 @@ Current behavior:
 
 ## 10. Image Generation
 
-文本生图是独立于查题与 OCS 图片资源的私有功能。它支持 Gemini 原生、OpenAI Images 和受控
-兼容 Images 协议，并且不会复用题目 `usage_logs` 或 OCS 公共图床。
+生图与修图是独立于查题与 OCS 图片资源的私有功能。它支持文本生图、整图编辑、局部蒙版编辑和
+多参考图编辑，并且不会复用题目 `usage_logs` 或 OCS 公共图床。
 
 ### User endpoints
 
 - `GET /api/v1/image-generation-capabilities`
+- `POST /api/v1/image-generation-inputs?kind=source|mask`
+- `GET /api/v1/image-generation-inputs`
+- `GET /api/v1/image-generation-inputs/{input_id}/content`
+- `DELETE /api/v1/image-generation-inputs/{input_id}`
 - `POST /api/v1/image-generations`
 - `GET /api/v1/image-generations`
 - `GET /api/v1/image-generations/{job_id}`
@@ -237,6 +241,25 @@ Current behavior:
 }
 ```
 
+编辑任务只传递私有资产引用，绝不接受 `data:` URL、Base64、第三方 URL 或浏览器本地路径。支持的
+`mode` 为 `text_to_image`、`image_edit`、`masked_edit`、`multi_reference`：
+
+```json
+{
+  "prompt": "只将白色蒙版区域替换为橙色，其他区域保持不变",
+  "mode": "masked_edit",
+  "input_assets": [
+    {"source_kind": "uploaded", "source_id": "source-input-id", "role": "source"},
+    {"source_kind": "uploaded", "source_id": "mask-input-id", "role": "mask"}
+  ]
+}
+```
+
+上传输入图的 `source_kind` 是 `uploaded`。历史生成图可复用为输入，但必须同时提供
+`source_kind: "generated"`、生成资产 `source_id` 和原任务 `source_job_id`。整图编辑仅接受一张主图，
+局部编辑额外接受一张同尺寸上传蒙版，多图参考接受一张主图和一到三张参考图。蒙版固定采用白色编辑、
+黑色保留的语义。
+
 `output` 由当前启用模型的输出能力决定：Gemini 使用 `aspect_ratio` 与 `image_size`；OpenAI Images
 与通用兼容协议使用 `{ "size": "宽x高" }`。旧 `size` 字段仍兼容，但不能与非空 `output` 同时提交。
 旧聊天生图模型不接受尺寸控制，任务会显示“由模型决定”。任务响应中的 `output` 是归一化请求参数，
@@ -246,9 +269,9 @@ Current behavior:
 重复提交时返回原任务和 `idempotent_replay: true`，不会重复预扣积分。
 
 任务状态为 `queued`、`running`、`succeeded`、`failed`、`rejected`、`cancelled` 或
-`deleted`。提交时预扣单张积分，成功保存至少一个合格资产后确认扣费；模型拒绝、超时、
-下载或图片校验失败时自动退款。系统不会对已经提交给供应商的任务自动重试或切换模型，
-用户需要显式创建新的任务。
+`deleted`。提交时预扣单张积分；只有图片通过校验并与成功任务同一事务保存后才确认扣费。超时、
+内容拒绝、下载/校验、本地保存失败、取消或重启恢复都会退回仍处于预扣状态的积分。
+系统不会自动重试或切换模型，用户需要显式创建新任务。
 
 资产内容接口必须携带登录 JWT。所有者和管理员可以读取，其他用户返回 `403`；响应携带
 `Cache-Control: private, no-store`，不提供第三方图片 URL 或公开直链。
@@ -261,12 +284,14 @@ Current behavior:
 - `GET /api/v1/image-generation-stats`
 - `GET /api/v1/image-generation-traces`
 
-模型配置支持 `gemini-native`（`generateContent`）、`openai-images`（`/images/generations`）、
-`openai-compatible-images`（受控兼容 `/images/generations`）和旧 `openai-chat-image`（聊天补全返回图片）。
-`protocol_config` 是受严格校验的结构化能力声明：Gemini 声明鉴权方式、画幅与像素档位；OpenAI 原生可
-声明预设尺寸与自定义尺寸约束；通用兼容协议仅声明预设尺寸。`api_key` 只接受写入，任何读取接口只返回
-`api_key_configured`；调用追溯不保存提示词、图片字节、Base64 或供应商密钥。首版同一时间
-仅有一个可用于新任务的启用模型，启用新模型会停用之前的模型，避免请求被隐式分流。
+模型配置支持 `gemini-native`（`generateContent`）、`openai-images`（文生图 `/images/generations`、
+编辑 `/images/edits`）、`openai-compatible-images`（受控兼容 Images）和旧 `openai-chat-image`
+（仅聊天补全返回图片）。`protocol_config` 是受严格校验的结构化能力声明：Gemini 声明鉴权方式、画幅、
+像素档位和输入能力；OpenAI 原生可声明预设尺寸、自定义尺寸约束和输入能力；通用兼容协议仅声明预设尺寸
+与已验证输入能力。管理员必须对 `whole_edit`、`masked_edit`、`multi_reference` 逐项执行测试；用户接口
+仅返回当前配置指纹下通过测试的编辑模式。`api_key` 只接受写入，任何读取接口只返回
+`api_key_configured`；调用追溯不保存提示词、图片字节、Base64 或供应商密钥。首版同一时间仅有一个
+可用于新任务的启用模型，启用新模型会停用之前的模型，避免请求被隐式分流。
 
 系统配置的 `image_generation_points`、`image_generation_max_active_jobs`、
 `image_generation_daily_limit` 和 `image_generation_retention_days` 控制计费、限流和保留期。

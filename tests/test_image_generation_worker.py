@@ -3,9 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
+from fastapi.testclient import TestClient
+
+from study_qb_assistant.api.app import create_app
+from study_qb_assistant.auth import AuthService
+from study_qb_assistant.bootstrap import runtime_lifespan
+from study_qb_assistant.platform.container import PlatformServices
 from study_qb_assistant.platform.image_generation.worker import ImageGenerationWorker
+from study_qb_assistant.search import LocalQuestionIndex
 
 
 class WorkerService:
@@ -83,6 +93,34 @@ class ImageGenerationWorkerTests(unittest.IsolatedAsyncioTestCase):
         await worker._run()
 
         self.assertGreaterEqual(service.calls, 2)
+
+
+class RuntimeLifespanTests(unittest.TestCase):
+    """验证真实 FastAPI 生命周期会管理生图后台工作器。"""
+
+    def test_runtime_lifespan_starts_and_stops_image_worker(self) -> None:
+        """应用启动后创建工作器，退出后不遗留后台任务引用。"""
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            "os.environ", {"STQB_DATA_DIR": directory}, clear=False
+        ):
+            database_path = Path(directory) / "runtime-lifespan.sqlite3"
+            auth = AuthService(database_path)
+            services = PlatformServices(database_path)
+            app = create_app(
+                LocalQuestionIndex(()),
+                auth_service=auth,
+                platform_services=services,
+                require_auth=True,
+                lifespan=runtime_lifespan,
+            )
+
+            with TestClient(app) as client:
+                response = client.get("/api/v1/healthz")
+                self.assertEqual(response.status_code, 200)
+                self.assertIsNotNone(app.state.image_generation_worker._task)
+
+            self.assertIsNone(app.state.image_generation_worker._task)
 
 
 if __name__ == "__main__":

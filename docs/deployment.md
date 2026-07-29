@@ -23,6 +23,7 @@ Token。
 - `deploy-data/normalized/`：导入后的题库数据。
 - `deploy-data/images/ocs/`：OCS 图片题资产。
 - `deploy-data/images/generations/`：文本生图资产。
+- `deploy-data/images/generation-inputs/`：用户私有上传的参考图与蒙版资产。
 - `deploy-data/backups/releases/`：发布前的 SQLite 一致性快照。
 
 容器内使用 `/app/data`，由 Compose 映射到该目录。更新镜像不会覆盖运行数据。

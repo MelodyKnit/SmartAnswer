@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, File, Request, UploadFile
 from starlette.responses import FileResponse, JSONResponse, Response
 
+from ....media.image_assets import MAX_PRIVATE_IMAGE_BYTES
 from ....platform.image_generation.service import ImageGenerationError
 from ...dependencies import ImageGenerationServiceDep
 from ...security import (
@@ -15,13 +16,14 @@ from ...security import (
 )
 from .schemas import (
     ImageGenerationCreatePayload,
+    ImageGenerationModelTestPayload,
     ImageGenerationModelCreatePayload,
     ImageGenerationModelUpdatePayload,
 )
 
 
 def build_image_generation_router() -> APIRouter:
-    """构建独立的文本生图用户和管理 API。"""
+    """构建独立的生图、修图、私有输入资产与模型管理 API。"""
 
     router = APIRouter(tags=["image-generation"])
 
@@ -63,6 +65,8 @@ def build_image_generation_router() -> APIRouter:
                 username=str(user["username"]),
                 prompt=payload.prompt,
                 size=payload.size,
+                mode=payload.mode,
+                input_assets=[item.model_dump() for item in payload.input_assets],
                 output=payload.output,
                 idempotency_key=idempotency_key,
             )
@@ -72,6 +76,95 @@ def build_image_generation_router() -> APIRouter:
             {"ok": True, "job": job, "idempotent_replay": not created},
             status_code=202 if created else 200,
         )
+
+    @router.post("/image-generation-inputs")
+    async def image_generation_input_upload(
+        request: Request,
+        service: ImageGenerationServiceDep,
+        image: UploadFile = File(...),
+        kind: str = "source",
+    ) -> JSONResponse:
+        """上传私有参考图或蒙版；任务创建时只引用返回的资产 ID。"""
+
+        user = require_image_generation_user(request)
+        if isinstance(user, JSONResponse):
+            return user
+        content = await image.read(MAX_PRIVATE_IMAGE_BYTES + 1)
+        try:
+            asset = service.create_input_asset(
+                user_id=str(user["user_id"]), content=content, kind=kind
+            )
+        except ImageGenerationError as exc:
+            return image_generation_error_response(exc)
+        finally:
+            await image.close()
+        return JSONResponse({"ok": True, "asset": asset}, status_code=201)
+
+    @router.get("/image-generation-inputs")
+    def image_generation_inputs_list(
+        request: Request,
+        service: ImageGenerationServiceDep,
+        page: int = 1,
+        limit: int = 60,
+    ) -> JSONResponse:
+        """列出当前用户仍可作为编辑输入的私有上传图片。"""
+
+        user = require_image_generation_user(request)
+        if isinstance(user, JSONResponse):
+            return user
+        return JSONResponse(
+            {
+                "ok": True,
+                **service.list_input_assets(
+                    user_id=str(user["user_id"]), page=page, limit=limit
+                ),
+            }
+        )
+
+    @router.get("/image-generation-inputs/{input_id}/content")
+    def image_generation_input_content(
+        request: Request,
+        input_id: str,
+        service: ImageGenerationServiceDep,
+    ) -> Response:
+        """按所有者权限返回私有上传图，不提供可猜测的公开链接。"""
+
+        user = require_image_generation_user(request)
+        if isinstance(user, JSONResponse):
+            return user
+        try:
+            asset, path = service.input_asset_path(
+                input_id,
+                user_id=str(user["user_id"]),
+                allow_admin=has_permission(user, "llm:read"),
+            )
+        except ImageGenerationError as exc:
+            return image_generation_error_response(exc)
+        response = FileResponse(path, media_type=str(asset["mime_type"]))
+        response.headers["Cache-Control"] = "private, no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
+
+    @router.delete("/image-generation-inputs/{input_id}")
+    def image_generation_input_delete(
+        request: Request,
+        input_id: str,
+        service: ImageGenerationServiceDep,
+    ) -> JSONResponse:
+        """删除未被活动任务使用的私有上传图。"""
+
+        user = require_image_generation_user(request)
+        if isinstance(user, JSONResponse):
+            return user
+        try:
+            asset = service.delete_input_asset(
+                input_id,
+                user_id=str(user["user_id"]),
+                allow_admin=has_permission(user, "llm:read"),
+            )
+        except ImageGenerationError as exc:
+            return image_generation_error_response(exc)
+        return JSONResponse({"ok": True, "asset": asset})
 
     @router.get("/image-generations")
     def image_generation_list(
@@ -230,7 +323,10 @@ def build_image_generation_router() -> APIRouter:
 
     @router.post("/image-generation-models/{model_id}/test")
     def image_generation_model_test(
-        request: Request, model_id: str, service: ImageGenerationServiceDep
+        request: Request,
+        model_id: str,
+        service: ImageGenerationServiceDep,
+        payload: ImageGenerationModelTestPayload | None = None,
     ) -> JSONResponse:
         """执行管理员明确触发的生图连通性测试，不保留图片。"""
 
@@ -238,7 +334,12 @@ def build_image_generation_router() -> APIRouter:
         if denied:
             return denied
         try:
-            return JSONResponse(service.test_model(model_id))
+            return JSONResponse(
+                service.test_model(
+                    model_id,
+                    operation=payload.operation if payload is not None else "text_to_image",
+                )
+            )
         except ImageGenerationError as exc:
             return image_generation_error_response(exc)
 
