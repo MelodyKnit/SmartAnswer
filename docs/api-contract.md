@@ -150,6 +150,11 @@ latest formal Release anonymously and validates the repository, tag, version, co
 name and immutable digest in `release-manifest.json`. Production deployment remains a GitHub
 Actions `production` Environment responsibility.
 
+The update response includes `version_relation`: `behind` means a newer formal Release is
+available, `current` means the versions match, and `ahead` means the running service was deployed
+manually or from a version that has not yet become a formal GitHub Release. `has_update` is true
+only for `behind`.
+
 ### `POST /api/v1/query` 单输入框请求
 
 在线搜题可使用 `raw_text` 提交完整粘贴内容，服务端会在进入检索链路前解析题干和末尾选项：

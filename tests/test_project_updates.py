@@ -78,7 +78,23 @@ class ProjectUpdateTests(unittest.TestCase):
         self.assertEqual(checked.status_code, 200)
         self.assertEqual(gateway.repositories, ["example/study-qb"])
         self.assertTrue(checked.json()["update"]["has_update"])
+        self.assertEqual(checked.json()["update"]["version_relation"], "behind")
         self.assertEqual(checked.json()["update"]["state"], "idle")
+
+    def test_checked_release_older_than_current_build_is_reported_as_ahead(self) -> None:
+        """手动部署的较新版本不能被误报为“已是最新 Release”。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            client, _, headers, _ = self.create_client(
+                Path(directory), build_version="0.2.2"
+            )
+            checked = client.post("/api/v1/project-update/check", headers=headers)
+
+        self.assertEqual(checked.status_code, 200)
+        update = checked.json()["update"]
+        self.assertFalse(update["has_update"])
+        self.assertEqual(update["version_relation"], "ahead")
+        self.assertIn("高于最新公开 Release", update["message"])
 
     def test_source_repository_is_required_for_manual_check(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -234,6 +250,7 @@ class ProjectUpdateTests(unittest.TestCase):
         directory: Path,
         *,
         source_repository: str = "example/study-qb",
+        build_version: str = "0.2.0",
     ) -> tuple[TestClient, PlatformServices, dict[str, str], FakeProjectUpdateGateway]:
         database_path = directory / "runtime" / "study-qb.sqlite3"
         auth = AuthService(database_path)
@@ -244,7 +261,7 @@ class ProjectUpdateTests(unittest.TestCase):
             RLock(),
             gateway=gateway,
             build_info=BuildInfo(
-                version="0.2.0",
+                version=build_version,
                 build_sha="c" * 40,
                 build_type="release",
                 source_repository=source_repository,

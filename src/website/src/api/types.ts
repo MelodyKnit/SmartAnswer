@@ -376,6 +376,12 @@ export type ProjectUpdateState =
   | 'idle'
   | 'failed'
 
+export type ProjectUpdateVersionRelation =
+  | 'unknown'
+  | 'behind'
+  | 'current'
+  | 'ahead'
+
 export interface ProjectUpdateRelease {
   version: string
   tag: string
@@ -396,6 +402,7 @@ export interface ProjectUpdateStatus {
   build_type: string
   latest_version: string
   has_update: boolean
+  version_relation: ProjectUpdateVersionRelation
   checked_at: number
   state: ProjectUpdateState
   message: string

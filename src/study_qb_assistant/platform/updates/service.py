@@ -18,6 +18,7 @@ from ...version import BUILD_INFO, BuildInfo
 from .contracts import (
     ProjectUpdateError,
     ProjectUpdateRelease,
+    ProjectUpdateVersionRelation,
     compare_versions,
     normalize_github_repository,
 )
@@ -64,12 +65,8 @@ class ProjectUpdateService:
         release = release_from_dict(cached.get("release"))
         repository = self.source_repository()
         latest_version = release.version if release is not None else ""
-        has_update = bool(
-            repository
-            and self.build_info.build_type == "release"
-            and latest_version
-            and compare_versions(self.build_info.version, latest_version) < 0
-        )
+        version_relation = resolve_version_relation(self.build_info, latest_version)
+        has_update = bool(repository and version_relation == "behind")
         error = str(cached.get("error") or "")[:1000]
         if not repository:
             state = "unavailable"
@@ -79,7 +76,7 @@ class ProjectUpdateService:
             message = str(cached.get("message") or "最近一次 Release 检查失败。")
         else:
             state = "idle"
-            message = str(cached.get("message") or "可检查公开 GitHub Release。")
+            message = update_status_message(version_relation, cached)
         return {
             "available": bool(repository),
             "repository": repository,
@@ -88,6 +85,7 @@ class ProjectUpdateService:
             "build_type": self.build_info.build_type,
             "latest_version": latest_version,
             "has_update": has_update,
+            "version_relation": version_relation,
             "checked_at": safe_timestamp(cached.get("checked_at")),
             "state": state,
             "message": message,
@@ -175,6 +173,37 @@ class ProjectUpdateService:
         except (TypeError, ValueError):
             return {}
         return value if isinstance(value, dict) else {}
+
+
+def resolve_version_relation(
+    build_info: BuildInfo, latest_version: str
+) -> ProjectUpdateVersionRelation:
+    """比较当前正式构建与已校验的公开 Release。"""
+
+    if build_info.build_type != "release" or not latest_version:
+        return "unknown"
+    comparison = compare_versions(build_info.version, latest_version)
+    if comparison < 0:
+        return "behind"
+    if comparison > 0:
+        return "ahead"
+    return "current"
+
+
+def update_status_message(
+    relation: ProjectUpdateVersionRelation, cached: dict[str, Any]
+) -> str:
+    """为版本关系生成面向管理员的准确状态说明。"""
+
+    messages = {
+        "behind": "发现可用的公开 Release。",
+        "current": "当前运行版本与最新公开 Release 一致。",
+        "ahead": "当前运行版本高于最新公开 Release，通常表示手动部署或尚未发布的版本。",
+    }
+    return messages.get(
+        relation,
+        str(cached.get("message") or "可检查公开 GitHub Release。"),
+    )
 
 
 def release_from_dict(value: object) -> ProjectUpdateRelease | None:

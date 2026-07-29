@@ -12,6 +12,7 @@ SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
 GITHUB_REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 ProjectUpdateState = Literal["unavailable", "idle", "failed"]
+ProjectUpdateVersionRelation = Literal["unknown", "behind", "current", "ahead"]
 
 
 class ProjectUpdateError(Exception):

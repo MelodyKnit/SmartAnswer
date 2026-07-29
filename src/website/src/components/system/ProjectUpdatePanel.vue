@@ -26,6 +26,30 @@ const stateType = computed(() => {
   return 'info'
 })
 
+const versionRelationLabel = computed(() => {
+  const labels: Record<string, string> = {
+    behind: '发现新版本',
+    current: '版本一致',
+    ahead: '手动部署版本',
+  }
+  return labels[status.value?.version_relation || 'unknown'] || ''
+})
+
+const versionRelationType = computed(() => {
+  const relation = status.value?.version_relation
+  if (relation === 'behind') return 'warning'
+  if (relation === 'ahead') return 'info'
+  return 'success'
+})
+
+function checkResultMessage() {
+  const relation = status.value?.version_relation
+  if (relation === 'behind') return '发现新 Release'
+  if (relation === 'ahead') return '当前运行的是高于公开 Release 的手动部署版本'
+  if (relation === 'current') return '当前运行版本与最新 Release 一致'
+  return '已完成 Release 检查'
+}
+
 async function loadStatus(showError = false) {
   loading.value = true
   try {
@@ -44,7 +68,7 @@ async function checkUpdates() {
   try {
     const response = await projectUpdateApi.check()
     status.value = response.update
-    ElMessage.success(response.update.has_update ? '发现新 Release' : '当前已是最新 Release')
+    ElMessage.success(checkResultMessage())
   } catch (error) {
     ElMessage.error(error instanceof ApiException ? error.message : '检查 Release 失败')
   } finally {
@@ -61,6 +85,9 @@ onMounted(() => void loadStatus())
       <div class="flex items-center gap-3">
         <span class="text-sm font-semibold text-ink">发布状态</span>
         <el-tag :type="stateType" effect="plain">{{ stateLabel }}</el-tag>
+        <el-tag v-if="versionRelationLabel" :type="versionRelationType" effect="plain">
+          {{ versionRelationLabel }}
+        </el-tag>
       </div>
       <el-button :loading="checking" :disabled="!status?.available" @click="checkUpdates">
         检查 Release
