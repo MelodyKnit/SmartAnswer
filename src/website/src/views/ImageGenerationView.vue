@@ -37,6 +37,8 @@ const form = reactive<{
   useCustomSize: boolean
   customWidth: number
   customHeight: number
+  autoMode: boolean
+  inferredExplanation: string
 }>({
   mode: 'text_to_image',
   prompt: '',
@@ -46,6 +48,8 @@ const form = reactive<{
   useCustomSize: false,
   customWidth: 1024,
   customHeight: 1024,
+  autoMode: true,
+  inferredExplanation: '',
 })
 
 const modeLabels: Record<ImageGenerationMode, string> = {
@@ -162,6 +166,26 @@ function buildOutput(): ImageGenerationOutputOptions | undefined {
     return { size: form.size || output.preset_sizes[0] }
   }
   return undefined
+}
+
+async function inferSizeFromPrompt() {
+  if (!form.prompt.trim() || !form.autoMode) return
+  try {
+    const result = await imageGenerationApi.inferSize(form.prompt.trim())
+    const output = result.output
+    form.inferredExplanation = result.explanation
+
+    // 应用推断结果
+    if (output.aspect_ratio && output.image_size) {
+      form.aspectRatio = output.aspect_ratio
+      form.imageSize = output.image_size
+    } else if (output.size) {
+      form.size = output.size
+    }
+  } catch (error) {
+    // 推断失败不影响用户继续操作
+    console.warn('尺寸推断失败:', error)
+  }
 }
 
 function outputSelectionLabel(): string {
@@ -334,6 +358,30 @@ watch(
   },
 )
 
+watch(
+  () => form.prompt,
+  () => {
+    if (form.autoMode && form.prompt.trim().length > 10) {
+      // 防抖：用户停止输入 800ms 后才推断
+      if (pollTimer !== undefined) {
+        window.clearTimeout(pollTimer)
+      }
+      pollTimer = window.setTimeout(() => void inferSizeFromPrompt(), 800)
+    }
+  },
+)
+
+watch(
+  () => form.autoMode,
+  (enabled) => {
+    if (enabled && form.prompt.trim()) {
+      void inferSizeFromPrompt()
+    } else {
+      form.inferredExplanation = ''
+    }
+  },
+)
+
 onMounted(async () => {
   await load()
   if (hasActiveJob.value) startPolling()
@@ -353,15 +401,15 @@ onUnmounted(() => {
       </template>
     </PageHeader>
 
-    <div class="grid items-start gap-4 xl:grid-cols-[minmax(390px,0.9fr)_minmax(480px,1.1fr)]">
+    <div class="grid items-start gap-4 xl:grid-cols-[1fr_1.2fr]">
       <section class="app-card overflow-hidden">
-        <div class="border-b border-line bg-canvas/30 px-5 py-4">
+        <div class="border-b border-line bg-gradient-to-br from-brand-50/40 to-canvas/30 px-5 py-4">
           <div class="flex items-start justify-between gap-4">
             <div>
-              <p class="text-xs font-semibold uppercase tracking-[0.18em] text-brand-500">Image Studio</p>
+              <p class="text-xs font-semibold uppercase tracking-[0.18em] text-brand-600">Image Studio</p>
               <h3 class="mt-1 flex items-center gap-2 text-lg font-semibold text-ink">
                 <el-icon class="text-brand-500"><Picture /></el-icon>
-                <span>生成与编辑</span>
+                <span>AI 生成与编辑</span>
                 <el-tooltip
                   content="提交到供应商前的校验、读取失败会退还预扣积分；请求已发出后，即使上游超时或失败也不会自动重试或退款，避免重复产生供应商费用。"
                   placement="top"
@@ -410,20 +458,31 @@ onUnmounted(() => {
             </el-form-item>
 
             <el-form-item label="输出尺寸">
+              <div class="mb-3 flex items-center justify-between gap-3 rounded-lg border border-brand-200 bg-brand-50/30 px-4 py-2.5">
+                <div class="flex items-center gap-2">
+                  <el-icon class="text-brand-500"><MagicStick /></el-icon>
+                  <span class="text-sm font-medium text-brand-700">智能推荐尺寸</span>
+                </div>
+                <el-switch v-model="form.autoMode" :active-text="form.autoMode ? '已启用' : '已关闭'" />
+              </div>
+              <p v-if="form.autoMode && form.inferredExplanation" class="mb-3 rounded-md bg-canvas px-3 py-2 text-xs text-ink-soft">
+                <el-icon class="mr-1 align-middle text-brand-500"><QuestionFilled /></el-icon>
+                {{ form.inferredExplanation }}
+              </p>
               <div v-if="capabilities?.output.kind === 'gemini'" class="grid w-full gap-3 sm:grid-cols-2">
-                <div><p class="mb-1.5 text-xs text-ink-soft">画幅比例</p><el-select v-model="form.aspectRatio" class="w-full"><el-option v-for="ratio in capabilities.output.aspect_ratios" :key="ratio" :label="ratio" :value="ratio" /></el-select></div>
-                <div><p class="mb-1.5 text-xs text-ink-soft">像素档位</p><el-select v-model="form.imageSize" class="w-full"><el-option v-for="imageSize in capabilities.output.image_sizes" :key="imageSize" :label="imageSize" :value="imageSize" /></el-select></div>
+                <div><p class="mb-1.5 text-xs text-ink-soft">画幅比例</p><el-select v-model="form.aspectRatio" :disabled="form.autoMode" class="w-full"><el-option v-for="ratio in capabilities.output.aspect_ratios" :key="ratio" :label="ratio" :value="ratio" /></el-select></div>
+                <div><p class="mb-1.5 text-xs text-ink-soft">像素档位</p><el-select v-model="form.imageSize" :disabled="form.autoMode" class="w-full"><el-option v-for="imageSize in capabilities.output.image_sizes" :key="imageSize" :label="imageSize" :value="imageSize" /></el-select></div>
               </div>
               <div v-else-if="capabilities?.output.kind === 'openai-images'" class="w-full space-y-3">
-                <el-radio-group v-model="form.size" :disabled="form.useCustomSize" class="flex flex-wrap gap-2"><el-radio-button v-for="size in capabilities.output.preset_sizes" :key="size" :value="size">{{ size }}</el-radio-button></el-radio-group>
+                <el-radio-group v-model="form.size" :disabled="form.useCustomSize || form.autoMode" class="flex flex-wrap gap-2"><el-radio-button v-for="size in capabilities.output.preset_sizes" :key="size" :value="size">{{ size }}</el-radio-button></el-radio-group>
                 <div v-if="capabilities.output.allow_custom_size" class="rounded-lg border border-line bg-card-soft px-3 py-3">
-                  <div class="flex flex-wrap items-center justify-between gap-3"><span class="text-sm text-ink">自定义宽高</span><el-switch v-model="form.useCustomSize" /></div>
+                  <div class="flex flex-wrap items-center justify-between gap-3"><span class="text-sm text-ink">自定义宽高</span><el-switch v-model="form.useCustomSize" :disabled="form.autoMode" /></div>
                   <div v-if="form.useCustomSize" class="mt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2"><el-input-number v-model="form.customWidth" :min="capabilities.output.custom_size_constraints.min_width" :max="capabilities.output.custom_size_constraints.max_width" :step="capabilities.output.custom_size_constraints.step" controls-position="right" /><span class="text-ink-muted">x</span><el-input-number v-model="form.customHeight" :min="capabilities.output.custom_size_constraints.min_height" :max="capabilities.output.custom_size_constraints.max_height" :step="capabilities.output.custom_size_constraints.step" controls-position="right" /></div>
                 </div>
               </div>
-              <el-radio-group v-else-if="capabilities?.output.kind === 'compatible-images'" v-model="form.size" class="flex flex-wrap gap-2"><el-radio-button v-for="size in capabilities.output.preset_sizes" :key="size" :value="size">{{ size }}</el-radio-button></el-radio-group>
+              <el-radio-group v-else-if="capabilities?.output.kind === 'compatible-images'" v-model="form.size" :disabled="form.autoMode" class="flex flex-wrap gap-2"><el-radio-button v-for="size in capabilities.output.preset_sizes" :key="size" :value="size">{{ size }}</el-radio-button></el-radio-group>
               <div v-else class="rounded-lg border border-line bg-card-soft px-3 py-2.5 text-sm text-ink-soft">尺寸由当前模型决定，完成后会显示实际输出宽高。</div>
-              <p v-if="isAvailable" class="mt-2 text-xs text-ink-muted">本次请求：{{ outputSelectionLabel() }}</p>
+              <p v-if="isAvailable && !form.autoMode" class="mt-2 text-xs text-ink-muted">本次请求：{{ outputSelectionLabel() }}</p>
             </el-form-item>
 
             <el-button type="primary" class="min-h-10 w-full" :loading="submitting" :disabled="!canSubmit" @click="submit">

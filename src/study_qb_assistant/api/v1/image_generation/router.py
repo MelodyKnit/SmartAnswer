@@ -7,6 +7,11 @@ from starlette.responses import FileResponse, JSONResponse, Response
 
 from ....media.image_assets import MAX_PRIVATE_IMAGE_BYTES
 from ....platform.image_generation.service import ImageGenerationError
+from ....llm.image_generation.size_inference import (
+    infer_gemini_output,
+    infer_openai_size,
+    explain_size_choice,
+)
 from ...dependencies import ImageGenerationServiceDep
 from ...security import (
     current_user,
@@ -19,6 +24,7 @@ from .schemas import (
     ImageGenerationModelTestPayload,
     ImageGenerationModelCreatePayload,
     ImageGenerationModelUpdatePayload,
+    ImageSizeInferencePayload,
 )
 
 
@@ -44,6 +50,52 @@ def build_image_generation_router() -> APIRouter:
                 ),
             }
         )
+
+    @router.post("/image-generation-infer-size")
+    def image_generation_infer_size(
+        request: Request,
+        payload: ImageSizeInferencePayload,
+        service: ImageGenerationServiceDep,
+    ) -> JSONResponse:
+        """根据用户描述智能推断最合适的图片尺寸和画幅比例。"""
+
+        user = require_image_generation_user(request)
+        if isinstance(user, JSONResponse):
+            return user
+
+        capabilities = service.get_capabilities(user_points=int(user.get("points") or 0))
+        output_config = capabilities.get("output", {})
+        output_kind = output_config.get("kind", "unavailable")
+
+        if output_kind == "gemini":
+            available_ratios = output_config.get("aspect_ratios", ["1:1"])
+            available_sizes = output_config.get("image_sizes", ["1K"])
+            inferred = infer_gemini_output(payload.prompt, available_ratios, available_sizes)
+            explanation = explain_size_choice(
+                payload.prompt,
+                inferred["aspect_ratio"],
+                inferred["image_size"]
+            )
+            return JSONResponse({
+                "ok": True,
+                "output": inferred,
+                "explanation": explanation,
+            })
+        elif output_kind in {"openai-images", "compatible-images"}:
+            available_sizes = output_config.get("preset_sizes", ["1024x1024"])
+            inferred_size = infer_openai_size(payload.prompt, available_sizes)
+            explanation = explain_size_choice(payload.prompt, "auto", inferred_size)
+            return JSONResponse({
+                "ok": True,
+                "output": {"size": inferred_size},
+                "explanation": explanation,
+            })
+        else:
+            return JSONResponse({
+                "ok": True,
+                "output": {},
+                "explanation": "当前模型由提供商自动决定尺寸",
+            })
 
     @router.post("/image-generations")
     def image_generation_create(
