@@ -487,6 +487,11 @@ export const llmApi = {
 export const imageGenerationApi = {
   capabilities: () =>
     api.get<{ ok: true; capabilities: ImageGenerationCapabilities }>('/image-generation-capabilities'),
+  inferSize: (prompt: string) =>
+    api.post<{ ok: true; output: ImageGenerationOutputOptions; explanation: string }>(
+      '/image-generation-infer-size',
+      { prompt },
+    ),
   create: (body: {
     prompt: string
     size?: string

@@ -5,6 +5,14 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class ImageSizeInferencePayload(BaseModel):
+    """智能尺寸推断请求。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    prompt: str
+
+
 class ImageGenerationInputReferencePayload(BaseModel):
     """一次任务对私有上传图或历史生成图的引用。"""
 
