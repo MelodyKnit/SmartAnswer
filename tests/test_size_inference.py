@@ -1,7 +1,5 @@
 """测试智能尺寸推断功能。"""
 
-import pytest
-
 from study_qb_assistant.llm.image_generation.size_inference import (
     infer_aspect_ratio,
     infer_size_preference,
@@ -76,7 +74,6 @@ class TestSizePreferenceInference:
         prompt = "一个简单的场景"
         # 16:9应该比1:1推荐更高的分辨率
         size_169 = infer_size_preference(prompt, "16:9")
-        size_11 = infer_size_preference(prompt, "1:1")
         # 由于16:9有加成，至少不会更低
         assert size_169 in {"medium", "large", "xlarge"}
 

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
 from threading import RLock
+from unittest.mock import patch
 
 import httpx
 from fastapi.testclient import TestClient
@@ -34,7 +36,11 @@ from study_qb_assistant.platform.updates.service import (  # noqa: E402
 )
 from study_qb_assistant.questions.models import CanonicalQuestionRecord  # noqa: E402
 from study_qb_assistant.search import LocalQuestionIndex  # noqa: E402
-from study_qb_assistant.version import BuildInfo  # noqa: E402
+from study_qb_assistant.version import (  # noqa: E402
+    DEFAULT_SOURCE_REPOSITORY,
+    BuildInfo,
+    current_build_info,
+)
 
 
 class FakeProjectUpdateGateway:
@@ -64,6 +70,18 @@ class FakeProjectUpdateGateway:
 
 class ProjectUpdateTests(unittest.TestCase):
     """验证应用只读公开 Release，不再保存或使用 GitHub 凭据。"""
+
+    def test_current_build_info_uses_default_repository_and_allows_override(self) -> None:
+        """本地源码和手动构建可检查官方发布，派生部署仍可指定来源。"""
+
+        with patch.dict(os.environ, {"STQB_SOURCE_REPOSITORY": ""}, clear=False):
+            self.assertEqual(current_build_info().source_repository, DEFAULT_SOURCE_REPOSITORY)
+        with patch.dict(
+            os.environ,
+            {"STQB_SOURCE_REPOSITORY": "example/custom-release"},
+            clear=False,
+        ):
+            self.assertEqual(current_build_info().source_repository, "example/custom-release")
 
     def test_system_config_has_no_project_update_credentials(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -96,19 +114,17 @@ class ProjectUpdateTests(unittest.TestCase):
         self.assertEqual(update["version_relation"], "ahead")
         self.assertIn("高于最新公开 Release", update["message"])
 
-    def test_source_repository_is_required_for_manual_check(self) -> None:
+    def test_blank_build_repository_uses_official_default(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            client, _, headers, _ = self.create_client(Path(directory), source_repository="")
+            client, _, headers, gateway = self.create_client(Path(directory), source_repository="")
             status = client.get("/api/v1/project-update/status", headers=headers)
             checked = client.post("/api/v1/project-update/check", headers=headers)
 
         self.assertEqual(status.status_code, 200)
-        self.assertFalse(status.json()["update"]["available"])
-        self.assertEqual(status.json()["update"]["state"], "unavailable")
-        self.assertEqual(checked.status_code, 409)
-        self.assertEqual(
-            checked.json()["error"]["code"], "PROJECT_UPDATE_SOURCE_UNAVAILABLE"
-        )
+        self.assertTrue(status.json()["update"]["available"])
+        self.assertEqual(status.json()["update"]["repository"], DEFAULT_SOURCE_REPOSITORY)
+        self.assertEqual(checked.status_code, 200)
+        self.assertEqual(gateway.repositories, [DEFAULT_SOURCE_REPOSITORY])
 
     def test_check_failure_preserves_last_verified_release_summary(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

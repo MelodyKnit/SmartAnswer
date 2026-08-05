@@ -14,7 +14,7 @@ from typing import Any, Callable
 
 from ...logger import log_event
 from ...storage.repositories.settings import SettingsRepository
-from ...version import BUILD_INFO, BuildInfo
+from ...version import BUILD_INFO, DEFAULT_SOURCE_REPOSITORY, BuildInfo
 from .contracts import (
     ProjectUpdateError,
     ProjectUpdateRelease,
@@ -115,10 +115,12 @@ class ProjectUpdateService:
         return self.status()
 
     def source_repository(self) -> str:
-        """读取镜像构建时注入的公开 GitHub 仓库标识。"""
+        """读取构建仓库标识，未注入时使用官方公开仓库。"""
 
         try:
-            return normalize_github_repository(self.build_info.source_repository)
+            return normalize_github_repository(
+                self.build_info.source_repository or DEFAULT_SOURCE_REPOSITORY
+            )
         except ValueError:
             return ""
 

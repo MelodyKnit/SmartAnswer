@@ -568,7 +568,7 @@
 
 ### `GET /project-update/status`
 
-读取当前构建和最近一次公开 GitHub Release 检查缓存。需要 `system:write` 权限，不会主动访问 GitHub，也不包含任何 GitHub 凭据。
+读取当前构建和最近一次公开 GitHub Release 检查缓存。需要 `system:write` 权限，不会主动访问 GitHub，也不包含任何 GitHub 凭据。未注入构建仓库时默认使用 `MelodyKnit/SmartAnswer`；可通过合法的 `STQB_SOURCE_REPOSITORY` 覆盖。
 
 ### `POST /project-update/check`
 

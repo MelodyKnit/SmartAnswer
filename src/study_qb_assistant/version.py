@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 BUILD_SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
 SOURCE_REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+DEFAULT_SOURCE_REPOSITORY = "MelodyKnit/SmartAnswer"
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,7 +23,7 @@ class BuildInfo:
     version: str
     build_sha: str
     build_type: str
-    source_repository: str = ""
+    source_repository: str = DEFAULT_SOURCE_REPOSITORY
 
     def to_dict(self) -> dict[str, str]:
         """转换为 API 可直接返回的字典。"""
@@ -39,7 +40,9 @@ def current_build_info() -> BuildInfo:
     build_sha = raw_sha if BUILD_SHA_RE.fullmatch(raw_sha) else "unknown"
     raw_repository = os.getenv("STQB_SOURCE_REPOSITORY", "").strip()
     source_repository = (
-        raw_repository if SOURCE_REPOSITORY_RE.fullmatch(raw_repository) else ""
+        raw_repository
+        if SOURCE_REPOSITORY_RE.fullmatch(raw_repository)
+        else DEFAULT_SOURCE_REPOSITORY
     )
     return BuildInfo(
         version=version,

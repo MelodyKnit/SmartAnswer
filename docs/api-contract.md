@@ -145,10 +145,12 @@ workflow, or access a GitHub credential.
 - `GET /api/v1/project-update/status`
 - `POST /api/v1/project-update/check`
 
-The image build injects `owner/repository` into `STQB_SOURCE_REPOSITORY`. `check` retrieves the
-latest formal Release anonymously and validates the repository, tag, version, commit SHA, image
-name and immutable digest in `release-manifest.json`. Production deployment remains a GitHub
-Actions `production` Environment responsibility.
+The official source defaults to `MelodyKnit/SmartAnswer`. The image build injects
+`owner/repository` into `STQB_SOURCE_REPOSITORY`; a valid injected value overrides that default
+for a fork or separately released deployment. `check` retrieves the latest formal Release
+anonymously and validates the repository, tag, version, commit SHA, image name and immutable
+digest in `release-manifest.json`. Production deployment remains a GitHub Actions `production`
+Environment responsibility.
 
 The update response includes `version_relation`: `behind` means a newer formal Release is
 available, `current` means the versions match, and `ahead` means the running service was deployed

@@ -101,38 +101,44 @@ def infer_size_preference(prompt: str, aspect_ratio: str = "1:1") -> SizePrefere
     """
     prompt_lower = prompt.lower()
 
-    # 计算复杂度得分
-    complexity_score = 0
+    # 同一复杂度层的近义词只作为一类证据，避免“室内、场景、人物、角色”被重复累加。
+    level_match_counts = {
+        level: sum(keyword.lower() in prompt_lower for keyword in keywords)
+        for level, keywords in COMPLEXITY_KEYWORDS.items()
+    }
+    matched_levels = {level: count > 0 for level, count in level_match_counts.items()}
+    if matched_levels["high"]:
+        complexity_score = 4
+        # 多个不同高复杂度特征能表达更丰富的画面，但总加分受限，避免关键词堆叠失真。
+        complexity_score += min(3, level_match_counts["high"] - 1)
+    elif matched_levels["medium"]:
+        complexity_score = 2
+    else:
+        complexity_score = 0
 
-    for level, keywords in COMPLEXITY_KEYWORDS.items():
-        for keyword in keywords:
-            if keyword.lower() in prompt_lower:
-                if level == "high":
-                    complexity_score += 3
-                elif level == "medium":
-                    complexity_score += 2
-                else:
-                    complexity_score += 1
-
-    # 检查提示词长度（越长通常越复杂）
-    word_count = len(prompt.split())
-    if word_count > 50:
+    # 中文通常没有空格；按中文字符和英文单词统一估算描述长度。
+    content_units = len(re.findall(r"[\u4e00-\u9fff]|[A-Za-z0-9]+", prompt))
+    if content_units >= 80:
         complexity_score += 3
-    elif word_count > 30:
+    elif content_units >= 30:
         complexity_score += 2
-    elif word_count > 15:
+    elif content_units >= 15:
         complexity_score += 1
+
+    # 简约意图应压低默认尺寸；若用户同时强调丰富细节，则以高复杂度意图为准。
+    if matched_levels["low"] and not matched_levels["high"]:
+        complexity_score = min(complexity_score, 1)
 
     # 根据画幅比例调整（宽屏通常需要更高分辨率）
     if aspect_ratio in {"16:9", "21:9"}:
         complexity_score += 1
 
     # 映射到尺寸级别
-    if complexity_score >= 8:
+    if complexity_score >= 7:
         return "xlarge"  # 4K
-    elif complexity_score >= 5:
+    elif complexity_score >= 4:
         return "large"   # 2K
-    elif complexity_score >= 3:
+    elif complexity_score >= 2:
         return "medium"  # 1K
     else:
         return "small"   # 512
@@ -253,8 +259,6 @@ def explain_size_choice(prompt: str, aspect_ratio: str, size: str) -> str:
         解释文本
     """
     reasons = []
-
-    prompt_lower = prompt.lower()
 
     # 解释画幅选择
     if aspect_ratio == "16:9":

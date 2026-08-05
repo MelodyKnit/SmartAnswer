@@ -260,7 +260,7 @@ def apply_platform_runtime_env(settings_service: SettingsService) -> None:
 def build_base_model_provider(
     model_management_service: LlmManagementService | None,
 ) -> OpenAICompatibleProvider | MultiModelProvider | None:
-    """优先使用数据库模型配置，缺位时回退旧环境变量配置。"""
+    """从数据库读取模型配置。"""
 
     members: list[OpenAICompatibleProvider] = []
     if model_management_service is not None:
@@ -283,7 +283,7 @@ def build_base_model_provider(
             )
     if members:
         return members[0] if len(members) == 1 else MultiModelProvider(members=tuple(members))
-    return OpenAICompatibleProvider.from_env()
+    return None
 
 
 def build_provider_stack(
