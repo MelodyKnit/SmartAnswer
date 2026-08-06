@@ -11,6 +11,7 @@ from ....platform.usage.time_ranges import local_day_window_from_dates
 from ....storage.repositories.questions import question_record_is_indexable, question_record_status
 from ...dependencies import get_lookup_service, get_question_repository
 from ...security import require_permissions
+from ...error_responses import internal_error_response
 from .schemas import QuestionUpdatePayload
 
 
@@ -121,9 +122,11 @@ def build_question_router() -> APIRouter:
         try:
             repository.save_question_record(updated_record)
         except Exception as exc:
-            return JSONResponse(
-                {"ok": False, "error": {"code": "QUESTION_PERSIST_FAILED", "message": str(exc)}},
-                status_code=500,
+            return internal_error_response(
+                exc,
+                event_name="question_update_failed",
+                user_message="保存题目失败",
+                extra_context={"question_id": question_id},
             )
         lookup = get_lookup_service(request)
         index = lookup.index if isinstance(lookup, AnswerService) else lookup

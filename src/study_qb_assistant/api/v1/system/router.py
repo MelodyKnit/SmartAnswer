@@ -20,6 +20,7 @@ from ...security import (
     auth_error_response,
     require_permissions,
 )
+from ...error_responses import internal_error_response
 from ...runtime_config import apply_system_config_to_process
 from .schemas import (
     EmailDomainWhitelistPayload,
@@ -189,15 +190,10 @@ def build_system_router() -> APIRouter:
                 status_code=400,
             )
         except Exception as exc:
-            return JSONResponse(
-                {
-                    "ok": False,
-                    "error": {
-                        "code": "INTERNAL_ERROR",
-                        "message": f"处理图片失败: {str(exc)}",
-                    },
-                },
-                status_code=500,
+            return internal_error_response(
+                exc,
+                event_name="brand_logo_upload_failed",
+                user_message="处理图片失败",
             )
 
     return router

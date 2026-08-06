@@ -4,6 +4,8 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { MagicStick, Picture, QuestionFilled, Refresh } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import ImageInputWorkspace from '@/components/image-generation/ImageInputWorkspace.vue'
+import ImagePreviewPanel from '@/components/image-generation/ImagePreviewPanel.vue'
+import ImageHistoryPanel from '@/components/image-generation/ImageHistoryPanel.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { imageGenerationApi } from '@/api/endpoints'
 import { ApiException } from '@/api/http'
@@ -86,6 +88,11 @@ const availableModes = computed<ImageGenerationMode[]>(
 )
 const modeAvailable = computed(() => availableModes.value.includes(form.mode))
 const activeJob = computed(() => jobs.value.find((job) => job.job_id === activeJobId.value) || null)
+const activeJobPreviewUrl = computed(() => {
+  const job = activeJob.value
+  if (!job || job.status !== 'succeeded' || !job.assets.length) return ''
+  return previewUrls.value[job.assets[0].asset_id] || ''
+})
 const hasActiveJob = computed(() => jobs.value.some((job) => job.status === 'queued' || job.status === 'running'))
 const generatedSources = computed(() =>
   jobs.value.flatMap((job) =>
@@ -351,6 +358,10 @@ async function removeJob(job: ImageGenerationJob) {
   }
 }
 
+function handleSelectJob(job: ImageGenerationJob) {
+  activeJobId.value = job.job_id
+}
+
 watch(
   () => form.mode,
   () => {
@@ -401,7 +412,8 @@ onUnmounted(() => {
       </template>
     </PageHeader>
 
-    <div class="grid items-start gap-4 xl:grid-cols-[1fr_1.2fr]">
+    <div class="grid gap-4 xl:grid-cols-2">
+      <!-- 左侧编辑面板 -->
       <section class="app-card overflow-hidden">
         <div class="border-b border-line bg-gradient-to-br from-brand-50/40 to-canvas/30 px-5 py-4">
           <div class="flex items-start justify-between gap-4">
@@ -494,24 +506,23 @@ onUnmounted(() => {
         </div>
       </section>
 
-      <section class="app-card overflow-hidden">
-        <div class="flex items-center justify-between border-b border-line px-5 py-4">
-          <div><h3 class="text-lg font-semibold text-ink">我的生成记录</h3><p class="mt-1 text-xs text-ink-soft">结果仅本人和管理员可查看，可在后续编辑中复用。</p></div>
-          <el-tag v-if="activeJob" type="warning" effect="plain">{{ statusLabels[activeJob.status] }}</el-tag>
-        </div>
-        <div v-if="!jobs.length" class="flex min-h-80 items-center justify-center px-5"><el-empty description="暂无生图记录" /></div>
-        <div v-else class="grid gap-4 p-5 sm:grid-cols-2">
-          <article v-for="job in jobs" :key="job.job_id" class="overflow-hidden rounded-lg border border-line bg-card-soft">
-            <div class="flex items-start justify-between gap-3 border-b border-line px-4 py-3">
-              <div class="min-w-0"><p class="line-clamp-2 text-sm font-medium leading-5 text-ink">{{ job.prompt }}</p><p class="mt-1 text-xs text-ink-muted">{{ modeLabels[job.mode] || job.mode }} · {{ jobOutputLabel(job) }} · {{ formatDateTime(job.created_at) }}</p></div>
-              <el-tag size="small" :type="statusTypes[job.status]" effect="plain">{{ statusLabels[job.status] }}</el-tag>
-            </div>
-            <div v-if="job.status === 'succeeded' && job.assets.length" class="aspect-square bg-canvas"><img v-if="previewUrls[job.assets[0].asset_id]" :src="previewUrls[job.assets[0].asset_id]" class="h-full w-full object-cover" alt="AI 生成图片" /><div v-else class="flex h-full items-center justify-center text-sm text-ink-muted">加载预览中</div></div>
-            <div v-else class="min-h-28 px-4 py-3 text-xs leading-5 text-ink-soft"><template v-if="job.status === 'queued' || job.status === 'running'">正在处理此任务，完成后会自动显示私有预览。</template><template v-else>{{ job.error_message || '该任务未产生可访问图片。' }}</template></div>
-            <div class="flex items-center justify-between gap-3 border-t border-line px-4 py-3"><span class="text-xs text-ink-muted">{{ job.points_cost }} 积分</span><el-button v-if="job.status !== 'running' && job.status !== 'deleted'" link type="danger" @click="removeJob(job)">{{ job.status === 'queued' ? '取消' : '删除' }}</el-button></div>
-          </article>
-        </div>
-      </section>
+      <!-- 右侧预览面板 -->
+      <ImagePreviewPanel
+        :job="activeJob"
+        :preview-url="activeJobPreviewUrl"
+        :status-labels="statusLabels"
+      />
     </div>
+
+    <!-- 底部历史记录面板 -->
+    <ImageHistoryPanel
+      :jobs="jobs"
+      :preview-urls="previewUrls"
+      :status-labels="statusLabels"
+      :status-types="statusTypes"
+      :mode-labels="modeLabels"
+      @remove="removeJob"
+      @select="handleSelectJob"
+    />
   </div>
 </template>

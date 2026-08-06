@@ -86,6 +86,7 @@ configs/answer-quality-rules.json
 # 仅保留基础团队环境设置，忽略个人任务、调试运行配置和日志
 .vscode/
 .codex/
+.claude/
 .agents/
 .local/
 .vscode/tasks.json

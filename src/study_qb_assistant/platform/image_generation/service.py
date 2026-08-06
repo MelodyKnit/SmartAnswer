@@ -464,17 +464,27 @@ class ImageGenerationService(PlatformDomainService):
                 elapsed_ms=(time.monotonic() - started) * 1000,
                 model=execution_model,
             )
-        except Exception:
+        except Exception as exc:
             if stored_key:
                 delete_generated_image(stored_key)
+            # 记录详细的未知错误信息
+            log_event(
+                "image_generation_unexpected_error",
+                {
+                    "job_id": job.job_id,
+                    "model_id": job.model_id,
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc),
+                },
+            )
             self._finish_failure(
                 job,
                 status="failed",
                 code="IMAGE_GENERATION_FAILED",
-                message="生图服务执行失败",
+                message=f"生图服务执行失败: {type(exc).__name__}",
                 elapsed_ms=(time.monotonic() - started) * 1000,
                 model=execution_model,
-                trace_error="生图服务发生未预期错误",
+                trace_error=f"生图服务发生未预期错误: {str(exc)}",
             )
         else:
             try:
@@ -589,48 +599,71 @@ class ImageGenerationService(PlatformDomainService):
         """返回用户页面初始化所需的可用模型、限额和余额。"""
 
         with self.lock:
-            model = self.repository.get_active_model()
-            policy = self.settings_service.get_image_generation_policy()
-            protocol_config = self._model_protocol_config(model) if model else {}
-            verified_operations = (
-                self.repository.passed_capability_operations(
-                    model_id=model.model_id,
-                    configuration_stamp=self._configuration_stamp(model),
-                )
-                if model
-                else set()
-            )
-            return {
-                "available": model is not None,
-                "model_name": model.name if model else "",
-                "provider": model.provider if model else "",
-                "sizes": self._compatibility_sizes(model, protocol_config) if model else [],
-                "output": (
-                    public_output_capabilities(model.provider, protocol_config)
-                    if model
-                    else {"kind": "unavailable"}
-                ),
-                "input": (
-                    public_input_capabilities(
-                        model.provider,
-                        protocol_config,
-                        verified_operations=verified_operations,
+            try:
+                model = self.repository.get_active_model()
+                policy = self.settings_service.get_image_generation_policy()
+                protocol_config = self._model_protocol_config(model) if model else {}
+                verified_operations = (
+                    self.repository.passed_capability_operations(
+                        model_id=model.model_id,
+                        configuration_stamp=self._configuration_stamp(model),
                     )
                     if model
-                    else {
-                        "available_modes": [],
-                        "verified_operations": [],
-                        "max_input_images": 0,
-                        "mask_mode": "none",
-                        "requires_capability_test": False,
-                    }
-                ),
-                "points_per_image": policy["points"],
-                "max_active_jobs": policy["max_active_jobs"],
-                "daily_limit": policy["daily_limit"],
-                "retention_days": policy["retention_days"],
-                "balance": max(0, int(user_points)),
-            }
+                    else set()
+                )
+                return {
+                    "available": model is not None,
+                    "model_name": model.name if model else "",
+                    "provider": model.provider if model else "",
+                    "sizes": self._compatibility_sizes(model, protocol_config) if model else [],
+                    "output": (
+                        public_output_capabilities(model.provider, protocol_config)
+                        if model
+                        else {"kind": "unavailable"}
+                    ),
+                    "input": (
+                        public_input_capabilities(
+                            model.provider,
+                            protocol_config,
+                            verified_operations=verified_operations,
+                        )
+                        if model
+                        else {
+                            "available_modes": [],
+                            "verified_operations": [],
+                            "max_input_images": 0,
+                            "mask_mode": "none",
+                            "requires_capability_test": False,
+                        }
+                    ),
+                    "points_per_image": policy["points"],
+                    "max_active_jobs": policy["max_active_jobs"],
+                    "daily_limit": policy["daily_limit"],
+                    "retention_days": policy["retention_days"],
+                    "balance": max(0, int(user_points)),
+                }
+            except ImageGenerationProtocolError as exc:
+                # 协议配置错误应该明确告知，而不是返回500
+                raise ImageGenerationError(
+                    "PROTOCOL_CONFIG_ERROR",
+                    f"生图模型协议配置错误: {str(exc)}",
+                    http_status=500,
+                ) from exc
+            except Exception as exc:
+                # 捕获所有其他异常，提供详细错误信息
+                log_event(
+                    "image_generation_capabilities_error",
+                    {
+                        "error_type": type(exc).__name__,
+                        "error_message": str(exc),
+                        "has_active_model": model is not None if 'model' in locals() else None,
+                    },
+                )
+                raise ImageGenerationError(
+                    "CAPABILITIES_RETRIEVAL_FAILED",
+                    f"获取生图能力信息失败: {type(exc).__name__}: {str(exc)}",
+                    http_status=500,
+                ) from exc
 
     def create_input_asset(
         self, *, user_id: str, content: bytes, kind: str = "source"

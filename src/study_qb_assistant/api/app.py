@@ -20,6 +20,7 @@ from ..search import LocalQuestionIndex
 from ..storage.repositories.questions import SqlAlchemyQuestionRepository
 from ..llm.tracing import set_trace_sink
 from .middleware import install_http_middleware
+from .exception_handlers import install_exception_handlers
 from .ocs import build_ocs_router
 from .static import build_static_router
 from .v1 import API_V1_PREFIX, build_api_v1_router
@@ -85,6 +86,7 @@ def create_app(
     app.state.ocs_integration = ocs_integration or DefaultOcsIntegration()
     set_trace_sink(services.llm.save_call_trace)
 
+    install_exception_handlers(app)
     install_http_middleware(app)
 
     business_router = build_api_v1_router()
