@@ -9,6 +9,7 @@ from fastapi import FastAPI, Request
 from starlette.responses import JSONResponse
 
 from ..logger import log_event
+from .middleware import cors_headers
 
 
 def install_exception_handlers(app: FastAPI) -> None:
@@ -71,9 +72,12 @@ def install_exception_handlers(app: FastAPI) -> None:
         except Exception:
             pass
 
+        # 异常响应会绕过 HTTP 中间件的后半段，需要在此显式补上 CORS 头，
+        # 否则浏览器会因跨域策略拦截整个 500 响应，前端读不到结构化错误信息。
         return JSONResponse(
             error_response,
             status_code=500,
+            headers=cors_headers(request),
         )
 
 

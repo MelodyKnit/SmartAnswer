@@ -42,12 +42,16 @@ def build_image_generation_router() -> APIRouter:
         user = require_image_generation_user(request)
         if isinstance(user, JSONResponse):
             return user
+        try:
+            capabilities = service.get_capabilities(
+                user_points=int(user.get("points") or 0)
+            )
+        except ImageGenerationError as exc:
+            return image_generation_error_response(exc)
         return JSONResponse(
             {
                 "ok": True,
-                "capabilities": service.get_capabilities(
-                    user_points=int(user.get("points") or 0)
-                ),
+                "capabilities": capabilities,
             }
         )
 
@@ -63,7 +67,10 @@ def build_image_generation_router() -> APIRouter:
         if isinstance(user, JSONResponse):
             return user
 
-        capabilities = service.get_capabilities(user_points=int(user.get("points") or 0))
+        try:
+            capabilities = service.get_capabilities(user_points=int(user.get("points") or 0))
+        except ImageGenerationError as exc:
+            return image_generation_error_response(exc)
         output_config = capabilities.get("output", {})
         output_kind = output_config.get("kind", "unavailable")
 
@@ -235,12 +242,15 @@ def build_image_generation_router() -> APIRouter:
         can_manage = has_permission(user, "llm:read")
         if user_id and not can_manage:
             return forbidden_response("无权查看其他用户的生图任务")
-        result = service.list_jobs(
-            user_id=user_id.strip() if can_manage and user_id.strip() else str(user["user_id"]),
-            status=status.strip(),
-            page=page,
-            limit=limit,
-        )
+        try:
+            result = service.list_jobs(
+                user_id=user_id.strip() if can_manage and user_id.strip() else str(user["user_id"]),
+                status=status.strip(),
+                page=page,
+                limit=limit,
+            )
+        except ImageGenerationError as exc:
+            return image_generation_error_response(exc)
         return JSONResponse({"ok": True, **result})
 
     @router.get("/image-generations/{job_id}")

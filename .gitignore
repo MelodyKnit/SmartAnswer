@@ -89,6 +89,8 @@ configs/answer-quality-rules.json
 .claude/
 .agents/
 .local/
+# 一次性开发完成报告不作为长期项目文档提交。
+OPTIMIZATION_SUMMARY.md
 .vscode/tasks.json
 .vscode/launch.json
 .vscode/*.log

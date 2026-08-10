@@ -121,7 +121,7 @@ imageGenerationApi.inferSize(prompt: string)
 
 ## 🧪 测试结果
 
-运行测试：`python test_size_inference_simple.py`
+运行测试：`conda run -n ai-study-qb python tests/manual/test_size_inference_simple.py`
 
 测试覆盖：
 - ✅ 画幅比例推断（6种比例）
@@ -216,7 +216,7 @@ docker compose --env-file .env.release up -d --no-build
 ### 新增文件
 - `src/study_qb_assistant/llm/image_generation/size_inference.py`
 - `tests/test_size_inference.py`
-- `test_size_inference_simple.py`
+- `tests/manual/test_size_inference_simple.py`
 
 ### 修改文件
 - `src/study_qb_assistant/api/v1/image_generation/router.py`

@@ -1,7 +1,15 @@
-"""直接测试智能尺寸推断功能。"""
+"""直接测试智能尺寸推断功能（主动调用脚本，非 pytest 单元测试）。
+
+运行方式：
+    conda run -n ai-study-qb python tests/manual/test_size_inference_simple.py
+"""
 
 import sys
-sys.path.insert(0, 'src')
+from pathlib import Path
+
+SRC_ROOT = Path(__file__).resolve().parents[2] / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 
 from study_qb_assistant.llm.image_generation.size_inference import (
     infer_aspect_ratio,

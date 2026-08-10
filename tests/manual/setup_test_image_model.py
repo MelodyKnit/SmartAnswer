@@ -65,10 +65,8 @@ def setup_test_model():
             "model": "dall-e-3",
             "timeout_seconds": 120,
             "protocol_config": {
-                "output_config": {
-                    "mode": "preset-sizes",
-                    "preset_sizes": ["1024x1024", "1024x1792", "1792x1024"]
-                },
+                "preset_sizes": ["1024x1024", "1024x1792", "1792x1024"],
+                "allow_custom_size": False,
                 "input_capabilities": {
                     "whole_edit": True,
                     "masked_edit": True,

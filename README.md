@@ -1,176 +1,84 @@
 # StudyQuestionBankAssistant
 
-This workspace is for a local question-bank and LLM study assistant. The current implementation provides a local HTTP service, normalized public benchmark question indexes, an OpenAI-compatible model provider, and an OCS-style source configuration.
+自托管的学习型题库与 AI 服务平台。它提供本地题库检索、模型辅助答题、联网检索、题目图片处理、API Key 接入、积分与运营管理，以及私有 AI 生图能力。
 
-## Goal
+项目面向学习、复核和知识管理场景。服务负责提供检索结果、答案建议和来源信息，不包含自动提交课程、考试或作业答案的能力。
 
-Build a stable, self-hostable foundation for:
+## 功能概览
 
-- question-bank ingestion
-- retrieval over structured or semi-structured question data
-- local or hosted OpenAI-compatible LLM answer generation with explanation and citation
-- manual review before any downstream use
+- 题库检索：标准化题目、选项与答案，支持本地精确和保守模糊匹配。
+- AI 答题：本地题库优先，模型兜底，必要时使用联网证据增强。
+- OCS 接入：保留 `/ocs/query` 兼容入口，并由管理端生成 API Key 对应配置。
+- 平台管理：用户、角色权限、API Key、积分、兑换码、公告、通知和调用记录。
+- 图片处理：题目图片与生图资产均使用受控存储，不将 Base64 或密钥写入日志。
+- AI 生图：支持文本生图和受模型能力约束的图片编辑，任务、积分与资产生命周期独立管理。
 
-## Boundary
+## 快速开始
 
-This workspace is organized for compliant study and review scenarios. The intended output is a retrievable knowledge service and local assistant, not an auto-submit or exam-bypass workflow.
-
-## Current Status
-
-- dedicated project workspace and rules are established
-- public source research and source verification are documented
-- CMMLU and AGIEval MCQ were normalized into local JSONL indexes
-- local `/query` and OCS-style `/ocs/query` endpoints are implemented
-- OCS-style config is available as a static file and from the running service
-- OpenAI-compatible model fallback and explanation mode are implemented
-- unit, export, service, config-client, and mock-model acceptance checks pass
-
-## Preferred Architecture Direction
-
-The implemented path is a custom Python local service with pluggable sources and an OpenAI-compatible model provider. This avoids coupling the OCS config to any single model runtime.
-
-Recommended model options:
-
-1. Cloud OpenAI-compatible API
-   Best for answer quality and low local hardware requirements.
-2. Local OpenAI-compatible runtime such as Ollama, LM Studio, or vLLM
-   Best when privacy, offline use, or local control matters more.
-3. MaxKB or FastGPT integration later
-   Useful if a web admin UI and large-scale QA import workflow become more important than a lightweight service.
-
-## Documentation Map
-
-- Research notes: [docs/research.md](docs/research.md)
-- Architecture: [docs/architecture.md](docs/architecture.md)
-- API contract: [docs/api-contract.md](docs/api-contract.md)
-- Data sources: [docs/data-sources.md](docs/data-sources.md)
-- Normalized indexes: [docs/normalized-indexes.md](docs/normalized-indexes.md)
-- Source verification: [docs/source-verification.md](docs/source-verification.md)
-- Ingestion mapping: [docs/ingestion-mapping.md](docs/ingestion-mapping.md)
-- Stack decision: [docs/stack-decision.md](docs/stack-decision.md)
-- Environment setup: [docs/environment.md](docs/environment.md)
-- Local service: [docs/local-service.md](docs/local-service.md)
-- Model provider: [docs/model-provider.md](docs/model-provider.md)
-- External client adapter: [docs/external-client-adapter.md](docs/external-client-adapter.md)
-- OCS-style adapter: [docs/ocs-adapter.md](docs/ocs-adapter.md)
-- OCS usage runbook: [docs/ocs-usage-cn.md](docs/ocs-usage-cn.md)
-- Acceptance workflow: [docs/acceptance.md](docs/acceptance.md)
-- Delivery status: [docs/delivery-status.md](docs/delivery-status.md)
-- Implementation plan: [docs/implementation-plan.md](docs/implementation-plan.md)
-
-## Current Working Commands
-
-Create and activate the project environment:
+项目使用 Conda 管理 Python 环境，前端使用 npm。
 
 ```powershell
 conda env create -f environment.yml
 conda activate ai-study-qb
-```
-
-Copy local environment variables and fill your own secrets:
-
-```powershell
 Copy-Item .env.example .env
-```
-
-Start the FastAPI service:
-
-```powershell
 .\scripts\run.ps1
 ```
 
-Development mode with reload:
+开发模式只监听后端源码目录：
 
 ```powershell
 .\scripts\run.ps1 --dev
 ```
 
-Bash equivalents are also available:
+Linux/macOS：
 
 ```bash
 ./scripts/run.sh
 ./scripts/run.sh --dev
 ```
 
-Enable an OpenAI-compatible model provider in `.env`:
+默认服务地址为 `http://127.0.0.1:8765`。前端开发与环境变量配置见[环境与依赖说明](docs/setup/environment.md)。
 
-```dotenv
-STQB_LLM_BASE_URL=https://api.example.com/v1
-STQB_LLM_MODEL=your-model-name
-STQB_LLM_API_KEY=your-api-key
-```
-
-Run backend validation:
+## 常用验证
 
 ```powershell
-pytest -q
-ruff check src tests
-mypy src\study_qb_assistant
-```
+conda run -n ai-study-qb pytest -q
+conda run -n ai-study-qb ruff check src tests
+conda run -n ai-study-qb mypy src/study_qb_assistant
 
-Run frontend validation:
-
-```powershell
-cd src\website
-npm install
+Set-Location src\website
+npm run type-check
 npm run build
 ```
 
-Docker deployment uses an immutable image reference recorded in `.env.release` by the release workflow:
+健康检查：
 
-```bash
-docker compose --env-file .env.release up -d --no-build
-```
+- 平台 API：`GET /api/v1/healthz`
+- OCS 兼容查询：`GET|POST /ocs/query`
 
-Before any server sync or deployment, bump the version in `pyproject.toml` first
-and create the matching Git tag, for example `v0.1.6`.
-Treat code upload, image publication, and `docker compose up -d --no-build` on the server as a release step,
-not as ordinary local debugging.
+## 部署与数据
 
-Recommended release order:
+- Docker Compose 使用仓库根目录的 `docker-compose.yaml`；详细步骤见[部署说明](docs/deployment.md)。
+- 运行数据、SQLite 数据库、日志和图片资产位于配置的数据目录，Docker 默认通过 `deploy-data` 卷持久化。
+- `.env`、数据库、运行数据、日志、图片和本地实验目录均不得提交。部署前仅复制并填写 `.env.example` 中实际需要的配置。
 
-1. Finish the code change and self-check it locally.
-2. Update `pyproject.toml` `version`.
-3. Run the minimal required validation.
-4. Commit the release change and create the matching `vX.Y.Z` tag.
-5. Push the matching `vX.Y.Z` tag and approve the GitHub `production` Environment deployment.
+## 文档导航
 
-The Docker image builds the frontend and backend together. Runtime data is written to
-`deploy-data/` on the server and starts empty by default; local `data/` files are not
-required and are not copied into the image.
-Pushing a matching `vX.Y.Z` tag triggers CI, builds a public GHCR image, creates a GitHub Release,
-and waits for the protected `production` Environment approval before deployment. Production always
-pulls the Release manifest's exact image digest and verifies `/api/v1/healthz` plus
-`/api/v1/version`; it never performs server-side `git pull` or builds from mutable source.
-See [docs/deployment.md](docs/deployment.md) for the GitHub Environment setup.
-For production vision-question support, set `STQB_PUBLIC_BASE_URL` to the public HTTPS
-origin of the service. OCS question images are stored under `deploy-data/images/ocs/`
-and exposed as `/api/v1/media/ocs/images/<sha256>.<ext>` for vision models.
+完整导航见[docs/README.md](docs/README.md)。常用入口：
 
-Install and run commit hooks:
+- [环境与依赖](docs/setup/environment.md)
+- [系统架构](docs/architecture/architecture.md)
+- [API 契约](docs/architecture/api-contract.md)
+- [模型与联网服务](docs/services/model-provider.md)
+- [OCS 适配](docs/services/ocs-adapter.md)
+- [图片生成服务](docs/services/image-generation.md)
+- [后端目录边界](src/study_qb_assistant/README.md)
+- [运行与维护脚本](scripts/README.md)
 
-```powershell
-pre-commit install
-pre-commit run --all-files
-```
+## 发布约定
 
-Python hooks explicitly run in the project Conda environment `ai-study-qb`, so these commands
-behave consistently even when they are invoked from another active Conda environment.
+正式发布时同步更新 `pyproject.toml` 版本号、提交版本变更并创建同名 Git tag。服务器部署使用经过验证的发布版本；本地未提交实验和运行数据不进入发布物。
 
-Quick API smoke checks:
+## License
 
-```powershell
-Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/v1/healthz"
-Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/v1/status"
-Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/v1/configs/ocs-local-study-bank.json"
-Invoke-RestMethod -Uri "http://127.0.0.1:8765/ocs/query?title=示例题&type=single"
-```
-
-## 许可证与商业授权
-
-1. **开源许可证**：
-   本项目采用 [CC BY-NC-SA 4.0](LICENSE) 许可证发布。个人开发者、学生及非盈利组织可免费学习、研究和自用，但**未经授权严禁用于任何商业转售、付费部署或盈利性服务**。
-
-2. **商业授权（Commercial License）**：
-   作者本人保留本项目的商业化及再授权权利。如需将本项目用于商业盈利、企业付费服务或闭源产品中，请联系作者获取商业授权。
-
+项目许可证见 [LICENSE](LICENSE)。
