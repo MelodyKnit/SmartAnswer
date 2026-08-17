@@ -11,7 +11,7 @@ SRC_ROOT = Path(__file__).resolve().parents[2] / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from study_qb_assistant.llm.image_generation.size_inference import (
+from study_qb_assistant.llm.image_generation.size_inference import (  # noqa: E402 - 手工脚本先注入源码路径
     infer_aspect_ratio,
     infer_size_preference,
     infer_openai_size,

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /** 底部历史记录面板 - 支持拖拽高度调整 */
-import { ref, computed } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { Delete } from '@element-plus/icons-vue'
 import { formatDateTime } from '@/utils/format'
 import type { ImageGenerationJob, ImageGenerationJobStatus } from '@/api/types'
@@ -54,6 +54,8 @@ function stopResize() {
   document.removeEventListener('mouseup', stopResize)
 }
 
+onBeforeUnmount(stopResize)
+
 function handleSelect(job: ImageGenerationJob) {
   emit('select', job)
 }
@@ -63,13 +65,6 @@ function handleRemove(job: ImageGenerationJob, event: Event) {
   emit('remove', job)
 }
 
-function jobOutputLabel(job: ImageGenerationJob): string {
-  const requested = job.output.aspect_ratio && job.output.image_size
-    ? `${job.output.aspect_ratio} · ${job.output.image_size}`
-    : job.output.size || job.size || '由模型决定'
-  const asset = job.assets[0]
-  return asset?.width && asset?.height ? `${requested} · 实际 ${asset.width}x${asset.height}` : requested
-}
 </script>
 
 <template>
@@ -86,7 +81,7 @@ function jobOutputLabel(job: ImageGenerationJob): string {
     <div class="flex items-center justify-between border-b border-line px-5 py-3">
       <div>
         <h3 class="text-base font-semibold text-ink">历史记录</h3>
-        <p class="mt-0.5 text-xs text-ink-soft">点击图片可查看详情，支持拖拽到编辑区复用</p>
+        <p class="mt-0.5 text-xs text-ink-soft">点击记录查看详情，可在编辑区选择历史图片复用</p>
       </div>
       <el-tag size="small" type="info" effect="plain">{{ jobs.length }} 条记录</el-tag>
     </div>
@@ -127,7 +122,7 @@ function jobOutputLabel(job: ImageGenerationJob): string {
           </el-tag>
 
           <!-- 底部信息 -->
-          <div class="border-t border-line bg-white px-2 py-2">
+          <div class="border-t border-line bg-card px-2 py-2">
             <p class="line-clamp-1 text-xs font-medium text-ink">{{ job.prompt }}</p>
             <div class="mt-1 flex items-center justify-between gap-2">
               <span class="text-xs text-ink-muted">{{ modeLabels[job.mode] }}</span>

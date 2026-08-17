@@ -478,7 +478,19 @@ def require_image_generation_management_write(request: Request) -> JSONResponse 
 def image_generation_error_response(exc: ImageGenerationError) -> JSONResponse:
     """将生图领域错误转换为统一 API 响应。"""
 
+    # 这些错误来自配置解析或基础设施访问，异常文本可能包含数据库、路径或
+    # 上游实现细节。其余领域错误继续保留 service 提供的用户可执行文案。
+    internal_messages = {
+        "CAPABILITIES_RETRIEVAL_FAILED": "暂时无法读取生图能力，请稍后重试",
+        "PROTOCOL_CONFIG_ERROR": "生图模型配置无效，请联系管理员检查模型配置",
+    }
     return JSONResponse(
-        {"ok": False, "error": {"code": exc.code, "message": exc.message}},
+        {
+            "ok": False,
+            "error": {
+                "code": exc.code,
+                "message": internal_messages.get(exc.code, exc.message),
+            },
+        },
         status_code=exc.http_status,
     )

@@ -1,4 +1,4 @@
-"""全局异常处理器，确保所有错误都返回结构化响应和详细日志。"""
+"""全局异常处理器，确保未处理错误可审计且不向客户端泄露内部细节。"""
 
 from __future__ import annotations
 
@@ -22,10 +22,9 @@ def install_exception_handlers(app: FastAPI) -> None:
         # 获取完整的堆栈跟踪
         error_traceback = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
 
-        # 提取请求信息用于日志
+        # 只记录路径而不记录完整 URL，避免查询参数中的用户输入或凭据进入日志。
         request_info = {
             "method": request.method,
-            "url": str(request.url),
             "path": request.url.path,
             "client": request.client.host if request.client else None,
             "user_agent": request.headers.get("user-agent"),
@@ -51,26 +50,15 @@ def install_exception_handlers(app: FastAPI) -> None:
             },
         )
 
-        # 构建用户友好的错误响应（包含足够的调试信息）
+        # 原始异常仅保留在服务端日志。API 响应必须稳定且不泄露数据库、路径、
+        # 上游服务或认证实现的内部细节。
         error_response: dict[str, Any] = {
             "ok": False,
             "error": {
                 "code": "INTERNAL_SERVER_ERROR",
                 "message": "服务器内部错误，请稍后重试",
-                "type": type(exc).__name__,
-                "detail": str(exc),
             },
         }
-
-        # 在开发环境中返回完整堆栈跟踪
-        try:
-            from ..config import get_global_config
-            config = get_global_config()
-            # 如果配置中有调试模式，添加完整堆栈信息
-            if getattr(config, "debug", False):
-                error_response["error"]["traceback"] = error_traceback
-        except Exception:
-            pass
 
         # 异常响应会绕过 HTTP 中间件的后半段，需要在此显式补上 CORS 头，
         # 否则浏览器会因跨域策略拦截整个 500 响应，前端读不到结构化错误信息。

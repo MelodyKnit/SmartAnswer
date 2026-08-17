@@ -1,8 +1,8 @@
 """错误处理改进的回归测试。
 
 覆盖两个曾经的缺陷：
-1. 全局异常处理器返回结构化的 500（含 type/detail），且带 CORS 头，
-   否则浏览器跨域时会拦截整个响应，前端读不到错误信息。
+1. 全局异常处理器返回结构化且安全的 500，并带 CORS 头；内部异常详情
+   只能进入服务端日志，不能返回给浏览器。
 2. image-generation-capabilities / infer-size 端点会把 service 抛出的
    ImageGenerationError 翻译成领域错误格式，而不是让它冒泡成笼统 500。
 """
@@ -51,8 +51,9 @@ class GlobalExceptionHandlerTests(unittest.TestCase):
         self.assertFalse(body["ok"])
         error = body["error"]
         self.assertEqual(error["code"], "INTERNAL_SERVER_ERROR")
-        self.assertEqual(error["type"], "ValueError")
-        self.assertIn("数据库连接失败", error["detail"])
+        self.assertNotIn("type", error)
+        self.assertNotIn("detail", error)
+        self.assertNotIn("数据库连接失败", response.text)
 
     def test_500_response_carries_cors_headers(self) -> None:
         response = self._client().get(
@@ -108,7 +109,8 @@ class ImageGenerationErrorTranslationTests(unittest.TestCase):
         error = response.json()["error"]
         # 关键：领域错误码，而不是被全局 handler 兜底成 INTERNAL_SERVER_ERROR
         self.assertEqual(error["code"], "CAPABILITIES_RETRIEVAL_FAILED")
-        self.assertIn("数据库锁定", error["message"])
+        self.assertEqual(error["message"], "暂时无法读取生图能力，请稍后重试")
+        self.assertNotIn("数据库锁定", response.text)
 
 
 if __name__ == "__main__":

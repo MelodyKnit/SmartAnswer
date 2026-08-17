@@ -481,7 +481,7 @@ class ImageGenerationService(PlatformDomainService):
                 job,
                 status="failed",
                 code="IMAGE_GENERATION_FAILED",
-                message=f"生图服务执行失败: {type(exc).__name__}",
+                message="生图服务执行失败，请稍后重试",
                 elapsed_ms=(time.monotonic() - started) * 1000,
                 model=execution_model,
                 trace_error=f"生图服务发生未预期错误: {str(exc)}",
@@ -643,14 +643,16 @@ class ImageGenerationService(PlatformDomainService):
                     "balance": max(0, int(user_points)),
                 }
             except ImageGenerationProtocolError as exc:
-                # 协议配置错误应该明确告知，而不是返回500
+                log_event(
+                    "image_generation_protocol_config_error",
+                    {"error_type": type(exc).__name__, "error_message": str(exc)},
+                )
                 raise ImageGenerationError(
                     "PROTOCOL_CONFIG_ERROR",
-                    f"生图模型协议配置错误: {str(exc)}",
+                    "生图模型配置无效，请联系管理员检查模型配置",
                     http_status=500,
                 ) from exc
             except Exception as exc:
-                # 捕获所有其他异常，提供详细错误信息
                 log_event(
                     "image_generation_capabilities_error",
                     {
@@ -661,7 +663,7 @@ class ImageGenerationService(PlatformDomainService):
                 )
                 raise ImageGenerationError(
                     "CAPABILITIES_RETRIEVAL_FAILED",
-                    f"获取生图能力信息失败: {type(exc).__name__}: {str(exc)}",
+                    "暂时无法读取生图能力，请稍后重试",
                     http_status=500,
                 ) from exc
 

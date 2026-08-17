@@ -25,10 +25,11 @@ jobs:
       name: production
     env:
       DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
-      DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT }}
       DEPLOY_USER: ${{ vars.DEPLOY_USER }}
       DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
-      DEPLOY_HEALTH_URL: ${{ vars.DEPLOY_HEALTH_URL || 'http://127.0.0.1:3003' }}
+      DEPLOY_HEALTH_URL: ${{ vars.DEPLOY_HEALTH_URL }}
+      DEPLOY_DOCKER_CONTEXT: ${{ vars.DEPLOY_DOCKER_CONTEXT || 'rootless' }}
       DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
       DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
       RELEASE_TAG: ${{ inputs.release_tag }}
@@ -100,6 +101,7 @@ jobs:
           [[ "${DEPLOY_USER}" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] || { echo "Invalid DEPLOY_USER" >&2; exit 1; }
           [[ "${DEPLOY_PATH}" =~ ^/[A-Za-z0-9._/-]+$ ]] || { echo "Invalid DEPLOY_PATH" >&2; exit 1; }
           [[ "${DEPLOY_HEALTH_URL}" =~ ^https?://127\.0\.0\.1:[1-9][0-9]{0,4}$ ]] || { echo "Invalid DEPLOY_HEALTH_URL" >&2; exit 1; }
+          [[ "${DEPLOY_DOCKER_CONTEXT}" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "Invalid DEPLOY_DOCKER_CONTEXT" >&2; exit 1; }
           [[ -n "${DEPLOY_SSH_PRIVATE_KEY}" ]] || { echo "DEPLOY_SSH_PRIVATE_KEY is not configured" >&2; exit 1; }
           [[ -n "${DEPLOY_KNOWN_HOSTS}" ]] || { echo "DEPLOY_KNOWN_HOSTS is not configured" >&2; exit 1; }
 
@@ -132,4 +134,4 @@ jobs:
           scp "${scp_args[@]}" docker-compose.yaml "$remote_target:$remote_stage_dir/docker-compose.release.yaml"
           scp "${scp_args[@]}" deploy/remote-release.sh "$remote_target:$remote_stage_dir/remote-release.sh"
           ssh "${ssh_args[@]}" "$remote_target" \
-            "set -euo pipefail; sudo -n install -d -o root -g root -m 0755 '$DEPLOY_PATH/deploy'; sudo -n install -o root -g root -m 0644 '$remote_stage_dir/docker-compose.release.yaml' '$DEPLOY_PATH/deploy/docker-compose.release.yaml'; sudo -n install -o root -g root -m 0700 '$remote_stage_dir/remote-release.sh' '$DEPLOY_PATH/deploy/remote-release.sh'; sudo -n bash '$DEPLOY_PATH/deploy/remote-release.sh' '$DEPLOY_PATH' '$IMAGE_REF' '$VERSION' '$BUILD_SHA' '$DEPLOY_HEALTH_URL'"
+            "set -euo pipefail; install -d -m 0755 '$DEPLOY_PATH/deploy'; install -m 0644 '$remote_stage_dir/docker-compose.release.yaml' '$DEPLOY_PATH/deploy/docker-compose.release.yaml'; install -m 0700 '$remote_stage_dir/remote-release.sh' '$DEPLOY_PATH/deploy/remote-release.sh'; STQB_DEPLOY_DOCKER_CONTEXT='$DEPLOY_DOCKER_CONTEXT' bash '$DEPLOY_PATH/deploy/remote-release.sh' '$DEPLOY_PATH' '$IMAGE_REF' '$VERSION' '$BUILD_SHA' '$DEPLOY_HEALTH_URL'"

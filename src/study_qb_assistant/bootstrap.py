@@ -110,6 +110,31 @@ def create_runtime_app() -> FastAPI:
     return app
 
 
+def main() -> None:
+    """提供统一的 CLI 启动入口，确保从主进程到子进程的日志完全保持 NoneBot 风格。"""
+    import uvicorn
+
+    load_local_env()
+    config = get_global_config()
+    from .logger.console import build_uvicorn_log_config
+
+    reload_dir = str(PROJECT_ROOT / "src" / "study_qb_assistant")
+    uvicorn.run(
+        "study_qb_assistant.bootstrap:create_runtime_app",
+        factory=True,
+        host=config.host,
+        port=config.port,
+        reload=config.reload,
+        reload_dirs=[reload_dir] if config.reload else None,
+        app_dir="src",
+        log_config=build_uvicorn_log_config(),
+    )
+
+
+if __name__ == "__main__":
+    main()
+
+
 def build_answer_service(
     *,
     index: LocalQuestionIndex,

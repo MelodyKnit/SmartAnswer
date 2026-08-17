@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # GitHub Actions 在每次正式发布后通过 SSH 调用本脚本。
-# 它不是常驻更新器：不安装 systemd 单元、不保留 GitHub 凭据，也不运行于业务容器内。
+# 它运行在生产服务所属的 rootless Docker 用户下：不使用 sudo、不安装 systemd
+# 单元、不保留 GitHub 凭据，也不运行于业务容器内。
 
 set -euo pipefail
 
@@ -14,6 +15,9 @@ build_sha="${4:-}"
 health_base_url="${5:-}"
 compose_file=""
 candidate_compose_file=""
+local_override_file=""
+image_override_file=""
+release_env=""
 database_path=""
 database_container_path=""
 database_mode="sqlite"
@@ -24,19 +28,55 @@ fail() {
 }
 
 validate_arguments() {
+  local actual_docker_context expected_docker_context
+
   [[ "$project_dir" =~ ^/[A-Za-z0-9._/-]+$ ]] || fail "invalid project directory"
   [[ "$image_ref" =~ ^ghcr\.io/[a-z0-9_.-]+/[a-z0-9_.-]+@sha256:[a-f0-9]{64}$ ]] || fail "invalid image reference"
   [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "invalid release version"
   [[ "$build_sha" =~ ^[a-f0-9]{40}$ ]] || fail "invalid build revision"
   [[ "$health_base_url" =~ ^https?://127\.0\.0\.1:[1-9][0-9]{0,4}$ ]] || fail "invalid health URL"
+  command -v docker >/dev/null 2>&1 || fail "docker command is unavailable"
+
+  expected_docker_context="${STQB_DEPLOY_DOCKER_CONTEXT:-rootless}"
+  [[ "$expected_docker_context" =~ ^[A-Za-z0-9._-]+$ ]] || fail "invalid Docker context"
+  actual_docker_context="$(docker context show 2>/dev/null || true)"
+  [[ "$actual_docker_context" == "$expected_docker_context" ]] || fail "Docker context must be $expected_docker_context, got ${actual_docker_context:-none}"
+
   compose_file="$project_dir/docker-compose.yaml"
   candidate_compose_file="$project_dir/deploy/docker-compose.release.yaml"
+  local_override_file="$project_dir/docker-compose.override.yml"
+  image_override_file="$project_dir/deploy/docker-compose.release-image.yaml"
+  release_env="$project_dir/.env.release"
   [[ -d "$project_dir" ]] || fail "project directory is missing"
   [[ -f "$candidate_compose_file" ]] || fail "release Compose file is missing"
 }
 
+compose_with_file() {
+  local selected_compose_file="$1"
+  shift
+  local -a compose_arguments=(
+    --project-directory "$project_dir"
+    --env-file "$release_env"
+    -f "$selected_compose_file"
+  )
+
+  # 服务器覆盖文件只承载端口、网络和本机服务等运维差异，发布镜像由最后一层覆盖强制指定。
+  if [[ -f "$local_override_file" ]]; then
+    compose_arguments+=(-f "$local_override_file")
+  fi
+  if [[ -f "$image_override_file" ]]; then
+    compose_arguments+=(-f "$image_override_file")
+  fi
+
+  docker compose "${compose_arguments[@]}" "$@"
+}
+
+compose_current_release() {
+  compose_with_file "$compose_file" "$@"
+}
+
 service_is_running() {
-  "$(command -v docker)" inspect --format '{{.State.Running}}' "$SERVICE_NAME" 2>/dev/null | grep -qx true
+  docker inspect --format '{{.State.Running}}' "$SERVICE_NAME" 2>/dev/null | grep -qx true
 }
 
 resolve_database_paths() {
@@ -95,6 +135,20 @@ write_release_environment() {
   mv "$temporary" "$target"
 }
 
+write_release_image_override() {
+  local target="$1"
+  local temporary
+
+  temporary="$(mktemp "$(dirname "$target")/.${target##*/}.XXXXXX")"
+  cat > "$temporary" <<'EOF'
+services:
+  study-qb-assistant:
+    image: ${STQB_IMAGE_REF:?STQB_IMAGE_REF is required for a release deployment}
+EOF
+  chmod 644 "$temporary"
+  mv "$temporary" "$target"
+}
+
 replace_file_atomically() {
   local source="$1"
   local target="$2"
@@ -136,13 +190,43 @@ backup_database() {
   printf '%s\n' "$backup_path"
 }
 
+capture_unmanaged_release() {
+  local running_image running_build running_version running_sha
+
+  [[ "$had_previous_release" != true ]] || return 0
+  service_is_running || return 0
+
+  running_image="$(docker inspect --format '{{.Config.Image}}' "$SERVICE_NAME")"
+  running_build="$(docker exec "$SERVICE_NAME" python -c '
+from study_qb_assistant.version import BUILD_INFO
+print(f"{BUILD_INFO.version}:{BUILD_INFO.build_sha}")
+')"
+  [[ "$running_image" != "" ]] || fail "running container image is unavailable"
+  [[ "$running_build" =~ ^([0-9]+\.[0-9]+\.[0-9]+):([a-f0-9]{40})$ ]] || fail "running container build metadata is unavailable"
+
+  running_version="${BASH_REMATCH[1]}"
+  running_sha="${BASH_REMATCH[2]}"
+  previous_version="$running_version"
+  printf 'STQB_IMAGE_REF=%s\nSTQB_RELEASE_VERSION=%s\nSTQB_RELEASE_SHA=%s\n' \
+    "$running_image" "$running_version" "$running_sha" > "$previous_env"
+  had_previous_release=true
+  previous_release_is_unmanaged=true
+  printf 'Existing unmanaged release detected; it will be retained as rollback target.\n' >&2
+}
+
+restore_release_metadata_without_restart() {
+  if [[ "$had_previous_release" == true && "$previous_release_is_unmanaged" != true ]]; then
+    install -m 600 "$previous_env" "$release_env"
+    write_release_image_override "$image_override_file"
+    return 0
+  fi
+
+  rm -f "$release_env" "$image_override_file"
+}
+
 restore_previous_release() {
-  local release_env="$1"
-  local previous_env="$2"
-  local had_previous_release="$3"
-  local had_previous_compose="$4"
-  local backup_path="$5"
-  local previous_version="$6"
+  local had_previous_compose="$1"
+  local backup_path="$2"
 
   if [[ "$had_previous_compose" == true ]]; then
     replace_file_atomically "$previous_compose" "$compose_file" 644
@@ -151,30 +235,36 @@ restore_previous_release() {
   fi
 
   if [[ "$had_previous_release" != true ]]; then
-    rm -f "$release_env"
+    rm -f "$release_env" "$image_override_file"
     docker rm -f "$SERVICE_NAME" >/dev/null 2>&1 || true
     printf 'No prior release is available to restart.\n' >&2
     return 1
   fi
 
   install -m 600 "$previous_env" "$release_env"
-  docker compose --env-file "$release_env" -f "$compose_file" stop "$SERVICE_NAME" || true
+  write_release_image_override "$image_override_file"
+  compose_current_release stop "$SERVICE_NAME" || true
 
   if [[ "$database_mode" == "sqlite" && -n "$backup_path" && -f "$backup_path" ]]; then
     rm -f "${database_path}-wal" "${database_path}-shm"
     cp "$backup_path" "$database_path"
   fi
 
-  docker compose --env-file "$release_env" -f "$compose_file" up -d --no-build "$SERVICE_NAME"
+  compose_current_release up -d --no-build "$SERVICE_NAME"
   [[ -z "$previous_version" ]] || wait_until_healthy "$previous_version"
+
+  # 首次纳入受控发布前可能没有 .env.release；回滚后恢复服务器原有的无托管状态。
+  if [[ "$previous_release_is_unmanaged" == true ]]; then
+    rm -f "$release_env" "$image_override_file"
+  fi
 }
 
 validate_arguments
 
-release_env="$project_dir/.env.release"
 previous_env="$(mktemp)"
 previous_compose="$(mktemp)"
 had_previous_release=false
+previous_release_is_unmanaged=false
 had_previous_compose=false
 backup_path=""
 previous_version=""
@@ -194,6 +284,7 @@ if [[ -f "$compose_file" ]]; then
   cp "$compose_file" "$previous_compose"
   had_previous_compose=true
 fi
+capture_unmanaged_release
 
 # 公开 GHCR 包允许匿名拉取；生产始终使用 Release manifest 中的不可变 digest。
 docker pull "$image_ref"
@@ -201,20 +292,26 @@ docker pull "$image_ref"
 candidate_build="$(docker run --rm --entrypoint python "$image_ref" -c 'from study_qb_assistant.version import BUILD_INFO; print(BUILD_INFO.version + ":" + BUILD_INFO.build_sha)')"
 [[ "$candidate_build" == "$version:$build_sha" ]] || fail "image build metadata does not match release"
 
+write_release_environment "$release_env"
+write_release_image_override "$image_override_file"
+if ! compose_with_file "$candidate_compose_file" config -q; then
+  restore_release_metadata_without_restart
+  fail "candidate Compose configuration is invalid"
+fi
+
 resolve_database_paths
 backup_path="$(backup_database)" || fail "SQLite backup failed; deployment was not started"
-write_release_environment "$release_env"
 replace_file_atomically "$candidate_compose_file" "$compose_file" 644
 
-if ! docker compose --env-file "$release_env" -f "$compose_file" up -d --no-build "$SERVICE_NAME"; then
-  if ! restore_previous_release "$release_env" "$previous_env" "$had_previous_release" "$had_previous_compose" "$backup_path" "$previous_version"; then
+if ! compose_current_release up -d --no-build "$SERVICE_NAME"; then
+  if ! restore_previous_release "$had_previous_compose" "$backup_path"; then
     fail "Compose start failed and rollback failed"
   fi
   fail "Compose start failed; previous release was restored"
 fi
 
 if ! wait_until_healthy "$version"; then
-  if ! restore_previous_release "$release_env" "$previous_env" "$had_previous_release" "$had_previous_compose" "$backup_path" "$previous_version"; then
+  if ! restore_previous_release "$had_previous_compose" "$backup_path"; then
     fail "health check failed and rollback failed"
   fi
   fail "health check failed; previous release was restored"

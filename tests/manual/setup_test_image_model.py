@@ -102,7 +102,7 @@ def setup_test_model():
             now
         ))
 
-        print(f"✅ 已创建模型配置")
+        print("✅ 已创建模型配置")
         print(f"   模型 ID: {model_id}")
         print(f"   配置指纹: {config_stamp}")
 
@@ -151,7 +151,7 @@ def setup_test_model():
 
         result = cursor.fetchone()
         if result:
-            print(f"\n验证结果：")
+            print("\n验证结果：")
             print(f"   模型名称: {result[0]}")
             print(f"   提供商: {result[1]}")
             print(f"   状态: {result[2]}")

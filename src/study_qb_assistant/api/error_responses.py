@@ -1,4 +1,4 @@
-"""统一的错误响应辅助函数，确保所有API端点返回一致的错误格式。"""
+"""统一的错误响应辅助函数，确保所有 API 端点返回一致且安全的错误格式。"""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ def internal_error_response(
     user_message: str = "服务器内部错误，请稍后重试",
     extra_context: dict[str, Any] | None = None,
 ) -> JSONResponse:
-    """创建统一的500错误响应，包含详细日志和结构化错误信息。
+    """创建统一的 500 错误响应，并把诊断细节仅写入服务端日志。
 
     Args:
         exc: 捕获的异常对象
@@ -25,7 +25,7 @@ def internal_error_response(
         extra_context: 额外的上下文信息，会记录到日志中
 
     Returns:
-        JSONResponse: 包含详细错误信息的500响应
+        JSONResponse: 不暴露内部异常细节的 500 响应
     """
     context = extra_context or {}
     log_event(
@@ -43,8 +43,6 @@ def internal_error_response(
             "error": {
                 "code": "INTERNAL_SERVER_ERROR",
                 "message": user_message,
-                "type": type(exc).__name__,
-                "detail": str(exc),
             },
         },
         status_code=500,

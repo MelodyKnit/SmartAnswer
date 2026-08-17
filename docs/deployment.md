@@ -10,6 +10,8 @@ Token。
 - `docker-compose.yaml`：仅接受 `STQB_IMAGE_REF` 指向的镜像 digest，拒绝可变标签启动。
 - `.env.server`：服务器本地业务配置，未提交到仓库。
 - `.env.release`：由发布工作流的远端脚本原子生成，记录当前镜像 digest、版本和提交号。
+- `docker-compose.override.yml`：服务器本地运维覆盖层，例如 rootless 端口映射、外部网络和 NewAPI 连接；发布不会覆盖它。
+- `deploy/docker-compose.release-image.yaml`：发布脚本生成的最终镜像覆盖层，确保本地覆盖文件不能把候选 digest 覆盖回旧镜像。
 - `deploy/remote-release.sh`：GitHub Actions 通过 SSH 临时执行，负责备份、切换、健康检查和回滚。
 
 镜像只包含代码、构建后的前端和提交的默认配置，不包含 `.env`、题库、SQLite、日志或图片数据。
@@ -30,21 +32,20 @@ Token。
 
 ## 服务器准备
 
-在服务器上创建部署目录与可持久化数据目录。发布工作流通过部署账户 SSH
-登录，并使用无密码 `sudo` 原子安装发布资产、运行受控发布脚本；业务容器本身不持有
-Docker Socket 或 GitHub 凭据：
+生产实例应使用部署账户的 rootless Docker。发布工作流通过该账户 SSH
+登录，直接在同一个 rootless Docker context 中原子安装发布资产并运行发布脚本；业务容器本身不持有
+Docker Socket 或 GitHub 凭据。不要通过 `sudo` 发布，否则会切换到 root Docker context：
 
 ```bash
-sudo install -d -o root -g root -m 0755 /opt/study-question-bank-assistant/deploy
-sudo install -d -o "$USER" -g "$USER" -m 0775 /opt/study-question-bank-assistant/deploy-data
-# 仅对实际部署账户配置；执行前请确认 sudoers 规则符合本机安全基线。
-sudo visudo
+install -d -m 0755 "$DEPLOY_PATH/deploy"
+install -d -m 0775 "$DEPLOY_PATH/deploy-data"
 ```
 
-部署账户必须能在不交互输入密码的情况下执行 `sudo -n install` 与
-`sudo -n bash /opt/study-question-bank-assistant/deploy/remote-release.sh`。当前工作流会先将
-候选 Compose 和发布脚本上传到该账户的 `~/.cache/stqb-release.*`，校验后再以 root 权限
-安装到项目目录；它不会直接向 root 所有目录执行 SCP。
+当前工作流会先将候选 Compose 和发布脚本上传到该账户的
+`~/.cache/stqb-release.*`，校验后再以该账户权限安装到项目目录。目标 Docker context
+必须是 `rootless`，否则发布脚本会在开始前失败，避免误操作 root Docker。
+
+线上 `docker-compose.override.yml` 是服务器专用文件，必须保留在项目目录中。它可以覆盖端口、网络和本地依赖服务；发布脚本会额外生成一个最后加载的镜像覆盖文件，使 Release manifest 中的不可变 digest 始终成为实际运行镜像。
 
 可选地创建 `.env.server` 保存模型、代理等业务配置。该文件与发布版本无关，示例见
 `.env.server.example`。常用配置包括：
@@ -66,10 +67,10 @@ HTTPS 地址。
 
 1. 启用必需审批人，并限制为维护者可以发布的版本标签。
 2. 添加 Secrets：`DEPLOY_SSH_PRIVATE_KEY`、`DEPLOY_KNOWN_HOSTS`。
-3. 添加 Variables：`DEPLOY_HOST`、`DEPLOY_PORT`、`DEPLOY_USER`、`DEPLOY_PATH`、`DEPLOY_HEALTH_URL`。
+3. 添加 Variables：`DEPLOY_HOST`、`DEPLOY_PORT`、`DEPLOY_USER`、`DEPLOY_PATH`、`DEPLOY_HEALTH_URL`、`DEPLOY_DOCKER_CONTEXT`。
 4. 将 GHCR 包设为公开。GitHub 新建包通常默认私有；首次镜像发布后，应在 Packages 页面调整为 Public，再批准部署任务。
 
-`DEPLOY_HEALTH_URL` 应是服务器本机的服务地址，例如 `http://127.0.0.1:3003`。这些值只存在于 GitHub Environment；不会写入数据库、`.env.server` 或业务容器。
+生产实例的变量应指向部署账户的 rootless Docker 服务：端口使用 SSH 实际端口，项目路径使用 `DEPLOY_PATH`，健康检查地址使用该实例 Compose 覆盖层暴露的本机地址，Docker context 为 `rootless`。`DEPLOY_HOST` 和 SSH 私钥只保存在 GitHub Environment，不写入仓库。这些值不会写入数据库、`.env.server` 或业务容器。
 
 ## 首次发布
 
@@ -93,7 +94,7 @@ git push origin HEAD --tags
 5. 等待 `production` Environment 审批。
 6. 远端脚本匿名拉取 manifest 中的精确 digest，备份 SQLite，原子切换 Compose，并验证 `/api/v1/healthz` 与 `/api/v1/version`。
 
-健康检查或启动失败时，脚本会恢复上一份 Compose、`.env.release` 和 SQLite 快照。脚本会
+健康检查或启动失败时，脚本会恢复上一份 Compose、`.env.release`、最终镜像覆盖和 SQLite 快照。对于已运行但尚未纳入受控发布的旧容器，脚本会读取其镜像与构建信息作为一次性回滚目标，避免首次迁移失败时误删线上服务。脚本会
 从运行中容器读取实际 SQLite 路径，且只接受 `/app/data` 挂载内的数据库；使用外部数据库
 时不会创建 SQLite 快照，需要由外部数据库自身负责备份和回滚。首次发布没有旧版本时会清理候选配置并失败退出，不会把失败镜像标记为当前版本。
 
@@ -111,5 +112,4 @@ git push origin HEAD --tags
 
 ## 反向代理
 
-服务监听容器端口 `8765`、宿主机端口 `3003`。Nginx 可将公开域名转发到
-`http://127.0.0.1:3003`。反向代理需要正确传递 `Host` 和 `X-Forwarded-Proto`，以便生成可访问的 OCS 图片 URL。
+服务监听容器端口 `8765`。由服务器专用 `docker-compose.override.yml` 决定宿主机监听地址与端口，反向代理再将公开域名转发到该地址。反向代理需要正确传递 `Host` 和 `X-Forwarded-Proto`，以便生成可访问的 OCS 图片 URL。

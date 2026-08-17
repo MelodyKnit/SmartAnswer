@@ -95,7 +95,10 @@ class NoneBotStyleFormatter(logging.Formatter):
             self._LEVEL_COLORS.get(record.levelname, self._LEVEL_COLORS["INFO"]),
             record.levelname,
         )
-        name_text = self.colorize(self._CYAN_UNDERLINE, record.name)
+        logger_name = record.name
+        if logger_name == "uvicorn.error":
+            logger_name = "uvicorn"
+        name_text = self.colorize(self._CYAN_UNDERLINE, logger_name)
         message = record.getMessage()
         if record.exc_info:
             message += "\n" + self.formatException(record.exc_info)
@@ -106,6 +109,38 @@ class NoneBotStyleFormatter(logging.Formatter):
         if not self.use_color:
             return value
         return f"{color}{value}{self._RESET}"
+
+
+def build_uvicorn_log_config() -> dict[str, Any]:
+    """构建与项目 NoneBot 日志风格完全一致的 Uvicorn 日志配置字典。"""
+    return {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "nonebot": {
+                "()": "study_qb_assistant.logger.console.NoneBotStyleFormatter",
+                "use_color": use_color(),
+            },
+        },
+        "handlers": {
+            "default": {
+                "formatter": "nonebot",
+                "class": "logging.StreamHandler",
+                "stream": "ext://sys.stdout",
+            },
+            "access": {
+                "formatter": "nonebot",
+                "class": "logging.StreamHandler",
+                "stream": "ext://sys.stdout",
+            },
+        },
+        "loggers": {
+            "uvicorn": {"handlers": ["default"], "level": "INFO", "propagate": False},
+            "uvicorn.error": {"handlers": ["default"], "level": "INFO", "propagate": False},
+            "uvicorn.access": {"handlers": ["access"], "level": "INFO", "propagate": False},
+            "watchfiles.main": {"handlers": ["default"], "level": "WARNING", "propagate": False},
+        },
+    }
 
 
 def logger_name_for_event(event: str) -> str:

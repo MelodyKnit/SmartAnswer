@@ -3,9 +3,7 @@
 
 import sys
 import requests
-import json
 import getpass
-from pathlib import Path
 
 
 BASE_URL = "http://127.0.0.1:8765"
@@ -165,7 +163,7 @@ def main():
         if test_capability(token, model_id, operation):
             passed_count += 1
         else:
-            print(f"  提示：某些提供商可能不支持所有编辑功能")
+            print("  提示：某些提供商可能不支持所有编辑功能")
 
     # 步骤 6: 总结
     print("\n" + "=" * 60)

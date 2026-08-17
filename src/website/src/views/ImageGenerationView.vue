@@ -28,7 +28,9 @@ const jobs = ref<ImageGenerationJob[]>([])
 const activeJobId = ref('')
 const inputReferences = ref<ImageGenerationInputReference[]>([])
 const previewUrls = ref<Record<string, string>>({})
-let pollTimer: number | undefined
+let jobPollTimer: number | undefined
+let sizeInferenceTimer: number | undefined
+let sizeInferenceRequestId = 0
 
 const form = reactive<{
   mode: ImageGenerationMode
@@ -176,9 +178,13 @@ function buildOutput(): ImageGenerationOutputOptions | undefined {
 }
 
 async function inferSizeFromPrompt() {
-  if (!form.prompt.trim() || !form.autoMode) return
+  const prompt = form.prompt.trim()
+  if (!prompt || !form.autoMode) return
+  const requestId = ++sizeInferenceRequestId
   try {
-    const result = await imageGenerationApi.inferSize(form.prompt.trim())
+    const result = await imageGenerationApi.inferSize(prompt)
+    // 异步响应可能晚于用户的下一次输入，只接受当前提示词对应的推断结果。
+    if (requestId !== sizeInferenceRequestId || prompt !== form.prompt.trim() || !form.autoMode) return
     const output = result.output
     form.inferredExplanation = result.explanation
 
@@ -275,18 +281,36 @@ async function refreshActiveJob() {
   } catch (error) {
     if (error instanceof ApiException && error.code !== 'JOB_NOT_FOUND') ElMessage.warning(error.message)
     activeJobId.value = ''
+    stopPolling()
   }
 }
 
 function startPolling() {
-  if (pollTimer !== undefined) return
-  pollTimer = window.setInterval(() => void refreshActiveJob(), 1_200)
+  if (jobPollTimer !== undefined) return
+  jobPollTimer = window.setInterval(() => void refreshActiveJob(), 1_200)
 }
 
 function stopPolling() {
-  if (pollTimer === undefined) return
-  window.clearInterval(pollTimer)
-  pollTimer = undefined
+  if (jobPollTimer === undefined) return
+  window.clearInterval(jobPollTimer)
+  jobPollTimer = undefined
+}
+
+function clearSizeInference() {
+  sizeInferenceRequestId += 1
+  if (sizeInferenceTimer !== undefined) {
+    window.clearTimeout(sizeInferenceTimer)
+    sizeInferenceTimer = undefined
+  }
+}
+
+function scheduleSizeInference() {
+  clearSizeInference()
+  if (!form.autoMode || form.prompt.trim().length <= 10) return
+  sizeInferenceTimer = window.setTimeout(() => {
+    sizeInferenceTimer = undefined
+    void inferSizeFromPrompt()
+  }, 800)
 }
 
 function handleInputReferences(references: ImageGenerationInputReference[]) {
@@ -372,19 +396,15 @@ watch(
 watch(
   () => form.prompt,
   () => {
-    if (form.autoMode && form.prompt.trim().length > 10) {
-      // 防抖：用户停止输入 800ms 后才推断
-      if (pollTimer !== undefined) {
-        window.clearTimeout(pollTimer)
-      }
-      pollTimer = window.setTimeout(() => void inferSizeFromPrompt(), 800)
-    }
+    // 尺寸推断与任务轮询使用独立定时器，输入不应中断生成任务刷新。
+    scheduleSizeInference()
   },
 )
 
 watch(
   () => form.autoMode,
   (enabled) => {
+    clearSizeInference()
     if (enabled && form.prompt.trim()) {
       void inferSizeFromPrompt()
     } else {
@@ -400,6 +420,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   stopPolling()
+  clearSizeInference()
   revokePreviewUrls()
 })
 </script>

@@ -76,6 +76,10 @@ class RemoteReleaseScriptTests(unittest.TestCase):
             "services:\n  new-release: {}\n",
         )
         self.write_text(
+            self.project_dir / "docker-compose.override.yml",
+            "services:\n  study-qb-assistant:\n    image: local-operator-image:old\n",
+        )
+        self.write_text(
             self.project_dir / ".env.release",
             "\n".join(
                 (
@@ -104,8 +108,20 @@ class RemoteReleaseScriptTests(unittest.TestCase):
         self.assertIn(f"STQB_IMAGE_REF={NEW_IMAGE}", release_environment)
         self.assertIn(f"STQB_RELEASE_VERSION={NEW_VERSION}", release_environment)
         self.assertFalse((self.deploy_dir / "docker-compose.release.yaml").exists())
+        image_override = self.deploy_dir / "docker-compose.release-image.yaml"
+        self.assertTrue(image_override.exists())
+        self.assertIn("image: ${STQB_IMAGE_REF", image_override.read_text(encoding="utf-8"))
         docker_commands = self.docker_log.read_text(encoding="utf-8")
         self.assertIn(f"pull {NEW_IMAGE}", docker_commands)
+        self.assertIn(
+            self.bash_path(self.project_dir / "docker-compose.override.yml"),
+            docker_commands,
+        )
+        self.assertIn(self.bash_path(image_override), docker_commands)
+        self.assertLess(
+            docker_commands.index(self.bash_path(self.project_dir / "docker-compose.override.yml")),
+            docker_commands.index(self.bash_path(image_override)),
+        )
         self.assertNotIn("login", docker_commands)
 
     def test_compose_failure_restores_previous_release(self) -> None:
@@ -158,16 +174,17 @@ class RemoteReleaseScriptTests(unittest.TestCase):
         self.assertIn('scp "${scp_args[@]}" docker-compose.yaml', workflow)
         self.assertNotIn('scp "${ssh_args[@]}"', workflow)
 
-    def test_deployment_workflows_stage_assets_before_privileged_install(self) -> None:
-        """部署账户只写入自身临时目录，再由 sudo 原子安装受控发布文件。"""
+    def test_deployment_workflows_stage_assets_for_rootless_deployment(self) -> None:
+        """部署账户在同一 rootless Docker context 中安装并执行发布文件。"""
 
         for workflow in (RELEASE_WORKFLOW, UPDATE_WORKFLOW):
             content = workflow.read_text(encoding="utf-8")
 
             self.assertIn('mktemp -d "$HOME/.cache/stqb-release.XXXXXX"', content)
             self.assertIn("Invalid remote staging directory", content)
-            self.assertIn("sudo -n install", content)
-            self.assertIn("sudo -n bash", content)
+            self.assertIn("install -d -m 0755", content)
+            self.assertIn("STQB_DEPLOY_DOCKER_CONTEXT", content)
+            self.assertNotIn("sudo -n", content)
             self.assertIn("cleanup_remote_stage", content)
 
     def test_release_workflow_triggers_for_version_tags(self) -> None:
@@ -226,6 +243,9 @@ class RemoteReleaseScriptTests(unittest.TestCase):
         self.assertIn("config.database_path_resolved", script)
         self.assertIn('SQLite database is outside the data mount', script)
         self.assertIn('source = sqlite3.connect(sys.argv[1])', script)
+        self.assertIn("docker context show", script)
+        self.assertIn("docker-compose.release-image.yaml", script)
+        self.assertIn("capture_unmanaged_release", script)
 
     def test_first_release_failure_restores_original_files(self) -> None:
         """首次发布无法启动时不应在服务器留下候选发布配置。"""
@@ -239,6 +259,39 @@ class RemoteReleaseScriptTests(unittest.TestCase):
         self.assertIn("old-release", (self.project_dir / "docker-compose.yaml").read_text(encoding="utf-8"))
         self.assertFalse((self.project_dir / ".env.release").exists())
         self.assertFalse((self.deploy_dir / "docker-compose.release.yaml").exists())
+        self.assertFalse((self.deploy_dir / "docker-compose.release-image.yaml").exists())
+
+    def test_unmanaged_running_container_is_restored_without_leaving_release_files(self) -> None:
+        """首次纳管失败时，原有 rootless 容器仍可作为回滚目标。"""
+
+        (self.project_dir / ".env.release").unlink()
+
+        completed = self.run_release(
+            health_version=OLD_VERSION,
+            fail_first_up=True,
+            running_database_path="external",
+            running_image=OLD_IMAGE,
+            running_version=OLD_VERSION,
+        )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("previous release was restored", completed.stderr)
+        self.assertIn("old-release", (self.project_dir / "docker-compose.yaml").read_text(encoding="utf-8"))
+        self.assertFalse((self.project_dir / ".env.release").exists())
+        self.assertFalse((self.deploy_dir / "docker-compose.release-image.yaml").exists())
+        self.assertEqual(self.up_counter.read_text(encoding="utf-8").strip(), "2")
+
+    def test_release_refuses_to_use_an_unexpected_docker_context(self) -> None:
+        """上下文不匹配时必须在拉取镜像或写入文件前失败。"""
+
+        completed = self.run_release(
+            health_version=NEW_VERSION,
+            docker_context="default",
+        )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("Docker context must be rootless", completed.stderr)
+        self.assertEqual(self.docker_log.read_text(encoding="utf-8"), "context show\n")
 
     def run_release(
         self,
@@ -246,6 +299,9 @@ class RemoteReleaseScriptTests(unittest.TestCase):
         health_version: str,
         fail_first_up: bool = False,
         running_database_path: str = "",
+        running_image: str = "",
+        running_version: str = "",
+        docker_context: str = "rootless",
     ) -> subprocess.CompletedProcess[str]:
         """通过伪造外部命令执行完整发布流程。"""
 
@@ -260,6 +316,10 @@ class RemoteReleaseScriptTests(unittest.TestCase):
             "FAKE_FAIL_FIRST_UP": "1" if fail_first_up else "0",
             "FAKE_PROJECT_DIR": self.bash_path(self.project_dir),
             "FAKE_RUNNING_DATABASE_PATH": running_database_path,
+            "FAKE_RUNNING_IMAGE": running_image,
+            "FAKE_RUNNING_VERSION": running_version,
+            "FAKE_RUNNING_SHA": "c" * 40,
+            "FAKE_DOCKER_CONTEXT": docker_context,
         }
         command = [
             str(self.bash),
@@ -337,8 +397,10 @@ printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
 command="${1:-}"
 case "$command" in
   inspect)
-    if [[ -n "${FAKE_RUNNING_DATABASE_PATH:-}" ]]; then
+    if [[ " $* " == *".State.Running"* ]] && [[ -n "${FAKE_RUNNING_DATABASE_PATH:-}${FAKE_RUNNING_IMAGE:-}" ]]; then
       printf 'true\n'
+    elif [[ " $* " == *".Config.Image"* ]] && [[ -n "${FAKE_RUNNING_IMAGE:-}" ]]; then
+      printf '%s\n' "$FAKE_RUNNING_IMAGE"
     fi
     ;;
   exec)
@@ -348,7 +410,9 @@ case "$command" in
     if [[ "$service_name" != "study-qb-assistant" ]]; then
       exit 1
     fi
-    if [[ "${1:-}" == "python" && " $* " == *get_global_config* ]]; then
+    if [[ "${1:-}" == "python" && " $* " == *BUILD_INFO* ]]; then
+      printf '%s:%s\n' "$FAKE_RUNNING_VERSION" "$FAKE_RUNNING_SHA"
+    elif [[ "${1:-}" == "python" && " $* " == *get_global_config* ]]; then
       printf '%s\n' "$FAKE_RUNNING_DATABASE_PATH"
     elif [[ "${1:-}" == "mkdir" ]]; then
       container_path="${!#}"
@@ -377,6 +441,11 @@ case "$command" in
       if [[ "$FAKE_FAIL_FIRST_UP" == "1" && "$count" == "1" ]]; then
         exit 1
       fi
+    fi
+    ;;
+  context)
+    if [[ "${2:-}" == "show" ]]; then
+      printf '%s\n' "$FAKE_DOCKER_CONTEXT"
     fi
     ;;
 esac
