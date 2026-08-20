@@ -10,6 +10,7 @@ from typing import Any
 
 from ...auth import AuthError
 from ..base import PlatformDomainService
+from .errors import FeedbackOperationError
 from .records import FeedbackRecord
 
 
@@ -151,28 +152,23 @@ class FeedbackService(PlatformDomainService):
         normalized_reward_points = max(0, int(reward_points))
         now = time.time()
         with self.lock:
-            existing = self.repository.get_feedback(feedback_id)
-            if existing is None:
-                raise AuthError("FEEDBACK_NOT_FOUND", "反馈不存在", http_status=404)
-            stored_reward_points = (
-                max(existing.reward_points, normalized_reward_points)
-                if normalized_status == "resolved"
-                else existing.reward_points
-            )
-            record = self.repository.update_feedback_resolution(
-                feedback_id,
-                status=normalized_status,
-                admin_note=admin_note.strip(),
-                corrected_answer=corrected_answer.strip(),
-                reward_points=stored_reward_points,
-                handled_by=handled_by,
-                handled_at=now,
-            )
-            if record is None:
-                raise AuthError("FEEDBACK_NOT_FOUND", "反馈不存在", http_status=404)
-        granted = (
-            max(0, record.reward_points - existing.reward_points)
-            if normalized_status == "resolved"
-            else 0
-        )
+            try:
+                record, granted = self.repository.resolve_feedback_with_reward(
+                    feedback_id,
+                    status=normalized_status,
+                    admin_note=admin_note.strip(),
+                    corrected_answer=corrected_answer.strip(),
+                    reward_points=normalized_reward_points,
+                    handled_by=handled_by,
+                    handled_at=now,
+                    reward_order_id=secrets.token_hex(12),
+                )
+            except FeedbackOperationError as exc:
+                raise feedback_auth_error(exc) from exc
         return record.to_dict(), granted
+
+
+def feedback_auth_error(exc: FeedbackOperationError) -> AuthError:
+    """将仓储层反馈异常转换为统一业务错误。"""
+
+    return AuthError(exc.code, exc.message, http_status=exc.http_status)

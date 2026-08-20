@@ -56,6 +56,7 @@ def build_user_router() -> APIRouter:
                     user_id=str(user["user_id"]),
                     username=str(user["username"]),
                     points=int(user["points"]),
+                    unlimited_expires_at=float(user.get("unlimited_expires_at") or 0.0),
                 ),
             }
         )
@@ -134,6 +135,8 @@ def build_user_router() -> APIRouter:
                 user = auth.set_role(username, payload.role, valid_role_ids=role_ids)
             if payload.points is not None:
                 user = auth.set_points(username, payload.points)
+            if payload.unlimited_expires_at is not None:
+                user = auth.set_unlimited_expires_at(username, payload.unlimited_expires_at)
             if payload.status is not None:
                 user = auth.set_status(username, payload.status)
         except AuthError as exc:

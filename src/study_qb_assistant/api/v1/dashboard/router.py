@@ -24,6 +24,7 @@ def build_dashboard_router() -> APIRouter:
             user_id=str(user["user_id"]),
             username=str(user["username"]),
             points=int(user["points"]),
+            unlimited_expires_at=float(user.get("unlimited_expires_at") or 0.0),
             role=str(user["role"]),
             scope=scope,
             permissions=set(user.get("permissions") or ()),

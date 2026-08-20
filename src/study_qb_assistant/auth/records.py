@@ -25,6 +25,12 @@ class UserRecord:
     invited_by: str = ""
     reset_token_hash: str | None = None
     reset_expires_at: float = 0.0
+    unlimited_expires_at: float = 0.0
+
+    @property
+    def is_unlimited(self) -> bool:
+        """检查用户当前是否在无限使用天数有效期内。"""
+        return self.unlimited_expires_at > time.time()
 
     def to_dict(self) -> dict:
         """转换为可写入 JSON 的字典。"""
@@ -42,6 +48,7 @@ class UserRecord:
             "invited_by": self.invited_by,
             "reset_token_hash": self.reset_token_hash,
             "reset_expires_at": self.reset_expires_at,
+            "unlimited_expires_at": self.unlimited_expires_at,
         }
 
     @classmethod
@@ -63,6 +70,7 @@ class UserRecord:
                 str(payload["reset_token_hash"]) if payload.get("reset_token_hash") else None
             ),
             reset_expires_at=float(payload.get("reset_expires_at") or 0.0),
+            unlimited_expires_at=float(payload.get("unlimited_expires_at") or payload.get("vip_expires_at") or 0.0),
         )
 
 

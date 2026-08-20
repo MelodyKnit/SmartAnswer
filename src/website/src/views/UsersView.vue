@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** 用户管理：列出用户、调整状态/角色/积分，并支持管理员手动发放积分。 */
+/** 用户管理：列出用户、调整状态/角色/积分，并支持管理员手动发放权益。 */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { billingApi, roleApi, userApi, walletApi } from '@/api/endpoints'
@@ -49,10 +49,18 @@ async function loadRoles() {
 }
 
 const editVisible = ref(false)
-const editing = reactive({
+const editing = reactive<{
+  username: string
+  role: string
+  points: number
+  unlimited_expires_at_ms: string | number
+  status: string
+  original_role: string
+}>({
   username: '',
   role: 'user',
   points: 0,
+  unlimited_expires_at_ms: '',
   status: 'active',
   original_role: 'user',
 })
@@ -62,6 +70,7 @@ function openEdit(user: ManagedUser) {
   editing.role = user.role
   editing.original_role = user.role
   editing.points = user.points
+  editing.unlimited_expires_at_ms = user.unlimited_expires_at ? user.unlimited_expires_at * 1000 : ''
   editing.status = user.status
   editVisible.value = true
 }
@@ -72,7 +81,14 @@ function canManageUser(user: ManagedUser) {
 
 async function submitEdit() {
   try {
-    const body: Record<string, unknown> = { points: editing.points, status: editing.status }
+    const unlimitedExpiresAt = editing.unlimited_expires_at_ms
+      ? Math.floor(Number(editing.unlimited_expires_at_ms) / 1000)
+      : 0
+    const body: Record<string, unknown> = {
+      points: editing.points,
+      unlimited_expires_at: unlimitedExpiresAt,
+      status: editing.status,
+    }
     if (canAssignRoles.value && editing.role !== editing.original_role) {
       body.role = editing.role
     }
@@ -89,11 +105,23 @@ async function submitEdit() {
 }
 
 const grantVisible = ref(false)
-const grant = reactive({ username: '', points: manualGrantDefault.value })
+const grant = reactive<{
+  username: string
+  kind: 'points' | 'days'
+  points: number
+  days: number
+}>({
+  username: '',
+  kind: 'points',
+  points: manualGrantDefault.value,
+  days: 30,
+})
 
 function openGrant(user: ManagedUser) {
   grant.username = user.username
+  grant.kind = 'points'
   grant.points = manualGrantDefault.value
+  grant.days = 30
   grantVisible.value = true
 }
 
@@ -101,10 +129,11 @@ async function submitGrant() {
   try {
     await walletApi.grant({
       username: grant.username,
-      kind: 'points',
-      points: grant.points,
+      kind: grant.kind,
+      points: grant.kind === 'points' ? grant.points : 0,
+      days: grant.kind === 'days' ? grant.days : 0,
     })
-    ElMessage.success('积分已发放')
+    ElMessage.success(grant.kind === 'days' ? '无限使用天数已发放' : '积分已发放')
     grantVisible.value = false
     await loadUsers()
   } catch (error) {
@@ -146,6 +175,19 @@ onMounted(async () => {
           </template>
         </el-table-column>
         <el-table-column label="积分" width="100" prop="points" align="center" />
+        <el-table-column label="天数到期时间" min-width="160" align="center">
+          <template #default="{ row }">
+            <el-tag
+              v-if="(row.unlimited_expires_at || 0) > Math.floor(Date.now() / 1000)"
+              size="small"
+              type="warning"
+              effect="light"
+            >
+              {{ formatDateTime(row.unlimited_expires_at) }}
+            </el-tag>
+            <span v-else class="text-xs text-ink-muted">未开通</span>
+          </template>
+        </el-table-column>
         <el-table-column label="使用次数" width="110" align="center">
           <template #default="{ row }">{{ row.usage_count ?? 0 }}</template>
         </el-table-column>
@@ -162,7 +204,7 @@ onMounted(async () => {
           <template #default="{ row }">
             <template v-if="canManageUser(row)">
               <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-              <el-button v-if="canGrantPoints" link type="primary" @click="openGrant(row)">发放积分</el-button>
+              <el-button v-if="canGrantPoints" link type="primary" @click="openGrant(row)">发放权益</el-button>
             </template>
             <span v-else class="text-xs text-ink-muted">无权限</span>
           </template>
@@ -182,6 +224,16 @@ onMounted(async () => {
         <el-form-item label="积分">
           <el-input-number v-model="editing.points" :min="0" class="w-full" />
         </el-form-item>
+        <el-form-item label="到期时间">
+          <el-date-picker
+            v-model="editing.unlimited_expires_at_ms"
+            type="datetime"
+            value-format="x"
+            placeholder="留空或设为过去时间即未开通"
+            clearable
+            class="w-full"
+          />
+        </el-form-item>
         <el-form-item label="状态">
           <el-select v-model="editing.status" class="w-full">
             <el-option value="active" label="正常" />
@@ -195,10 +247,20 @@ onMounted(async () => {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="grantVisible" :title="`发放积分 · ${grant.username}`" width="420px">
+    <el-dialog v-model="grantVisible" :title="`发放权益 · ${grant.username}`" width="420px">
       <el-form label-position="top">
-        <el-form-item label="积分数量">
+        <el-form-item label="发放类型">
+          <el-radio-group v-model="grant.kind" class="w-full">
+            <el-radio-button value="points">积分充值</el-radio-button>
+            <el-radio-button value="days">无限使用天数</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="grant.kind === 'points'" label="积分数量">
           <el-input-number v-model="grant.points" :min="1" class="w-full" />
+        </el-form-item>
+        <el-form-item v-else label="有效天数">
+          <el-input-number v-model="grant.days" :min="1" class="w-full" />
+          <div class="mt-1 text-xs text-ink-muted">增加的天数将自动在用户当前会员到期时间或当前时间上顺延。</div>
         </el-form-item>
       </el-form>
       <template #footer>

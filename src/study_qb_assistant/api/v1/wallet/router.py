@@ -37,6 +37,7 @@ def build_wallet_router() -> APIRouter:
             user_id=str(user["user_id"]),
             username=str(user["username"]),
             points=int(user["points"]),
+            unlimited_expires_at=float(user.get("unlimited_expires_at") or 0.0),
         )
         return JSONResponse({"ok": True, "wallet": wallet})
 
@@ -115,17 +116,19 @@ def build_wallet_router() -> APIRouter:
                 status_code=404,
             )
         if actor["role"] != "superadmin" and target["role"] != "user":
-            return forbidden_response("只能为内置普通用户发放积分")
-        order = wallet_service.grant_wallet(
-            user_id=str(target["user_id"]),
-            username=str(target["username"]),
-            created_by=str(actor["username"]),
-            kind=payload.kind,
-            points=payload.points,
-            source="manual_credit",
-        )
-        if payload.kind == "points" and payload.points:
-            auth.add_points(payload.username, max(0, int(payload.points)))
+            return forbidden_response("只能为内置普通用户发放权益")
+        try:
+            order = wallet_service.grant_wallet(
+                user_id=str(target["user_id"]),
+                username=str(target["username"]),
+                created_by=str(actor["username"]),
+                kind=payload.kind,
+                points=payload.points,
+                days=payload.days,
+                source="manual_credit",
+            )
+        except AuthError as exc:
+            return auth_error_response(exc)
         return JSONResponse({"ok": True, "order": order})
 
     # --- 兑换码管理 ---
@@ -155,6 +158,7 @@ def build_wallet_router() -> APIRouter:
                 created_by=str(actor["username"]),
                 kind=payload.kind,
                 points=payload.points,
+                days=payload.days,
                 max_uses=payload.max_uses,
                 expires_at=payload.expires_at,
                 code=payload.code,
@@ -180,15 +184,16 @@ def build_wallet_router() -> APIRouter:
             )
         except AuthError as exc:
             return auth_error_response(exc)
-        if order["kind"] == "points" and order["points_delta"] > 0:
-            auth.add_points(str(user["username"]), int(order["points_delta"]))
         latest_user = auth.get_user(str(user["username"]))
         wallet = wallet_service.wallet_summary(
             user_id=str(user["user_id"]),
             username=str(user["username"]),
             points=int(latest_user["points"]) if latest_user else int(user["points"]),
+            unlimited_expires_at=float(
+                (latest_user or user).get("unlimited_expires_at") or 0.0
+            ),
         )
-        return JSONResponse({"ok": True, "order": order, "wallet": wallet})
+        return JSONResponse({"ok": True, "order": order, "wallet": wallet, "user": latest_user})
 
     @router.get("/points-policy")
     def points_policy_get(request: Request) -> JSONResponse:

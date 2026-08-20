@@ -6,8 +6,9 @@ import json
 
 from sqlalchemy import select
 
+from ...platform.feedback.errors import FeedbackOperationError
 from ...platform.feedback.records import FeedbackRecord
-from ..orm import FeedbackEntity
+from ..orm import FeedbackEntity, UserEntity, WalletOrderEntity
 from .base import SqlAlchemyRepository
 
 
@@ -78,7 +79,7 @@ class FeedbackRepository(SqlAlchemyRepository):
             session.commit()
             return self._feedback_record(entity)
 
-    def update_feedback_resolution(
+    def resolve_feedback_with_reward(
         self,
         feedback_id: str,
         *,
@@ -88,22 +89,70 @@ class FeedbackRepository(SqlAlchemyRepository):
         reward_points: int,
         handled_by: str,
         handled_at: float,
-    ) -> FeedbackRecord | None:
-        """更新反馈处理结果。"""
+        reward_order_id: str,
+    ) -> tuple[FeedbackRecord, int]:
+        """原子更新反馈处理结果、奖励积分和钱包流水。"""
+
         with self.session_factory() as session:
-            entity = session.scalar(
-                select(FeedbackEntity).where(FeedbackEntity.feedback_id == feedback_id)
-            )
-            if entity is None:
-                return None
-            entity.status = status
-            entity.admin_note = admin_note
-            entity.corrected_answer = corrected_answer
-            entity.reward_points = max(0, int(reward_points))
-            entity.handled_by = handled_by
-            entity.handled_at = handled_at
-            session.commit()
-            return self._feedback_record(entity)
+            try:
+                entity = session.scalar(
+                    select(FeedbackEntity)
+                    .where(FeedbackEntity.feedback_id == feedback_id)
+                    .with_for_update()
+                )
+                if entity is None:
+                    raise FeedbackOperationError(
+                        "FEEDBACK_NOT_FOUND", "反馈不存在", http_status=404
+                    )
+
+                previous_reward = max(0, int(entity.reward_points or 0))
+                stored_reward = (
+                    max(previous_reward, max(0, int(reward_points)))
+                    if status == "resolved"
+                    else previous_reward
+                )
+                granted_points = (
+                    max(0, stored_reward - previous_reward) if status == "resolved" else 0
+                )
+
+                entity.status = status
+                entity.admin_note = admin_note
+                entity.corrected_answer = corrected_answer
+                entity.reward_points = stored_reward
+                entity.handled_by = handled_by
+                entity.handled_at = handled_at
+
+                if granted_points > 0:
+                    user = session.scalar(
+                        select(UserEntity)
+                        .where(UserEntity.user_id == entity.user_id)
+                        .with_for_update()
+                    )
+                    if user is None or user.username != entity.username:
+                        raise FeedbackOperationError(
+                            "USER_NOT_FOUND", "反馈提交用户不存在", http_status=404
+                        )
+                    user.points = int(user.points or 0) + granted_points
+                    session.add(
+                        WalletOrderEntity(
+                            order_id=reward_order_id,
+                            user_id=entity.user_id,
+                            username=entity.username,
+                            kind="points",
+                            points_delta=granted_points,
+                            days_delta=0,
+                            source="feedback_reward",
+                            source_id=entity.feedback_id,
+                            status="completed",
+                            created_by=handled_by,
+                            created_at=handled_at,
+                        )
+                    )
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+            return self._feedback_record(entity), granted_points
 
     def _feedback_record(self, entity: FeedbackEntity) -> FeedbackRecord:
         image_urls = tuple(json.loads(entity.image_urls or "[]"))

@@ -118,6 +118,8 @@ OCS 或 /query 请求
 - `GET /wallet/redeem-codes`
 - `POST /wallet/redeem-codes`
 - `POST /wallet/redeem`
+
+钱包兑换支持 `points` 和 `days` 两类权益。天数权益会记录到期时间并只免除查题积分扣费；兑换码核销、权益变更和钱包流水在同一事务中完成。
 - `GET /import-scripts`
 - `POST /import-scripts/generate`
 - `GET /import-scripts/{script_id}`

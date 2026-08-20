@@ -76,6 +76,13 @@ def ensure_sqlite_compat_columns(engine: Engine) -> None:
         "users": {
             "invite_code": "TEXT DEFAULT ''",
             "invited_by": "TEXT DEFAULT ''",
+            "unlimited_expires_at": "REAL DEFAULT 0.0",
+        },
+        "redeem_codes": {
+            "days": "INTEGER DEFAULT 0",
+        },
+        "wallet_orders": {
+            "days_delta": "INTEGER DEFAULT 0",
         },
         "api_tokens": {
             "quota_used": "INTEGER DEFAULT 0",
@@ -193,6 +200,13 @@ def ensure_sql_compat_columns(engine: Engine) -> None:
         "users": {
             "invite_code": "VARCHAR(64) DEFAULT ''",
             "invited_by": "VARCHAR(64) DEFAULT ''",
+            "unlimited_expires_at": "FLOAT DEFAULT 0.0",
+        },
+        "redeem_codes": {
+            "days": "INTEGER DEFAULT 0",
+        },
+        "wallet_orders": {
+            "days_delta": "INTEGER DEFAULT 0",
         },
         "api_tokens": {
             "quota_used": "INTEGER DEFAULT 0",

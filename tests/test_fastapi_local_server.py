@@ -1877,7 +1877,7 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(wallet_grant_admin_forbidden.status_code, 403)
         self.assertEqual(
             wallet_grant_admin_forbidden.json()["error"]["message"],
-            "只能为内置普通用户发放积分",
+            "只能为内置普通用户发放权益",
         )
         self.assertEqual(disable_ok.json()["user"]["status"], "disabled")
 
@@ -2136,6 +2136,11 @@ class FastAPILocalServerTests(unittest.TestCase):
                 json={"code": limited.json()["redeem_code"]["code"]},
                 headers=headers,
             )
+            expired_redeem_again = client.post(
+                "/wallet/redeem",
+                json={"code": limited.json()["redeem_code"]["code"]},
+                headers=headers,
+            )
 
         self.assertEqual(permanent.status_code, 200)
         self.assertEqual(permanent.json()["redeem_code"]["expires_at"], 0.0)
@@ -2155,6 +2160,148 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(negative_create.json()["error"]["code"], "INVALID_INPUT")
         self.assertEqual(expired_redeem.status_code, 400)
         self.assertEqual(expired_redeem.json()["error"]["code"], "REDEEM_CODE_EXPIRED")
+        self.assertEqual(expired_redeem_again.status_code, 400)
+        self.assertEqual(expired_redeem_again.json()["error"]["code"], "REDEEM_CODE_EXPIRED")
+
+    def test_days_redeem_code_and_unlimited_queries(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "test.db"
+            auth = AuthService(database_path)
+            platform = PlatformServices(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
+                )
+            )
+            client.post("/auth/register", json={"username": "boss", "password": "password123"})
+            client.post("/auth/register", json={"username": "alice", "password": "password123"})
+
+            boss_headers = {
+                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
+            }
+            alice_headers = {
+                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'alice', 'password': 'password123'}).json()['token']}"
+            }
+
+            # 1. 创建天数兑换码
+            days_code_res = client.post(
+                "/wallet/redeem-codes",
+                json={"kind": "days", "days": 7, "max_uses": 1},
+                headers=boss_headers,
+            )
+            self.assertEqual(days_code_res.status_code, 200)
+            code = days_code_res.json()["redeem_code"]["code"]
+            self.assertEqual(days_code_res.json()["redeem_code"]["kind"], "days")
+            self.assertEqual(days_code_res.json()["redeem_code"]["days"], 7)
+
+            # 2. alice 兑换该 7 天兑换码
+            alice_before = client.get("/users/me", headers=alice_headers).json()["user"]
+            self.assertFalse(alice_before.get("is_unlimited", False))
+            self.assertEqual(alice_before["points"], 100)
+
+            redeem_res = client.post(
+                "/wallet/redeem",
+                json={"code": code},
+                headers=alice_headers,
+            )
+            self.assertEqual(redeem_res.status_code, 200)
+            self.assertEqual(redeem_res.json()["order"]["kind"], "days")
+            self.assertEqual(redeem_res.json()["order"]["days_delta"], 7)
+            self.assertTrue(redeem_res.json()["wallet"]["is_unlimited"])
+            alice_after = client.get("/users/me", headers=alice_headers).json()["user"]
+            self.assertTrue(alice_after["is_unlimited"])
+            self.assertAlmostEqual(alice_after["unlimited_expires_at"], time.time() + 7 * 86400, delta=10)
+            wallet_after = client.get("/wallet/me", headers=alice_headers).json()["wallet"]
+            self.assertTrue(wallet_after["is_unlimited"])
+            self.assertAlmostEqual(
+                wallet_after["unlimited_expires_at"],
+                alice_after["unlimited_expires_at"],
+                delta=1,
+            )
+
+            # 3. 在无限使用有效期内，搜题调用不扣减积分 (points_cost 结算为 0)
+            query_res = client.post(
+                "/query",
+                json={"title": "马克思主义基本原理"},
+                headers=alice_headers,
+            )
+            self.assertEqual(query_res.status_code, 200)
+            alice_after_query = client.get("/users/me", headers=alice_headers).json()["user"]
+            self.assertEqual(alice_after_query["points"], 100)
+
+            # 4. 再次兑换 30 天卡，自动在原有到期时间顺延 (7 + 30 = 37 天)
+            days30_code_res = client.post(
+                "/wallet/redeem-codes",
+                json={"kind": "days", "days": 30, "max_uses": 1},
+                headers=boss_headers,
+            )
+            client.post(
+                "/wallet/redeem",
+                json={"code": days30_code_res.json()["redeem_code"]["code"]},
+                headers=alice_headers,
+            )
+            alice_extended = client.get("/users/me", headers=alice_headers).json()["user"]
+            self.assertAlmostEqual(alice_extended["unlimited_expires_at"], time.time() + 37 * 86400, delta=10)
+
+            # 5. 管理员手动发放天数 (再顺延 10 天 -> 47 天)
+            grant_res = client.post(
+                "/wallet/grants",
+                json={"username": "alice", "kind": "days", "days": 10},
+                headers=boss_headers,
+            )
+            self.assertEqual(grant_res.status_code, 200)
+            alice_granted = client.get("/users/me", headers=alice_headers).json()["user"]
+            self.assertAlmostEqual(alice_granted["unlimited_expires_at"], time.time() + 47 * 86400, delta=10)
+
+            # 6. 无效面值不能生成无效兑换码或空权益流水。
+            empty_points = client.post(
+                "/wallet/redeem-codes",
+                json={"kind": "points", "points": 0},
+                headers=boss_headers,
+            )
+            empty_days = client.post(
+                "/wallet/grants",
+                json={"username": "alice", "kind": "days", "days": 0},
+                headers=boss_headers,
+            )
+            self.assertEqual(empty_points.status_code, 400)
+            self.assertEqual(empty_days.status_code, 400)
+            self.assertEqual(empty_points.json()["error"]["code"], "INVALID_INPUT")
+            self.assertEqual(empty_days.json()["error"]["code"], "INVALID_INPUT")
+            with self.assertRaises(AuthError) as fractional_count:
+                platform.wallet.create_redeem_code(
+                    created_by="boss",
+                    kind="points",
+                    points=10,
+                    count=1.5,
+                )
+            self.assertEqual(fractional_count.exception.code, "INVALID_INPUT")
+
+            # 7. 目标用户失效时，兑换码、权益和流水必须整体回滚。
+            rollback_code = platform.wallet.create_redeem_code(
+                created_by="boss",
+                kind="days",
+                days=3,
+            )
+            with self.assertRaises(AuthError) as context:
+                platform.wallet.redeem_code(
+                    code=str(rollback_code["code"]),
+                    user_id="missing-user",
+                    username="missing-user",
+                    created_by="missing-user",
+                )
+            self.assertEqual(context.exception.code, "USER_NOT_FOUND")
+            code_after_failure = next(
+                item
+                for item in platform.wallet.list_redeem_codes()
+                if item["code_id"] == rollback_code["code_id"]
+            )
+            self.assertEqual(code_after_failure["used_uses"], 0)
+            self.assertEqual(code_after_failure["status"], "active")
+            self.assertEqual(
+                platform.wallet.list_wallet_orders(username="missing-user"),
+                [],
+            )
 
     def test_admin_can_list_and_update_questions_but_regular_user_cannot(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -3053,6 +3200,34 @@ class FastAPILocalServerTests(unittest.TestCase):
 
         self.assertIn("elapsed_ms", columns)
         self.assertEqual(elapsed_ms, 0.0)
+
+    def test_legacy_wallet_tables_get_entitlement_compat_columns(self) -> None:
+        """旧 SQLite 钱包表启动时应补齐天数权益字段。"""
+
+        engine = create_engine("sqlite:///:memory:", future=True)
+        with engine.begin() as connection:
+            connection.execute(text("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)"))
+            connection.execute(
+                text("CREATE TABLE redeem_codes (id INTEGER PRIMARY KEY, code TEXT)")
+            )
+            connection.execute(
+                text("CREATE TABLE wallet_orders (id INTEGER PRIMARY KEY, order_id TEXT)")
+            )
+
+        database_module.ensure_sqlite_compat_columns(engine)
+        with engine.connect() as connection:
+            columns_by_table = {
+                table: {
+                    row[1]
+                    for row in connection.execute(text(f"PRAGMA table_info({table})")).fetchall()
+                }
+                for table in ("users", "redeem_codes", "wallet_orders")
+            }
+        engine.dispose()
+
+        self.assertIn("unlimited_expires_at", columns_by_table["users"])
+        self.assertIn("days", columns_by_table["redeem_codes"])
+        self.assertIn("days_delta", columns_by_table["wallet_orders"])
 
     def test_dashboard_rankings_user_isolation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

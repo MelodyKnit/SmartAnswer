@@ -20,6 +20,7 @@ class RedeemCodeRecord:
     created_by: str
     created_at: float
     expires_at: float = 0.0
+    days: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -27,6 +28,7 @@ class RedeemCodeRecord:
             "code": self.code,
             "kind": self.kind,
             "points": self.points,
+            "days": self.days,
             "max_uses": self.max_uses,
             "used_uses": self.used_uses,
             "status": self.status,
@@ -42,6 +44,7 @@ class RedeemCodeRecord:
             code=str(payload["code"]),
             kind=str(payload.get("kind") or "points"),
             points=int(payload.get("points") or 0),
+            days=int(payload.get("days") or 0),
             max_uses=int(payload.get("max_uses") or 1),
             used_uses=int(payload.get("used_uses") or 0),
             status=str(payload.get("status") or "active"),
@@ -64,6 +67,7 @@ class WalletOrderRecord:
     status: str
     created_by: str
     created_at: float
+    days_delta: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -72,6 +76,7 @@ class WalletOrderRecord:
             "username": self.username,
             "kind": self.kind,
             "points_delta": self.points_delta,
+            "days_delta": self.days_delta,
             "source": self.source,
             "source_id": self.source_id,
             "status": self.status,
@@ -87,6 +92,7 @@ class WalletOrderRecord:
             username=str(payload["username"]),
             kind=str(payload.get("kind") or "points"),
             points_delta=int(payload.get("points_delta") or 0),
+            days_delta=int(payload.get("days_delta") or 0),
             source=str(payload.get("source") or ""),
             source_id=(str(payload["source_id"]) if payload.get("source_id") else None),
             status=str(payload.get("status") or "completed"),

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Request
 from starlette.responses import JSONResponse
 
 from ....auth import AuthError
-from ...dependencies import get_auth_service, get_feedback_service, get_wallet_service
+from ...dependencies import get_feedback_service
 from ...security import (
     auth_error_response,
     current_user,
@@ -80,7 +80,6 @@ def build_feedback_router() -> APIRouter:
         if actor is None:
             return unauthorized_response("请先登录")
         feedback_service = get_feedback_service(request)
-        auth = get_auth_service(request)
         try:
             feedback, granted = feedback_service.resolve_feedback(
                 feedback_id,
@@ -92,18 +91,6 @@ def build_feedback_router() -> APIRouter:
             )
         except AuthError as exc:
             return auth_error_response(exc)
-        # 把奖励积分实际计入反馈提交者账户余额
-        if granted > 0:
-            auth.add_points(str(feedback["username"]), granted)
-            get_wallet_service(request).grant_wallet(
-                user_id=str(feedback["user_id"]),
-                username=str(feedback["username"]),
-                created_by=str(actor["username"]),
-                kind="points",
-                points=granted,
-                source="feedback_reward",
-                source_id=str(feedback["feedback_id"]),
-            )
         return JSONResponse({"ok": True, "feedback": feedback, "granted_points": granted})
 
     return router

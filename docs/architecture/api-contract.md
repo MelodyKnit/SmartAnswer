@@ -326,6 +326,8 @@
 
 返回当前用户与当前积分计费规则摘要。
 
+`user` 还包含 `unlimited_expires_at` 和 `is_unlimited`，用于展示用户的无限使用天数权益；该权益只免除查题积分扣费，不免除 API Key 调用额度。
+
 `billing` 还包含邀请码奖励展示字段：
 
 - `invite_bonus_points`：每位符合条件用户可获得的积分。
@@ -625,6 +627,8 @@
 返回当前用户钱包摘要：
 
 - `points`
+- `unlimited_expires_at`：无限使用天数的到期时间戳，`0` 表示未开通或已到期。
+- `is_unlimited`：当前是否处于有效期内。该权益只免除查题积分扣费，不免除 API Key 调用额度。
 
 #### `GET /wallet/orders`
 
@@ -634,7 +638,7 @@
 #### `POST /wallet/grants`
 
 - 权限：`wallet:changes:write`
-- 用于手动发放积分
+- 用于手动发放积分或无限使用天数；用户变更和钱包流水在同一事务中提交。
 
 请求：
 
@@ -646,6 +650,16 @@
 }
 ```
 
+发放天数时使用 `kind=days` 和 `days` 字段：
+
+```json
+{
+  "username": "alice",
+  "kind": "days",
+  "days": 30
+}
+```
+
 #### `GET /wallet/redeem-codes`
 
 - 权限：`wallet:changes:write`
@@ -654,7 +668,7 @@
 #### `POST /wallet/redeem-codes`
 
 - 权限：`wallet:changes:write`
-- 创建积分兑换码
+- 创建积分或无限使用天数兑换码；`kind=days` 时使用 `days` 字段。
 
 请求：
 
@@ -669,10 +683,12 @@
 
 `expires_at` 为可选秒级 Unix 时间戳，`0` 或省略表示永久有效；如果传入时间早于当前时间，请求会返回 `INVALID_INPUT`。
 
+兑换时会在同一事务中完成兑换码核销、用户权益发放和钱包流水写入；任一步失败都会回滚。
+
 #### `POST /wallet/redeem`
 
 - 角色：登录用户
-- 使用兑换码兑换积分
+- 使用兑换码兑换积分或无限使用天数
 
 请求：
 

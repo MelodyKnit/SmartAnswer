@@ -65,6 +65,7 @@ class DashboardService:
         user_id: str,
         username: str,
         points: int,
+        unlimited_expires_at: float = 0.0,
         role: str = "user",
         scope: str = "self",
         permissions: set[str] | None = None,
@@ -107,7 +108,10 @@ class DashboardService:
         }
         notifications = self.notifications.list_notifications(user_id=user_id, limit=5)
         wallet = self.wallet.wallet_summary(
-            user_id=user_id, username=username, points=points
+            user_id=user_id,
+            username=username,
+            points=points,
+            unlimited_expires_at=unlimited_expires_at,
         )
         ranking_preview = self.dashboard_rankings(
             days=1,

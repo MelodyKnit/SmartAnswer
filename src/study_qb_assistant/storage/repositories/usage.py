@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 from sqlalchemy import case, func, select
 
 from ...auth import AuthError
@@ -76,7 +78,9 @@ class UsageRepository(SqlAlchemyRepository):
             session.add(entity)
             if token_id:
                 token_entity = session.scalar(
-                    select(ApiTokenEntity).where(ApiTokenEntity.token_id == token_id)
+                    select(ApiTokenEntity)
+                    .where(ApiTokenEntity.token_id == token_id)
+                    .with_for_update()
                 )
                 if token_entity is not None:
                     token_entity.last_used_at = record.created_at
@@ -97,7 +101,9 @@ class UsageRepository(SqlAlchemyRepository):
             token_entity: ApiTokenEntity | None = None
             if token_id:
                 token_entity = session.scalar(
-                    select(ApiTokenEntity).where(ApiTokenEntity.token_id == token_id)
+                    select(ApiTokenEntity)
+                    .where(ApiTokenEntity.token_id == token_id)
+                    .with_for_update()
                 )
                 if token_entity is None or token_entity.status != "active":
                     raise AuthError("UNAUTHORIZED", "请提供有效 API Key", http_status=401)
@@ -111,18 +117,25 @@ class UsageRepository(SqlAlchemyRepository):
                     )
 
             user_entity = session.scalar(
-                select(UserEntity).where(UserEntity.user_id == record.user_id)
+                select(UserEntity)
+                .where(UserEntity.user_id == record.user_id)
+                .with_for_update()
             )
             if user_entity is None:
                 raise AuthError("USER_NOT_FOUND", "用户不存在", http_status=404)
 
-            normalized_points = max(0, int(points_cost))
-            if normalized_points > 0:
-                current_points = int(user_entity.points or 0)
-                if current_points >= normalized_points:
-                    user_entity.points = current_points - normalized_points
-                else:
-                    normalized_points = 0
+            # 校验用户是否在无限使用天数有效期内
+            is_unlimited = float(getattr(user_entity, "unlimited_expires_at", 0.0) or 0.0) > time.time()
+            if is_unlimited:
+                normalized_points = 0
+            else:
+                normalized_points = max(0, int(points_cost))
+                if normalized_points > 0:
+                    current_points = int(user_entity.points or 0)
+                    if current_points >= normalized_points:
+                        user_entity.points = current_points - normalized_points
+                    else:
+                        normalized_points = 0
             record.points_cost = normalized_points
 
             entity = UsageLogEntity(

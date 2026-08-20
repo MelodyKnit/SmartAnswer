@@ -15,6 +15,8 @@ export interface User {
   status: string
   email: string | null
   points: number
+  unlimited_expires_at?: number
+  is_unlimited?: boolean
   invite_code: string
   invited_by: string
   created_at: number
@@ -44,6 +46,8 @@ export interface WalletSummary {
   user_id: string
   username: string
   points: number
+  unlimited_expires_at?: number
+  is_unlimited?: boolean
 }
 
 export interface ApiToken {
@@ -142,6 +146,7 @@ export interface WalletOrder {
   username: string
   kind: string
   points_delta: number
+  days_delta?: number
   source: string
   source_id: string | null
   status: string
@@ -155,6 +160,7 @@ export interface WalletChange {
   user_id?: string
   username?: string
   points_delta: number
+  days_delta?: number
   balance_after?: number
   source: string
   source_id?: string | null
@@ -168,6 +174,7 @@ export interface RedeemCode {
   code: string
   kind: string
   points: number
+  days?: number
   max_uses: number
   used_uses: number
   status: string

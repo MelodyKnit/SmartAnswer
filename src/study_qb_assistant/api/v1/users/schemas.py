@@ -8,6 +8,7 @@ class UserUpdatePayload(BaseModel):
     role: str | None = None
     points: int | None = None
     status: str | None = None
+    unlimited_expires_at: float | None = None
 
 
 class UsersDeletePayload(BaseModel):

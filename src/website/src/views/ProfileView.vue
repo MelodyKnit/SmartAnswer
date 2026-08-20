@@ -182,9 +182,12 @@ onMounted(() => {
             </div>
           </div>
           <h2 class="text-lg font-bold text-ink">{{ auth.user?.display_name || auth.user?.username }}</h2>
-          <div class="mt-1 flex items-center justify-center gap-1.5">
+          <div class="mt-1 flex items-center justify-center gap-1.5 flex-wrap">
             <el-tag size="small" type="primary" effect="plain">{{ roleLabel }}</el-tag>
             <el-tag size="small" type="success" effect="plain">积分: {{ auth.user?.points ?? 0 }}</el-tag>
+            <el-tag v-if="(auth.user?.unlimited_expires_at || 0) > Math.floor(Date.now() / 1000)" size="small" type="warning" effect="dark">
+              剩余 {{ Math.ceil(((auth.user?.unlimited_expires_at || 0) - Math.floor(Date.now() / 1000)) / 86400) }} 天
+            </el-tag>
           </div>
 
           <div class="mt-8 border-t border-line pt-4">
@@ -260,6 +263,16 @@ onMounted(() => {
 
                 <el-form-item label="当前可用积分">
                   <span class="font-bold text-brand-600 text-lg">{{ auth.user?.points ?? 0 }}</span>
+                </el-form-item>
+
+                <el-form-item label="天数有效期">
+                  <div v-if="(auth.user?.unlimited_expires_at || 0) > Math.floor(Date.now() / 1000)" class="flex items-center gap-2">
+                    <el-tag type="warning" effect="light">有效中</el-tag>
+                    <span class="text-sm text-ink">
+                      到期时间：{{ formatDateTime(auth.user?.unlimited_expires_at || 0) }}
+                    </span>
+                  </div>
+                  <span v-else class="font-medium text-ink-muted">未开通或已到期</span>
                 </el-form-item>
 
                 <el-form-item label="注册时间">

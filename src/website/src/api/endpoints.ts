@@ -89,7 +89,15 @@ export const authApi = {
 export const userApi = {
   me: () => api.get<{ ok: true; user: User; billing: Billing; wallet: WalletSummary }>('/users/me'),
   list: () => api.get<{ ok: true; users: ManagedUser[] }>('/users'),
-  update: (username: string, body: { role?: string; points?: number; status?: string }) =>
+  update: (
+    username: string,
+    body: {
+      role?: string
+      points?: number
+      status?: string
+      unlimited_expires_at?: number
+    },
+  ) =>
     api.patch<{ ok: true; user: User }>(`/users/${encodeURIComponent(username)}`, body),
   updateProfile: (display_name: string) =>
     api.patch<{ ok: true; user: User }>('/users/me/profile', { display_name }),
@@ -336,19 +344,24 @@ export const walletApi = {
       '/wallet/changes',
       params,
     ),
-  grant: (body: { username: string; kind: 'points'; points: number }) =>
-    api.post<{ ok: true; order: WalletOrder }>('/wallet/grants', body),
+  grant: (body: {
+    username: string
+    kind?: 'points' | 'days'
+    points?: number
+    days?: number
+  }) => api.post<{ ok: true; order: WalletOrder }>('/wallet/grants', body),
   redeemCodes: () => api.get<{ ok: true; redeem_codes: RedeemCode[] }>('/wallet/redeem-codes'),
   createRedeemCode: (body: {
-    kind: 'points'
-    points: number
+    kind: 'points' | 'days'
+    points?: number
+    days?: number
     max_uses?: number
     expires_at?: number
     code?: string
     count?: number
   }) => api.post<{ ok: true; redeem_code: RedeemCode }>('/wallet/redeem-codes', body),
   redeem: (code: string) =>
-    api.post<{ ok: true; order: WalletOrder; wallet: WalletSummary }>('/wallet/redeem', { code }),
+    api.post<{ ok: true; order: WalletOrder; wallet: WalletSummary; user?: User }>('/wallet/redeem', { code }),
 }
 
 /* ---------------- 导入脚本 ---------------- */

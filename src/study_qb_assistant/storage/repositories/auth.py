@@ -219,6 +219,7 @@ class SqlAlchemyAuthRepository:
         entity.password_hash = record.password_hash
         entity.email = record.email
         entity.points = record.points
+        entity.unlimited_expires_at = record.unlimited_expires_at
         entity.created_at = record.created_at
         entity.invite_code = record.invite_code
         entity.invited_by = record.invited_by
@@ -235,6 +236,7 @@ class SqlAlchemyAuthRepository:
             password_hash=entity.password_hash,
             email=entity.email,
             points=entity.points,
+            unlimited_expires_at=float(getattr(entity, "unlimited_expires_at", 0.0) or 0.0),
             created_at=entity.created_at,
             invite_code=entity.invite_code or "",
             invited_by=entity.invited_by or "",

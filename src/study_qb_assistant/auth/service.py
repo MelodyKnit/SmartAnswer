@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import math
 import secrets
 import time
 from pathlib import Path
@@ -343,6 +344,39 @@ class AuthService:
             self.repository.save_user(user)
             return self.public_user_dict(user)
 
+    def grant_unlimited_days(self, username: str, days: int) -> dict:
+        """按天数顺延或开通用户的无限使用天数。"""
+        username = (username or "").strip()
+        days_value = max(0, int(days))
+        if days_value <= 0:
+            raise AuthError("INVALID_INPUT", "天数必须大于 0", http_status=400)
+        with self._lock:
+            user = self.repository.get_user(username)
+            if user is None:
+                raise AuthError("USER_NOT_FOUND", "用户不存在", http_status=404)
+            now = time.time()
+            base_time = user.unlimited_expires_at if user.unlimited_expires_at > now else now
+            user.unlimited_expires_at = base_time + days_value * 86400.0
+            self.repository.save_user(user)
+            return self.public_user_dict(user)
+
+    def set_unlimited_expires_at(self, username: str, expires_at: float) -> dict:
+        """直接设置用户的无限使用到期时间戳。"""
+        username = (username or "").strip()
+        try:
+            expires_at_val = float(expires_at or 0.0)
+        except (TypeError, ValueError) as exc:
+            raise AuthError("INVALID_INPUT", "到期时间必须是有效时间戳", http_status=400) from exc
+        if not math.isfinite(expires_at_val) or expires_at_val < 0:
+            raise AuthError("INVALID_INPUT", "到期时间必须是非负有效时间戳", http_status=400)
+        with self._lock:
+            user = self.repository.get_user(username)
+            if user is None:
+                raise AuthError("USER_NOT_FOUND", "用户不存在", http_status=404)
+            user.unlimited_expires_at = expires_at_val
+            self.repository.save_user(user)
+            return self.public_user_dict(user)
+
     def consume_points(self, username: str, points: int) -> dict:
         """扣减用户积分，不足时抛出业务错误。"""
         username = (username or "").strip()
@@ -485,6 +519,8 @@ class AuthService:
             "status": user.status,
             "email": user.email,
             "points": user.points,
+            "unlimited_expires_at": user.unlimited_expires_at,
+            "is_unlimited": user.is_unlimited,
             "invite_code": user.invite_code,
             "invited_by": user.invited_by,
             "created_at": user.created_at,

@@ -3,22 +3,44 @@
 from __future__ import annotations
 
 import math
+import re
 import secrets
 import time
+from typing import Any, cast
 
 from ...auth import AuthError
 from ..base import PlatformDomainService
+from .errors import WalletOperationError
 from .records import RedeemCodeRecord, WalletOrderRecord
 
 
 class WalletService(PlatformDomainService):
     """WalletService 领域实现。"""
 
-    def wallet_summary(self, *, user_id: str, username: str, points: int) -> dict:
+    def wallet_summary(
+        self,
+        *,
+        user_id: str,
+        username: str,
+        points: int,
+        unlimited_expires_at: float = 0.0,
+    ) -> dict:
         """汇总用户钱包积分状态。"""
 
+        try:
+            expires_at = max(0.0, float(unlimited_expires_at or 0.0))
+        except (TypeError, ValueError):
+            expires_at = 0.0
+        if not math.isfinite(expires_at):
+            expires_at = 0.0
         with self.lock:
-            return {"user_id": user_id, "username": username, "points": points}
+            return {
+                "user_id": user_id,
+                "username": username,
+                "points": points,
+                "unlimited_expires_at": expires_at,
+                "is_unlimited": expires_at > time.time(),
+            }
 
     def create_redeem_code(
         self,
@@ -26,18 +48,25 @@ class WalletService(PlatformDomainService):
         created_by: str,
         kind: str,
         points: int = 0,
+        days: int = 0,
         max_uses: int = 1,
         expires_at: float = 0.0,
         code: str | None = None,
         count: int = 1,
     ) -> dict:
-        """创建积分兑换码。"""
+        """创建积分或天数兑换码。"""
 
-        if kind != "points":
-            raise AuthError("INVALID_INPUT", "兑换码类型仅支持 points", http_status=400)
-        if count < 1 or count > 1000:
+        if kind not in ("points", "days"):
+            raise AuthError("INVALID_INPUT", "兑换码类型仅支持 points 或 days", http_status=400)
+        amount = require_positive_amount(
+            points if kind == "points" else days,
+            "积分数量" if kind == "points" else "兑换天数",
+        )
+        max_uses_value = require_positive_amount(max_uses, "可用次数")
+        count_value = require_positive_amount(count, "批量创建兑换码的数量")
+        if count_value > 1000:
             raise AuthError("INVALID_INPUT", "批量创建兑换码的数量必须在 1 到 1000 之间", http_status=400)
-        if code and count > 1:
+        if code and count_value > 1:
             raise AuthError("INVALID_INPUT", "批量创建不支持指定特定兑换码文字", http_status=400)
 
         now = time.time()
@@ -53,7 +82,6 @@ class WalletService(PlatformDomainService):
             code = code.strip()
             if len(code) < 3 or len(code) > 64:
                 raise AuthError("INVALID_INPUT", "自定义兑换码长度必须在 3 到 64 之间", http_status=400)
-            import re
             if not re.match(r"^[a-zA-Z0-9_\-]+$", code):
                 raise AuthError("INVALID_INPUT", "自定义兑换码只能包含字母、数字、下划线和连字符", http_status=400)
 
@@ -63,7 +91,7 @@ class WalletService(PlatformDomainService):
                 if self.repository.find_redeem_code_by_code(code):
                     raise AuthError("INVALID_INPUT", f"兑换码 {code} 已存在", http_status=400)
 
-            for _ in range(count):
+            for _ in range(count_value):
                 actual_code = code if code else "rc_" + secrets.token_urlsafe(10)
                 if not code:
                     while self.repository.find_redeem_code_by_code(actual_code):
@@ -72,9 +100,10 @@ class WalletService(PlatformDomainService):
                 record = RedeemCodeRecord(
                     code_id=secrets.token_hex(12),
                     code=actual_code,
-                    kind="points",
-                    points=max(0, int(points)),
-                    max_uses=max(1, int(max_uses)),
+                    kind=kind,
+                    points=amount if kind == "points" else 0,
+                    days=amount if kind == "days" else 0,
+                    max_uses=max_uses_value,
                     used_uses=0,
                     status="active",
                     created_by=created_by,
@@ -99,27 +128,36 @@ class WalletService(PlatformDomainService):
         created_by: str,
         kind: str,
         points: int = 0,
+        days: int = 0,
         source: str = "manual_credit",
         source_id: str | None = None,
     ) -> dict:
-        """手动发放积分，并写入钱包流水。"""
+        """手动发放积分或无限天数，并写入钱包流水。"""
 
-        if kind != "points":
-            raise AuthError("INVALID_INPUT", "钱包类型仅支持 points", http_status=400)
+        if kind not in ("points", "days"):
+            raise AuthError("INVALID_INPUT", "钱包类型仅支持 points 或 days", http_status=400)
+        amount = require_positive_amount(
+            points if kind == "points" else days,
+            "积分数量" if kind == "points" else "发放天数",
+        )
         with self.lock:
             order = WalletOrderRecord(
                 order_id=secrets.token_hex(12),
                 user_id=user_id,
                 username=username,
-                kind="points",
-                points_delta=max(0, int(points)),
+                kind=kind,
+                points_delta=amount if kind == "points" else 0,
+                days_delta=amount if kind == "days" else 0,
                 source=source,
                 source_id=source_id,
                 status="completed",
                 created_by=created_by,
                 created_at=time.time(),
             )
-            self.repository.save_wallet_order(order)
+            try:
+                self.repository.grant_wallet_benefit(order)
+            except WalletOperationError as exc:
+                raise wallet_auth_error(exc) from exc
             return order.to_dict()
 
     def redeem_code(
@@ -131,34 +169,22 @@ class WalletService(PlatformDomainService):
         created_by: str,
     ) -> dict:
         """核销兑换码，并转换成标准钱包流水。"""
+        normalized_code = (code or "").strip()
+        if not normalized_code:
+            raise AuthError("INVALID_INPUT", "请输入兑换码", http_status=400)
         with self.lock:
-            redeem = self.repository.find_redeem_code_by_code((code or "").strip())
-            if redeem is None:
-                raise AuthError("REDEEM_CODE_NOT_FOUND", "兑换码不存在", http_status=404)
-            now = time.time()
-            if redeem.status != "active":
-                raise AuthError("REDEEM_CODE_DISABLED", "兑换码不可用", http_status=400)
-            if redeem.expires_at and redeem.expires_at < now:
-                redeem.status = "expired"
-                self.repository.save_redeem_code(redeem)
-                raise AuthError("REDEEM_CODE_EXPIRED", "兑换码已过期", http_status=400)
-            if redeem.used_uses >= redeem.max_uses:
-                redeem.status = "exhausted"
-                self.repository.save_redeem_code(redeem)
-                raise AuthError("REDEEM_CODE_EXHAUSTED", "兑换码已用完", http_status=400)
-            redeem.used_uses += 1
-            if redeem.used_uses >= redeem.max_uses:
-                redeem.status = "exhausted"
-            self.repository.save_redeem_code(redeem)
-            return self.grant_wallet(
-                user_id=user_id,
-                username=username,
-                created_by=created_by,
-                kind=redeem.kind,
-                points=redeem.points,
-                source="redeem_code",
-                source_id=redeem.code_id,
-            )
+            try:
+                order = self.repository.redeem_code_and_grant_benefit(
+                    code=normalized_code,
+                    order_id=secrets.token_hex(12),
+                    user_id=user_id,
+                    username=username,
+                    created_by=created_by,
+                    now=time.time(),
+                )
+            except WalletOperationError as exc:
+                raise wallet_auth_error(exc) from exc
+            return order.to_dict()
 
     def list_wallet_orders(
         self,
@@ -218,3 +244,34 @@ class WalletService(PlatformDomainService):
                 limit=5000,
             )
         )
+
+
+def require_positive_amount(value: object, field_name: str) -> int:
+    """严格校验正整数，避免小数或非有限数被静默截断。"""
+
+    try:
+        if isinstance(value, bool):
+            raise ValueError
+        if isinstance(value, int):
+            amount = value
+        elif isinstance(value, str):
+            normalized = value.strip()
+            if not re.fullmatch(r"\+?\d+", normalized):
+                raise ValueError
+            amount = int(normalized)
+        else:
+            numeric = float(cast(Any, value))
+            if not math.isfinite(numeric) or not numeric.is_integer():
+                raise ValueError
+            amount = int(numeric)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise AuthError("INVALID_INPUT", f"{field_name}必须是正整数", http_status=400) from exc
+    if amount <= 0:
+        raise AuthError("INVALID_INPUT", f"{field_name}必须大于 0", http_status=400)
+    return amount
+
+
+def wallet_auth_error(exc: WalletOperationError) -> AuthError:
+    """将钱包仓储异常转换为现有统一鉴权业务异常。"""
+
+    return AuthError(exc.code, exc.message, http_status=exc.http_status)
