@@ -181,6 +181,10 @@ class RemoteReleaseScriptTests(unittest.TestCase):
             content = workflow.read_text(encoding="utf-8")
 
             self.assertIn('mktemp -d "$HOME/.cache/stqb-release.XXXXXX"', content)
+            self.assertIn(
+                "^/(root|home/[A-Za-z0-9_-]+)/\\.cache/stqb-release\\.",
+                content,
+            )
             self.assertIn("Invalid remote staging directory", content)
             self.assertIn("install -d -m 0755", content)
             self.assertIn("STQB_DEPLOY_DOCKER_CONTEXT", content)

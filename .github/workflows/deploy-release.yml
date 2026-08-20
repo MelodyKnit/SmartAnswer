@@ -126,7 +126,9 @@ jobs:
           scp_args=(-P "$DEPLOY_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes)
           remote_target="${DEPLOY_USER}@${DEPLOY_HOST}"
           remote_stage_dir="$(ssh "${ssh_args[@]}" "$remote_target" 'set -euo pipefail; mkdir -p "$HOME/.cache"; mktemp -d "$HOME/.cache/stqb-release.XXXXXX"')"
-          [[ "$remote_stage_dir" =~ ^/home/[A-Za-z0-9_-]+/\.cache/stqb-release\.[A-Za-z0-9]+$ ]] || { echo "Invalid remote staging directory" >&2; exit 1; }
+          # 生产机可能使用 root 或普通部署用户；两者的 HOME 路径都由远端
+          # mktemp 生成，限制在受控缓存目录内，避免把任意远程路径带回清理逻辑。
+          [[ "$remote_stage_dir" =~ ^/(root|home/[A-Za-z0-9_-]+)/\.cache/stqb-release\.[A-Za-z0-9]+$ ]] || { echo "Invalid remote staging directory" >&2; exit 1; }
           cleanup_remote_stage() {
             ssh "${ssh_args[@]}" "$remote_target" "rm -rf '$remote_stage_dir'" || true
           }
