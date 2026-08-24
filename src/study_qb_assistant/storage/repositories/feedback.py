@@ -90,7 +90,7 @@ class FeedbackRepository(SqlAlchemyRepository):
         handled_by: str,
         handled_at: float,
         reward_order_id: str,
-    ) -> tuple[FeedbackRecord, int]:
+    ) -> tuple[FeedbackRecord, int, tuple[str, ...]]:
         """原子更新反馈处理结果、奖励积分和钱包流水。"""
 
         with self.session_factory() as session:
@@ -105,6 +105,12 @@ class FeedbackRepository(SqlAlchemyRepository):
                         "FEEDBACK_NOT_FOUND", "反馈不存在", http_status=404
                     )
 
+                previous_values = {
+                    "status": entity.status,
+                    "admin_note": entity.admin_note,
+                    "corrected_answer": entity.corrected_answer,
+                    "reward_points": int(entity.reward_points or 0),
+                }
                 previous_reward = max(0, int(entity.reward_points or 0))
                 stored_reward = (
                     max(previous_reward, max(0, int(reward_points)))
@@ -152,7 +158,19 @@ class FeedbackRepository(SqlAlchemyRepository):
             except Exception:
                 session.rollback()
                 raise
-            return self._feedback_record(entity), granted_points
+            record = self._feedback_record(entity)
+            current_values = {
+                "status": record.status,
+                "admin_note": record.admin_note,
+                "corrected_answer": record.corrected_answer,
+                "reward_points": record.reward_points,
+            }
+            changed_fields = tuple(
+                field
+                for field in previous_values
+                if previous_values[field] != current_values[field]
+            )
+            return record, granted_points, changed_fields
 
     def _feedback_record(self, entity: FeedbackEntity) -> FeedbackRecord:
         image_urls = tuple(json.loads(entity.image_urls or "[]"))

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Request
 from starlette.responses import JSONResponse
 
 from ....auth import AuthError
-from ...dependencies import get_feedback_service
+from ...dependencies import get_feedback_service, get_notification_service
 from ...security import (
     auth_error_response,
     current_user,
@@ -80,8 +80,9 @@ def build_feedback_router() -> APIRouter:
         if actor is None:
             return unauthorized_response("请先登录")
         feedback_service = get_feedback_service(request)
+        notification_service = get_notification_service(request)
         try:
-            feedback, granted = feedback_service.resolve_feedback(
+            resolution = feedback_service.resolve_feedback(
                 feedback_id,
                 handled_by=str(actor["username"]),
                 status=payload.status,
@@ -89,6 +90,47 @@ def build_feedback_router() -> APIRouter:
                 corrected_answer=payload.corrected_answer,
                 reward_points=payload.reward_points,
             )
+            feedback = resolution.feedback
+            granted = resolution.granted_points
+            if resolution.has_changes:
+                normalized_status = str(feedback.get("status") or "open").strip().lower()
+                status_label_map = {
+                    "resolved": "已采纳/已解决",
+                    "rejected": "已驳回",
+                    "processing": "处理中",
+                    "open": "待处理",
+                }
+                status_text = status_label_map.get(normalized_status, normalized_status)
+                feedback_title = str(feedback.get("title") or "题目反馈").strip()
+                content_parts = [
+                    f"您提交的反馈【{feedback_title}】状态已更新为：{status_text}。"
+                ]
+                if "admin_note" in resolution.changed_fields and feedback.get("admin_note"):
+                    content_parts.append(f"管理员备注：{feedback['admin_note']}")
+                if "corrected_answer" in resolution.changed_fields:
+                    content_parts.append("参考答案已更新，请查看反馈详情。")
+                if "reward_points" in resolution.changed_fields:
+                    content_parts.append(
+                        f"累计奖励积分：{int(feedback.get('reward_points') or 0)} 点。"
+                    )
+                if granted > 0:
+                    content_parts.append(f"本次新增奖励积分：{granted} 点。")
+
+                target_user_id = str(feedback.get("user_id") or "")
+                if target_user_id:
+                    notification_service.try_create_notification(
+                        user_id=target_user_id,
+                        level=(
+                            "success"
+                            if normalized_status == "resolved"
+                            else "warning"
+                            if normalized_status == "rejected"
+                            else "info"
+                        ),
+                        category="feedback",
+                        title="反馈处理结果通知",
+                        content=" ".join(content_parts),
+                    )
         except AuthError as exc:
             return auth_error_response(exc)
         return JSONResponse({"ok": True, "feedback": feedback, "granted_points": granted})

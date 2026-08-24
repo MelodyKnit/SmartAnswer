@@ -6,7 +6,12 @@ from fastapi import APIRouter, Request
 from starlette.responses import JSONResponse
 
 from ....auth import AuthError
-from ...dependencies import get_auth_service, get_settings_service, get_wallet_service
+from ...dependencies import (
+    get_auth_service,
+    get_notification_service,
+    get_settings_service,
+    get_wallet_service,
+)
 from ...security import (
     auth_error_response,
     current_user,
@@ -102,6 +107,7 @@ def build_wallet_router() -> APIRouter:
         if denied:
             return denied
         auth = get_auth_service(request)
+        notification_service = get_notification_service(request)
         wallet_service = get_wallet_service(request)
         actor = current_user(request)
         target = auth.get_user(payload.username)
@@ -127,6 +133,22 @@ def build_wallet_router() -> APIRouter:
                 days=payload.days,
                 source="manual_credit",
             )
+            if payload.kind == "days" and int(payload.days or 0) > 0:
+                notification_service.try_create_notification(
+                    user_id=str(target["user_id"]),
+                    level="success",
+                    category="wallet",
+                    title="无限制使用天数发放通知",
+                    content=f"管理员已为您发放 {int(order.get('days_delta') or 0)} 天无限制使用天数。",
+                )
+            elif payload.kind == "points" and int(payload.points or 0) > 0:
+                notification_service.try_create_notification(
+                    user_id=str(target["user_id"]),
+                    level="success",
+                    category="wallet",
+                    title="积分发放通知",
+                    content=f"管理员已为您发放 {int(order.get('points_delta') or 0)} 积分。",
+                )
         except AuthError as exc:
             return auth_error_response(exc)
         return JSONResponse({"ok": True, "order": order})

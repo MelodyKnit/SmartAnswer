@@ -7,7 +7,11 @@ from starlette.responses import JSONResponse
 
 from ....auth import AuthError
 from ....auth.email_verification import EmailVerificationService, normalize_email
-from ...dependencies import get_auth_service, get_settings_service
+from ...dependencies import (
+    get_auth_service,
+    get_notification_service,
+    get_settings_service,
+)
 from ...security import (
     SESSION_COOKIE,
     auth_error_response,
@@ -40,6 +44,7 @@ def build_auth_router() -> APIRouter:
     def register(request: Request, payload: RegisterPayload) -> JSONResponse:
         auth = get_auth_service(request)
         platform = get_settings_service(request)
+        notification_service = get_notification_service(request)
         if auth.has_users() and not platform.is_registration_enabled():
             return auth_error_response(
                 AuthError(
@@ -68,17 +73,31 @@ def build_auth_router() -> APIRouter:
                 )
             invite_reward = platform.get_invite_reward_policy()
             has_invite_code = bool(payload.invite_code.strip())
+            inviter_bonus = int(invite_reward["inviter_points"]) if has_invite_code else 0
             user = auth.register(
                 payload.username,
                 payload.password,
                 email,
                 invite_code=payload.invite_code,
-                inviter_bonus=int(invite_reward["inviter_points"]) if has_invite_code else 0,
+                inviter_bonus=inviter_bonus,
                 invitee_bonus=int(invite_reward["invitee_points"]) if has_invite_code else 0,
                 initial_points=platform.get_default_user_points(),
             )
             if verification is not None and email_code_record is not None:
                 verification.consume_code(email_code_record.code_id)
+            if has_invite_code and user.get("invited_by"):
+                inviter = auth.get_user(str(user["invited_by"]))
+                if inviter:
+                    notification_service.try_create_notification(
+                        user_id=str(inviter["user_id"]),
+                        level="success",
+                        category="wallet",
+                        title="邀请好友成功奖励通知",
+                        content=(
+                            f"用户【{user['username']}】已通过您的邀请码成功注册。"
+                            + (f" 奖励积分 {inviter_bonus} 点已到账。" if inviter_bonus > 0 else "")
+                        ),
+                    )
         except AuthError as exc:
             return auth_error_response(exc)
         return JSONResponse({"ok": True, "user": user})

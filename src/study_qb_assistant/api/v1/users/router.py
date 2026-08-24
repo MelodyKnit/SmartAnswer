@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+import time
 from typing import Any
 
 from fastapi import APIRouter, Request
 from starlette.responses import JSONResponse
 
 from ....auth import AuthError
+from ....platform.usage.time_ranges import LOCAL_TIMEZONE
 from ...dependencies import (
     get_auth_service,
+    get_notification_service,
     get_permission_service,
     get_settings_service,
     get_usage_service,
@@ -92,8 +96,16 @@ def build_user_router() -> APIRouter:
         if user is None:
             return unauthorized_response("请先登录")
         auth = get_auth_service(request)
+        notification_service = get_notification_service(request)
         try:
             auth.change_password(str(user["username"]), payload.old_password, payload.new_password)
+            notification_service.try_create_notification(
+                user_id=str(user["user_id"]),
+                level="info",
+                category="security",
+                title="账号安全提醒：密码已修改",
+                content="您的账号密码已成功修改。如非本人操作，请及时联系系统管理员。",
+            )
         except AuthError as exc:
             return auth_error_response(exc)
         return JSONResponse({"ok": True, "message": "密码已修改，请重新登录"})
@@ -118,6 +130,7 @@ def build_user_router() -> APIRouter:
         if denied:
             return denied
         auth = get_auth_service(request)
+        notification_service = get_notification_service(request)
         permission_service = get_permission_service(request)
         actor = current_user(request)
         try:
@@ -130,15 +143,83 @@ def build_user_router() -> APIRouter:
                 raise AuthError("FORBIDDEN", "只能管理普通用户", http_status=403)
             if payload.role is not None and actor["role"] != "superadmin":
                 raise AuthError("FORBIDDEN", "只有超级管理员可以调整用户角色", http_status=403)
-            if payload.role is not None:
+            requested_role = str(payload.role or "").strip().lower()
+            if payload.role is not None and requested_role != user["role"]:
+                old_role = str(user["role"])
                 role_ids = {item["role_id"] for item in permission_service.list_roles()}
                 user = auth.set_role(username, payload.role, valid_role_ids=role_ids)
-            if payload.points is not None:
+                actual_role = str(user["role"])
+                if actual_role != old_role:
+                    role_name = role_summary(actual_role, permission_service).get(
+                        "role_name", actual_role
+                    )
+                    notification_service.try_create_notification(
+                        user_id=str(user["user_id"]),
+                        level="info",
+                        category="system",
+                        title="用户角色变更通知",
+                        content=f"您的账号角色已被调整为【{role_name}】。",
+                    )
+            if payload.points is not None and payload.points != user.get("points", 0):
+                old_points = int(user.get("points") or 0)
                 user = auth.set_points(username, payload.points)
-            if payload.unlimited_expires_at is not None:
+                actual_points = int(user.get("points") or 0)
+                delta = actual_points - old_points
+                delta_str = f"+{delta}" if delta > 0 else str(delta)
+                if actual_points != old_points:
+                    notification_service.try_create_notification(
+                        user_id=str(user["user_id"]),
+                        level="info",
+                        category="wallet",
+                        title="积分余额变动通知",
+                        content=f"管理员已调整您的积分余额为 {actual_points} 点（变动：{delta_str} 点）。",
+                    )
+            if (
+                payload.unlimited_expires_at is not None
+                and payload.unlimited_expires_at != user.get("unlimited_expires_at", 0.0)
+            ):
+                old_unlimited = float(user.get("unlimited_expires_at") or 0.0)
                 user = auth.set_unlimited_expires_at(username, payload.unlimited_expires_at)
-            if payload.status is not None:
+                new_unlimited = float(user.get("unlimited_expires_at") or 0.0)
+                now = time.time()
+                if new_unlimited != old_unlimited and new_unlimited > now:
+                    expire_desc = format_unlimited_expiry(new_unlimited)
+                    notification_service.try_create_notification(
+                        user_id=str(user["user_id"]),
+                        level="success",
+                        category="wallet",
+                        title="无限制使用权限开通/变更通知",
+                        content=f"管理员已为您设置无限制使用权限，有效期至：{expire_desc}。",
+                    )
+                elif new_unlimited != old_unlimited and old_unlimited > now:
+                    notification_service.try_create_notification(
+                        user_id=str(user["user_id"]),
+                        level="warning",
+                        category="wallet",
+                        title="无限制使用权限已关闭",
+                        content="您的无限制使用权限已被管理员取消或重置。",
+                    )
+            requested_status = str(payload.status or "").strip().lower()
+            if payload.status is not None and requested_status != user.get("status"):
+                old_status = user.get("status")
                 user = auth.set_status(username, payload.status)
+                actual_status = str(user.get("status") or "").strip().lower()
+                if actual_status != old_status and actual_status == "disabled":
+                    notification_service.try_create_notification(
+                        user_id=str(user["user_id"]),
+                        level="warning",
+                        category="system",
+                        title="账号状态变更通知",
+                        content="您的账号已被管理员设置为禁用状态。",
+                    )
+                elif actual_status != old_status and actual_status == "active" and old_status == "disabled":
+                    notification_service.try_create_notification(
+                        user_id=str(user["user_id"]),
+                        level="success",
+                        category="system",
+                        title="账号已恢复正常",
+                        content="您的账号已被管理员重新激活，可正常使用全部功能。",
+                    )
         except AuthError as exc:
             return auth_error_response(exc)
         return JSONResponse({"ok": True, "user": enrich_user_role(user, permission_service)})
@@ -199,3 +280,14 @@ def role_summary(role_id: str, permission_service: Any) -> dict[str, str | bool]
     except AuthError:
         return {"role_name": role_id or "未知角色", "role_is_system": False}
     return {"role_name": str(role["name"]), "role_is_system": bool(role["is_system"])}
+
+
+def format_unlimited_expiry(timestamp: float) -> str:
+    """按项目统一的上海时区格式化无限使用到期时间。"""
+
+    try:
+        return datetime.fromtimestamp(timestamp, LOCAL_TIMEZONE).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+    except (OverflowError, OSError, ValueError):
+        return "已设置"

@@ -8,6 +8,7 @@ from threading import RLock
 from typing import Any
 
 from ...auth import AuthError
+from ...logger import log_event
 from ..base import PlatformDomainService
 from ..announcements.records import AnnouncementRecord
 from .records import NotificationReadReceiptRecord, NotificationRecord
@@ -43,6 +44,41 @@ class NotificationService(PlatformDomainService):
         with self.lock:
             self.repository.save_notification(record)
         return record.to_dict()
+
+    def try_create_notification(
+        self,
+        *,
+        user_id: str | None,
+        level: str,
+        category: str,
+        title: str,
+        content: str,
+    ) -> dict | None:
+        """尽力写入通知，不让附属通知故障影响主业务。"""
+
+        try:
+            return self.create_notification(
+                user_id=user_id,
+                level=level,
+                category=category,
+                title=title,
+                content=content,
+            )
+        except Exception as exc:
+            try:
+                log_event(
+                    "notification_write_failed",
+                    {
+                        "user_id": user_id,
+                        "level": level,
+                        "category": category,
+                        "error_type": type(exc).__name__,
+                    },
+                )
+            except Exception:
+                # 日志设施故障也不能改变主业务结果。
+                pass
+            return None
 
     def list_notifications(
         self, *, user_id: str | None = None, status: str = "", limit: int = 20

@@ -11,7 +11,7 @@ from typing import Any
 from ...auth import AuthError
 from ..base import PlatformDomainService
 from .errors import FeedbackOperationError
-from .records import FeedbackRecord
+from .records import FeedbackRecord, FeedbackResolution
 
 
 class FeedbackService(PlatformDomainService):
@@ -141,7 +141,7 @@ class FeedbackService(PlatformDomainService):
         admin_note: str = "",
         corrected_answer: str = "",
         reward_points: int = 0,
-    ) -> tuple[dict, int]:
+    ) -> FeedbackResolution:
         """处理用户反馈并返回奖励积分。
 
         奖励积分按反馈记录中的累计奖励值补差额，避免管理员重复保存时重复发放。
@@ -153,7 +153,7 @@ class FeedbackService(PlatformDomainService):
         now = time.time()
         with self.lock:
             try:
-                record, granted = self.repository.resolve_feedback_with_reward(
+                record, granted, changed_fields = self.repository.resolve_feedback_with_reward(
                     feedback_id,
                     status=normalized_status,
                     admin_note=admin_note.strip(),
@@ -165,7 +165,11 @@ class FeedbackService(PlatformDomainService):
                 )
             except FeedbackOperationError as exc:
                 raise feedback_auth_error(exc) from exc
-        return record.to_dict(), granted
+        return FeedbackResolution(
+            feedback=record.to_dict(),
+            granted_points=granted,
+            changed_fields=changed_fields,
+        )
 
 
 def feedback_auth_error(exc: FeedbackOperationError) -> AuthError:

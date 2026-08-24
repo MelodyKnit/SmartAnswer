@@ -107,3 +107,18 @@ class FeedbackRecord:
             source_url=str(payload.get("source_url") or ""),
             context_json=str(payload.get("context_json") or "{}"),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class FeedbackResolution:
+    """反馈处理后的结果及本次事务实际发生的字段变化。"""
+
+    feedback: dict
+    granted_points: int
+    changed_fields: tuple[str, ...]
+
+    @property
+    def has_changes(self) -> bool:
+        """判断本次处理是否产生需要通知用户的变化。"""
+
+        return bool(self.changed_fields)

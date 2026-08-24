@@ -1,6 +1,6 @@
 [project]
 name = "study-question-bank-assistant"
-version = "0.6.0"
+version = "0.6.1"
 description = "Study-oriented question-bank ingestion and retrieval foundation."
 license = { text = "CC-BY-NC-SA-4.0" }
 requires-python = ">=3.13"

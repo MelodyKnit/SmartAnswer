@@ -394,6 +394,88 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertGreaterEqual(read_all.json()["count"], 1)
         self.assertEqual(after_read_all.json()["items"], [])
 
+    def test_notification_write_failure_does_not_fail_primary_operations(self) -> None:
+        """通知持久化故障不应让注册、密码、钱包、用户和反馈操作失败。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformServices(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(),
+                    auth_service=auth,
+                    platform_services=platform,
+                    require_auth=True,
+                )
+            )
+
+            owner_register = client.post(
+                "/auth/register", json={"username": "owner", "password": "password123"}
+            )
+            owner_login = client.post(
+                "/auth/login", json={"username": "owner", "password": "password123"}
+            )
+            owner_headers = {"Authorization": f"Bearer {owner_login.json()['token']}"}
+
+            with mock.patch.object(
+                platform.notifications.repository,
+                "save_notification",
+                side_effect=RuntimeError("notification store unavailable"),
+            ):
+                invited_register = client.post(
+                    "/auth/register",
+                    json={
+                        "username": "guest",
+                        "password": "password123",
+                        "invite_code": owner_register.json()["user"]["invite_code"],
+                    },
+                )
+                password_change = client.post(
+                    "/users/me/password",
+                    json={"old_password": "password123", "new_password": "password456"},
+                    headers=owner_headers,
+                )
+                owner_relogin = client.post(
+                    "/auth/login", json={"username": "owner", "password": "password456"}
+                )
+                owner_headers = {"Authorization": f"Bearer {owner_relogin.json()['token']}"}
+                guest_login = client.post(
+                    "/auth/login", json={"username": "guest", "password": "password123"}
+                )
+                guest_headers = {"Authorization": f"Bearer {guest_login.json()['token']}"}
+                wallet_grant = client.post(
+                    "/wallet/grants",
+                    json={"username": "guest", "kind": "points", "points": 5},
+                    headers=owner_headers,
+                )
+                user_update = client.patch(
+                    "/users/guest",
+                    json={"points": -5},
+                    headers=owner_headers,
+                )
+                feedback = client.post(
+                    "/feedback",
+                    json={"title": "反馈", "content": "请检查答案"},
+                    headers=guest_headers,
+                )
+                feedback_resolve = client.patch(
+                    f"/feedback/{feedback.json()['feedback']['feedback_id']}",
+                    json={"status": "resolved", "reward_points": 7},
+                    headers=owner_headers,
+                )
+
+            self.assertEqual(invited_register.status_code, 200)
+            self.assertEqual(password_change.status_code, 200)
+            self.assertEqual(owner_relogin.status_code, 200)
+            self.assertEqual(wallet_grant.status_code, 200)
+            self.assertEqual(user_update.status_code, 200)
+            self.assertEqual(feedback.status_code, 200)
+            self.assertEqual(feedback_resolve.status_code, 200)
+            guest_after = client.get("/users/me", headers=guest_headers)
+            self.assertEqual(guest_after.status_code, 200)
+            self.assertEqual(guest_after.json()["user"]["points"], 7)
+
     def test_project_update_routes_are_versioned_and_admin_only(self) -> None:
         """项目更新控制面必须走 v1 API，且始终要求管理员会话。"""
 
@@ -760,6 +842,13 @@ class FastAPILocalServerTests(unittest.TestCase):
                 )
                 headers = {"Authorization": f"Bearer {login.json()['token']}"}
                 users = client.get("/api/v1/users", headers=headers)
+                owner_notices = client.get(
+                    "/api/v1/notification-center",
+                    headers=headers,
+                ).json()
+                self.assertTrue(
+                    any("邀请好友成功" in item["title"] for item in owner_notices["items"])
+                )
 
             records = {item["username"]: item for item in users.json()["users"]}
             self.assertTrue(owner.json()["ok"])
@@ -1530,7 +1619,25 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
             feedback_list_after_resolve = client.get("/feedback", headers=headers)
             points_after_feedback_resolve = client.get("/users/me", headers=headers)
+            feedback_notice_center = client.get("/notification-center", headers=headers).json()
+            self.assertTrue(
+                any("反馈处理结果通知" in item["title"] for item in feedback_notice_center["items"])
+            )
             feedback_resolve_repeat = client.patch(
+                f"/feedback/{feedback_id}",
+                json={
+                    "status": " RESOLVED ",
+                    "admin_note": "重复保存",
+                    "corrected_answer": "B",
+                    "reward_points": 20,
+                },
+                headers=headers,
+            )
+            points_after_feedback_repeat = client.get("/users/me", headers=headers)
+            feedback_notice_after_change = client.get(
+                "/notification-center", headers=headers
+            ).json()
+            feedback_exact_repeat = client.patch(
                 f"/feedback/{feedback_id}",
                 json={
                     "status": "resolved",
@@ -1540,7 +1647,9 @@ class FastAPILocalServerTests(unittest.TestCase):
                 },
                 headers=headers,
             )
-            points_after_feedback_repeat = client.get("/users/me", headers=headers)
+            feedback_notice_after_exact_repeat = client.get(
+                "/notification-center", headers=headers
+            ).json()
             billing_get = client.get("/billing", headers=headers)
             billing_patch = client.patch("/billing", json={"llm_fallback": 9}, headers=headers)
             wallet_me = client.get("/wallet/me", headers=headers)
@@ -1704,6 +1813,26 @@ class FastAPILocalServerTests(unittest.TestCase):
             points_after_feedback_repeat.json()["user"]["points"],
             points_after_feedback_resolve.json()["user"]["points"],
         )
+        self.assertTrue(feedback_exact_repeat.json()["ok"])
+        self.assertEqual(
+            [item["title"] for item in feedback_notice_after_change["items"]].count(
+                "反馈处理结果通知"
+            ),
+            2,
+        )
+        self.assertEqual(
+            [item["title"] for item in feedback_notice_after_exact_repeat["items"]].count(
+                "反馈处理结果通知"
+            ),
+            2,
+        )
+        self.assertTrue(
+            any(
+                "已采纳/已解决" in item["content"]
+                for item in feedback_notice_after_change["items"]
+                if item["title"] == "反馈处理结果通知"
+            )
+        )
         self.assertEqual(billing_get.json()["billing"]["llm_fallback"], 3)
         self.assertEqual(billing_patch.json()["billing"]["llm_fallback"], 9)
         self.assertTrue(wallet_me.json()["ok"])
@@ -1799,12 +1928,34 @@ class FastAPILocalServerTests(unittest.TestCase):
             promote_admin = client.patch(
                 "/users/alice", json={"role": "admin"}, headers=super_headers
             )
+            self.assertEqual(promote_admin.status_code, 200)
             admin_headers = {
                 "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'alice', 'password': 'password123'}).json()['token']}"
             }
+            alice_notifications = client.get("/notification-center", headers=admin_headers).json()
+            self.assertTrue(
+                any("用户角色变更通知" in item["title"] for item in alice_notifications["items"])
+            )
             user_headers = {
                 "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'bob', 'password': 'password123'}).json()['token']}"
             }
+            negative_points = client.patch(
+                "/users/bob",
+                json={"points": -5},
+                headers=super_headers,
+            )
+            bob_notifications = client.get("/notification-center", headers=user_headers).json()
+            self.assertEqual(negative_points.status_code, 200)
+            self.assertEqual(
+                client.get("/users/me", headers=user_headers).json()["user"]["points"],
+                0,
+            )
+            self.assertTrue(
+                any(
+                    item["title"] == "积分余额变动通知" and "-5" not in item["content"]
+                    for item in bob_notifications["items"]
+                )
+            )
 
             alice = auth.get_user("alice")
             assert alice is not None
@@ -2252,6 +2403,16 @@ class FastAPILocalServerTests(unittest.TestCase):
             self.assertEqual(grant_res.status_code, 200)
             alice_granted = client.get("/users/me", headers=alice_headers).json()["user"]
             self.assertAlmostEqual(alice_granted["unlimited_expires_at"], time.time() + 47 * 86400, delta=10)
+            alice_notifications = client.get("/notification-center", headers=alice_headers).json()
+            self.assertTrue(
+                any("无限制使用天数发放通知" in item["title"] for item in alice_notifications["items"])
+            )
+            self.assertTrue(
+                any(
+                    item["title"] == "无限制使用天数发放通知" and "10" in item["content"]
+                    for item in alice_notifications["items"]
+                )
+            )
 
             # 6. 无效面值不能生成无效兑换码或空权益流水。
             empty_points = client.post(
