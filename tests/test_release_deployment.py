@@ -172,8 +172,12 @@ class RemoteReleaseScriptTests(unittest.TestCase):
             workflow = workflow_path.read_text(encoding="utf-8")
 
             self.assertIn('scp_args=(-P "$DEPLOY_PORT"', workflow)
-            self.assertIn('ssh-keygen -F "$DEPLOY_HOST"', workflow)
-            self.assertIn('ssh-keygen -F "[$DEPLOY_HOST]:$DEPLOY_PORT"', workflow)
+            self.assertIn(
+                'if ssh-keygen -F "$DEPLOY_HOST" -f "$HOME/.ssh/known_hosts" >/dev/null &&\n'
+                '            ! ssh-keygen -F "[$DEPLOY_HOST]:$DEPLOY_PORT" '
+                '-f "$HOME/.ssh/known_hosts" >/dev/null; then',
+                workflow,
+            )
             self.assertIn('HostKeyAlias=$DEPLOY_HOST', workflow)
             self.assertNotIn('scp "${ssh_args[@]}"', workflow)
 
