@@ -4,7 +4,7 @@ import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { tokenApi } from '@/api/endpoints'
 import type { ApiToken, OcsConfig } from '@/api/types'
-import { ApiException, getApiTokenSecret, removeApiTokenSecret, setApiTokenSecret } from '@/api/http'
+import { ApiException } from '@/api/http'
 import { formatDateTime } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
 import ImportScriptCopyDialog from '@/components/ImportScriptCopyDialog.vue'
@@ -65,7 +65,6 @@ async function submitCreate() {
       newMinAnswerConfidence.value,
     )
     createVisible.value = false
-    setApiTokenSecret(res.token_info.token_id, res.token)
     revealToken.value = res.token
     revealConfig.value = res.ocs_config
     revealVisible.value = true
@@ -90,7 +89,6 @@ async function revokeEditingToken() {
   revoking.value = true
   try {
     await tokenApi.revoke(editForm.value.token_id)
-    removeApiTokenSecret(editForm.value.token_id)
     ElMessage.success('已吊销')
     editVisible.value = false
     await load()
@@ -112,7 +110,6 @@ async function remove(token: ApiToken) {
   if (!confirmed) return
   try {
     await tokenApi.delete(token.token_id)
-    removeApiTokenSecret(token.token_id)
     ElMessage.success('已删除')
     await load()
   } catch (err) {
@@ -121,16 +118,19 @@ async function remove(token: ApiToken) {
 }
 
 async function copyToken(token: ApiToken) {
-  const secret = getApiTokenSecret(token.token_id)
-  if (secret) {
-    await copy(secret)
-  } else {
-    try {
-      await navigator.clipboard.writeText(token.key_mask)
-      ElMessage.success('完整密钥未缓存，已复制掩码')
-    } catch {
-      ElMessage.warning('复制失败，请手动复制')
-    }
+  if (token.status !== 'active') {
+    ElMessage.warning('已吊销的 API Key 无法复制')
+    return
+  }
+  if (!token.is_recoverable) {
+    ElMessage.warning('该 API Key 无法恢复完整密钥，请新建一个 API Key')
+    return
+  }
+  try {
+    const res = await tokenApi.copyValue(token.token_id)
+    await copy(res.token)
+  } catch (err) {
+    ElMessage.error(err instanceof ApiException ? err.message : '获取完整密钥失败')
   }
 }
 
@@ -211,7 +211,8 @@ onMounted(load)
             <div class="inline-flex items-center gap-1.5">
               <code
                 class="cursor-pointer rounded bg-canvas px-2 py-1 text-xs text-ink-soft hover:bg-canvas-hover"
-                title="点击复制"
+                :title="row.status === 'active' && row.is_recoverable ? '点击复制完整 API Key' : '该 API Key 当前不可复制'"
+                :class="row.status === 'active' && row.is_recoverable ? 'cursor-pointer rounded bg-canvas px-2 py-1 text-xs text-ink-soft hover:bg-canvas-hover' : 'cursor-not-allowed rounded bg-canvas px-2 py-1 text-xs text-ink-muted'"
                 @click="copyToken(row)"
               >
                 {{ row.key_mask }}
@@ -221,7 +222,8 @@ onMounted(load)
                 text
                 size="small"
                 icon="CopyDocument"
-                title="点击复制"
+                :title="row.status === 'active' && row.is_recoverable ? '点击复制完整 API Key' : '该 API Key 当前不可复制'"
+                :disabled="row.status !== 'active' || !row.is_recoverable"
                 @click="copyToken(row)"
               />
             </div>
@@ -257,7 +259,7 @@ onMounted(load)
         <el-table-column label="创建时间" width="170" align="center">
           <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="190" align="right">
+        <el-table-column label="操作" width="150" align="right">
           <template #default="{ row }">
             <div class="flex justify-end gap-2">
               <template v-if="row.status === 'active'">
@@ -364,14 +366,8 @@ onMounted(load)
       </template>
     </el-dialog>
 
-    <!-- 明文展示弹窗（仅此一次） -->
+    <!-- 明文展示弹窗 -->
     <el-dialog v-model="revealVisible" title="请妥善保存你的 API Key" width="560px">
-      <el-alert
-        type="warning"
-        :closable="false"
-        class="mb-4"
-        title="出于安全考虑，完整密钥仅在此展示一次，关闭后无法再次查看。"
-      />
       <div class="mb-2 text-sm font-medium text-ink-soft">API Key</div>
       <div class="mb-4 flex items-center gap-2">
         <code class="flex-1 break-all rounded-lg bg-canvas px-3 py-2 text-sm text-ink">{{ revealToken }}</code>
@@ -387,7 +383,7 @@ onMounted(load)
         class="max-h-60 overflow-auto rounded-lg bg-[#0f172a] p-3 text-xs leading-relaxed text-slate-200"
       >{{ ocsConfigText(revealConfig) }}</pre>
       <template #footer>
-        <el-button type="primary" @click="revealVisible = false">我已保存</el-button>
+        <el-button type="primary" @click="revealVisible = false">关闭</el-button>
       </template>
     </el-dialog>
 

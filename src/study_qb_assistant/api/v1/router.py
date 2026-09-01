@@ -18,6 +18,7 @@ from .notifications import build_notification_router
 from .permissions import build_permission_router
 from .query import build_query_router
 from .questions import build_question_router
+from .shares import build_share_router
 from .system import build_system_router
 from .tokens import build_token_router
 from .usage import build_usage_router
@@ -44,6 +45,7 @@ ROUTER_FACTORIES: tuple[RouterFactory, ...] = (
     build_llm_router,
     build_media_router,
     build_system_router,
+    build_share_router,
 )
 
 

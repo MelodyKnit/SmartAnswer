@@ -33,6 +33,12 @@ const routes: RouteRecordRaw[] = [
     meta: { public: true, title: '找回密码' },
   },
   {
+    path: '/share/apikey',
+    name: 'share-apikey',
+    component: () => import('@/views/ShareView.vue'),
+    meta: { public: true, title: '分享配置' },
+  },
+  {
     path: '/',
     component: () => import('@/layouts/AppLayout.vue'),
     children: [

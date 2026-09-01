@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import secrets
 import time
+from urllib.parse import quote
 
 from ...adapters.ocs.config import build_ocs_config_name
 from ...auth import AuthError
@@ -33,6 +34,7 @@ class TokenService(PlatformDomainService):
                 user_id=user_id,
                 key_hash=hash_token(raw),
                 key_mask=mask_token(raw),
+                token_raw=raw,
                 description=description.strip(),
                 status="active",
                 created_at=time.time(),
@@ -89,14 +91,24 @@ class TokenService(PlatformDomainService):
                 token_key_mask=selected.key_mask,
             ),
         )
+        if selected.token_raw:
+            script_content = rendered["content"].replace("{{TOKEN}}", selected.token_raw)
+        else:
+            script_content = rendered["content"]
+        ocs_config = rendered["ocs_config"]
+        if selected.token_raw:
+            for item in ocs_config:
+                if isinstance(item, dict) and "headers" in item and isinstance(item["headers"], dict):
+                    if "Authorization" in item["headers"]:
+                        item["headers"]["Authorization"] = item["headers"]["Authorization"].replace("{{TOKEN}}", selected.token_raw)
         return {
             "mode": "direct",
             "token_id": selected.token_id,
             "token_option": public_token_dict(selected),
-            "script": rendered["content"],
-            "ocs_config": rendered["ocs_config"],
+            "script": script_content,
+            "ocs_config": ocs_config,
             "template_id": template.template_id,
-            "requires_local_secret": True,
+            "requires_local_secret": not bool(selected.token_raw),
         }
 
     def revoke_token(self, *, user_id: str, token_id: str) -> dict:
@@ -150,6 +162,46 @@ class TokenService(PlatformDomainService):
             if token.quota_limit >= 0 and token.quota_used >= token.quota_limit:
                 raise AuthError("TOKEN_QUOTA_EXCEEDED", "API Key 调用额度已用完", http_status=401)
             return public_token_dict(token)
+
+    def copy_token_value(self, *, user_id: str, token_id: str) -> str:
+        """返回当前所有者可恢复的完整 API Key。"""
+
+        with self.lock:
+            token = self._get_owned_token(user_id=user_id, token_id=token_id)
+            self._ensure_active(token)
+            return self._require_raw_value(token)
+
+    def create_share_link(self, *, user_id: str, token_id: str, base_url: str) -> dict:
+        """生成无状态分享链接；Key 仅位于浏览器 fragment，不会随请求发送。"""
+
+        with self.lock:
+            token = self._get_owned_token(user_id=user_id, token_id=token_id)
+            self._ensure_active(token)
+            raw_token = self._require_raw_value(token)
+            encoded_token = quote(raw_token, safe="")
+            share_url = f"{base_url.rstrip('/')}/share/apikey#key={encoded_token}"
+            return {"token_id": token.token_id, "share_url": share_url}
+
+    def _get_owned_token(self, *, user_id: str, token_id: str) -> ApiTokenRecord:
+        token = self.repository.get_token(token_id)
+        if token is None or token.user_id != user_id:
+            raise AuthError("TOKEN_NOT_FOUND", "令牌不存在", http_status=404)
+        return token
+
+    @staticmethod
+    def _ensure_active(token: ApiTokenRecord) -> None:
+        if token.status != "active":
+            raise AuthError("TOKEN_INACTIVE", "令牌未激活", http_status=409)
+
+    @staticmethod
+    def _require_raw_value(token: ApiTokenRecord) -> str:
+        if not token.token_raw:
+            raise AuthError(
+                "TOKEN_VALUE_UNAVAILABLE",
+                "该 API Key 无法恢复完整密钥，请新建一个 API Key",
+                http_status=409,
+            )
+        return token.token_raw
 
 
 def normalized_confidence(value: object) -> float:

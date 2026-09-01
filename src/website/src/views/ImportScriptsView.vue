@@ -4,25 +4,25 @@
  * 与普通用户工作台「复制导入脚本」共用同一模板源；标记「默认」的模板即普通用户点复制时拿到的那条。
  * 详情弹窗提供接入步骤指引、管理员/用户两种视角预览、脚本与接入配置分区复制。
  */
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { importScriptApi, tokenApi } from '@/api/endpoints'
 import type { ApiToken, ImportScript, OcsConfig } from '@/api/types'
-import { ApiException, getApiTokenSecret } from '@/api/http'
+import { ApiException } from '@/api/http'
 import PageHeader from '@/components/PageHeader.vue'
 
 const loading = ref(false)
 const scripts = ref<ImportScript[]>([])
 const tokens = ref<ApiToken[]>([])
-
 const viewVisible = ref(false)
 const current = ref<ImportScript | null>(null)
 const selectedTokenId = ref('')
 const renderedScript = ref('')
 const renderedConfig = ref<OcsConfig | null>(null)
+const previewLoading = ref(false)
 const isTokenSecretMissing = ref(false)
+let previewRequestId = 0
 
-/** 字面量占位符文案，避免在模板插值中直接写双花括号被编译器解析。 */
 const TOKEN_PLACEHOLDER = '{{TOKEN}}'
 
 /* 新增模板弹窗 */
@@ -166,37 +166,48 @@ function accessSteps(target: string): string[] {
   ]
 }
 
-function replaceTokenPlaceholder(value: string, tokenId: string): string {
-  const secret = getApiTokenSecret(tokenId)
-  if (!secret) {
-    isTokenSecretMissing.value = true
-    return value.replaceAll('{{TOKEN}}', 'YOUR_API_KEY_HERE')
-  }
-  return value.replaceAll('{{TOKEN}}', secret)
-}
-
-function fillConfigToken(config: OcsConfig, tokenId: string): OcsConfig {
-  const payload = JSON.parse(JSON.stringify(config)) as OcsConfig
-  for (const item of payload) {
-    if (item.headers?.Authorization) {
-      item.headers.Authorization = replaceTokenPlaceholder(item.headers.Authorization, tokenId)
-    }
-  }
-  return payload
-}
-
-function syncCurrentPreview() {
+async function syncCurrentPreview() {
   const script = current.value
   if (!script) return
-  isTokenSecretMissing.value = false
+  const requestId = ++previewRequestId
   const tokenId = selectedTokenId.value
-  if (!tokenId) {
-    renderedScript.value = script.content || ''
-    renderedConfig.value = script.ocs_config || null
+  previewLoading.value = false
+  isTokenSecretMissing.value = false
+  renderedScript.value = script.content || ''
+  renderedConfig.value = script.ocs_config || null
+
+  if (!tokenId || !script.requires_token) return
+  const selectedToken = tokens.value.find((token) => token.token_id === tokenId)
+  if (!selectedToken || selectedToken.status !== 'active' || !selectedToken.is_recoverable) {
+    isTokenSecretMissing.value = true
     return
   }
-  renderedScript.value = replaceTokenPlaceholder(script.content || '', tokenId)
-  renderedConfig.value = script.ocs_config ? fillConfigToken(script.ocs_config, tokenId) : null
+
+  previewLoading.value = true
+  try {
+    const response = await tokenApi.copyValue(tokenId)
+    if (requestId !== previewRequestId) return
+    renderedScript.value = renderedScript.value.replaceAll('{{TOKEN}}', response.token)
+    if (renderedConfig.value) {
+      renderedConfig.value = renderedConfig.value.map((item) => ({
+        ...item,
+        headers: item.headers
+          ? Object.fromEntries(
+              Object.entries(item.headers).map(([key, value]) => [
+                key,
+                value.replaceAll('{{TOKEN}}', response.token),
+              ]),
+            )
+          : item.headers,
+      }))
+    }
+  } catch (error) {
+    if (requestId !== previewRequestId) return
+    isTokenSecretMissing.value = true
+    ElMessage.warning(error instanceof ApiException ? error.message : '无法获取 API Key，请新建密钥')
+  } finally {
+    if (requestId === previewRequestId) previewLoading.value = false
+  }
 }
 
 async function openView(row: ImportScript) {
@@ -206,11 +217,19 @@ async function openView(row: ImportScript) {
     if (!selectedTokenId.value && tokens.value.length > 0) {
       selectedTokenId.value = tokens.value[0].token_id
     }
-    syncCurrentPreview()
+    await syncCurrentPreview()
     viewVisible.value = true
   } catch (error) {
     ElMessage.error(error instanceof ApiException ? error.message : '加载模板失败')
   }
+}
+
+function availableTokens(): ApiToken[] {
+  return tokens.value.filter((token) => token.status === 'active')
+}
+
+function handleTokenSelection() {
+  void syncCurrentPreview()
 }
 
 async function copy(text: string) {
@@ -225,10 +244,6 @@ async function copy(text: string) {
     ElMessage.warning('复制失败，请手动复制')
   }
 }
-
-watch(selectedTokenId, () => {
-  syncCurrentPreview()
-})
 
 onMounted(load)
 </script>
@@ -364,21 +379,26 @@ onMounted(load)
           </el-steps>
         </div>
 
-        <!-- 密钥填充注入 (仅在需要密钥时展示) -->
-        <div v-if="current.requires_token && tokens.length" class="flex items-center gap-3 rounded-lg bg-card-soft p-3.5 border border-line text-xs">
-          <span class="text-xs text-ink-soft font-semibold whitespace-nowrap">填充 API Key</span>
+        <div
+          v-if="current.requires_token && availableTokens().length"
+          class="flex flex-wrap items-center gap-3 rounded-lg border border-line bg-card-soft p-3.5 text-xs"
+        >
+          <span class="whitespace-nowrap font-semibold text-ink-soft">填充 API Key</span>
           <el-select
             v-model="selectedTokenId"
             clearable
+            :loading="previewLoading"
             placeholder="选择 API Key 进行预览填充（可选）"
             size="small"
             class="w-64"
+            @change="handleTokenSelection"
           >
             <el-option
-              v-for="token in tokens"
+              v-for="token in availableTokens()"
               :key="token.token_id"
               :value="token.token_id"
               :label="token.description || token.key_mask"
+              :disabled="!token.is_recoverable"
             />
           </el-select>
           <span class="text-ink-muted">不选则原样展示占位符 {{ TOKEN_PLACEHOLDER }}</span>
@@ -388,16 +408,18 @@ onMounted(load)
           v-if="isTokenSecretMissing"
           type="warning"
           :closable="false"
-          title="当前浏览器未缓存所选 API Key 的明文，预览中已用 YOUR_API_KEY_HERE 占位。用户实际复制时会自动填入其本人密钥。"
+          title="当前 API Key 无法恢复完整密钥，预览中保留 {{TOKEN}} 占位符。请新建一个 API Key。"
         />
 
         <!-- 脚本 -->
         <div>
           <div class="mb-2 flex items-center justify-between">
             <span class="text-sm font-medium text-ink-soft">导入脚本</span>
-            <el-button link type="primary" size="small" :icon="'CopyDocument'" @click="copy(renderedScript)">
-              复制脚本
-            </el-button>
+            <div class="flex items-center gap-2">
+              <el-button link type="primary" size="small" :icon="'CopyDocument'" @click="copy(renderedScript)">
+                复制脚本
+              </el-button>
+            </div>
           </div>
           <pre
             class="max-h-56 overflow-auto rounded-lg bg-[#0f172a] p-4 text-xs leading-relaxed text-slate-200 font-mono"

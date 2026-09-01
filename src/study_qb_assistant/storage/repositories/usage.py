@@ -135,7 +135,9 @@ class UsageRepository(SqlAlchemyRepository):
                     if current_points >= normalized_points:
                         user_entity.points = current_points - normalized_points
                     else:
-                        normalized_points = 0
+                        # 并发导致余额不足以全额扣减时，扣减所有剩余积分并真实记录实际消耗
+                        normalized_points = current_points
+                        user_entity.points = 0
             record.points_cost = normalized_points
 
             entity = UsageLogEntity(

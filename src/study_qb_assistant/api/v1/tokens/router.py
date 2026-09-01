@@ -54,7 +54,8 @@ def build_token_router() -> APIRouter:
         )
         token_config[0]["headers"] = {"Authorization": f"Bearer {raw_token}"}
         return JSONResponse(
-            {"ok": True, "token": raw_token, "token_info": token_info, "ocs_config": token_config}
+            {"ok": True, "token": raw_token, "token_info": token_info, "ocs_config": token_config},
+            headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
         )
 
     @router.post("/tokens/{token_id}/revoke")
@@ -120,6 +121,48 @@ def build_token_router() -> APIRouter:
             )
         except AuthError as exc:
             return auth_error_response(exc)
-        return JSONResponse({"ok": True, **payload})
+        return JSONResponse(
+            {"ok": True, **payload},
+            headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+        )
+
+    @router.post("/tokens/{token_id}/copy-value")
+    def tokens_copy_value(request: Request, token_id: str) -> JSONResponse:
+        """由令牌所有者恢复完整 API Key，不在普通列表中返回原文。"""
+
+        user = current_user(request)
+        if user is None:
+            return unauthorized_response("请先登录")
+        platform = get_token_service(request)
+        try:
+            raw_token = platform.copy_token_value(user_id=str(user["user_id"]), token_id=token_id)
+        except AuthError as exc:
+            return auth_error_response(exc)
+
+        return JSONResponse(
+            {"ok": True, "token_id": token_id, "token": raw_token},
+            headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+        )
+
+    @router.post("/tokens/{token_id}/share-link")
+    def tokens_share_link(request: Request, token_id: str) -> JSONResponse:
+        """生成不落库的 fragment 分享链接。"""
+
+        user = current_user(request)
+        if user is None:
+            return unauthorized_response("请先登录")
+        platform = get_token_service(request)
+        try:
+            share = platform.create_share_link(
+                user_id=str(user["user_id"]),
+                token_id=token_id,
+                base_url=base_url_from_request(request, get_settings_service(request)),
+            )
+        except AuthError as exc:
+            return auth_error_response(exc)
+        return JSONResponse(
+            {"ok": True, **share},
+            headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+        )
 
     return router

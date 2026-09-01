@@ -63,6 +63,7 @@ export interface ApiToken {
   quota_used?: number
   reject_low_confidence?: boolean
   min_answer_confidence?: number
+  is_recoverable: boolean
 }
 
 export interface OcsConfigItem {

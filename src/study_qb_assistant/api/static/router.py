@@ -21,7 +21,7 @@ def build_static_router() -> APIRouter:
 
     router = APIRouter()
 
-    @router.get("/{path:path}", include_in_schema=False)
+    @router.api_route("/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
     def static_pages(request: Request, path: str) -> Response:
         route = "/" + path
         filename = STATIC_PAGES.get(route)

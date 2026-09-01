@@ -85,6 +85,7 @@ def ensure_sqlite_compat_columns(engine: Engine) -> None:
             "days_delta": "INTEGER DEFAULT 0",
         },
         "api_tokens": {
+            "token_raw": "TEXT DEFAULT ''",
             "quota_used": "INTEGER DEFAULT 0",
             "quota_limit": "INTEGER DEFAULT -1",
             "reject_low_confidence": "INTEGER DEFAULT 0",
@@ -209,6 +210,7 @@ def ensure_sql_compat_columns(engine: Engine) -> None:
             "days_delta": "INTEGER DEFAULT 0",
         },
         "api_tokens": {
+            "token_raw": "VARCHAR(255) DEFAULT ''",
             "quota_used": "INTEGER DEFAULT 0",
             "reject_low_confidence": "INTEGER DEFAULT 0",
             "min_answer_confidence": "FLOAT DEFAULT 0.0",

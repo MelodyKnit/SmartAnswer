@@ -212,7 +212,11 @@ class ImageGenerationRepository(SqlAlchemyRepository):
                         http_status=429,
                     )
 
-            user = session.scalar(select(UserEntity).where(UserEntity.user_id == record.user_id))
+            user = session.scalar(
+                select(UserEntity)
+                .where(UserEntity.user_id == record.user_id)
+                .with_for_update()
+            )
             if user is None:
                 raise ImageGenerationRepositoryError("USER_NOT_FOUND", "用户不存在", http_status=404)
             if int(user.points or 0) < record.points_cost:

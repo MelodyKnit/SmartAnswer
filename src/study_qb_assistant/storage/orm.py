@@ -74,6 +74,7 @@ class ApiTokenEntity(Base):
     user_id: Mapped[str] = mapped_column(String(64), index=True)
     key_hash: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     key_mask: Mapped[str] = mapped_column(String(64))
+    token_raw: Mapped[str] = mapped_column(String(255), default="")
     description: Mapped[str] = mapped_column(String(255), default="")
     status: Mapped[str] = mapped_column(String(32), default="active")
     created_at: Mapped[float] = mapped_column(Float)

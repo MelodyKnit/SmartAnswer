@@ -40,7 +40,16 @@ def is_secret_key(key: str) -> bool:
     """判断键名是否属于敏感字段。"""
     normalized = key.lower()
     return any(
-        token in normalized for token in ("api_key", "authorization", "token", "password", "secret")
+        token in normalized
+        for token in (
+            "api_key",
+            "authorization",
+            "token",
+            "password",
+            "secret",
+            "share_url",
+            "share_link",
+        )
     )
 
 

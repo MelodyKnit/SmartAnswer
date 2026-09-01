@@ -25,6 +25,41 @@ from .http import model_visible_base_url, extract_client_ip
 from .security import auth_error_response, authorization_bearer, current_user
 
 
+def check_query_eligibility(
+    tokens: TokenService,
+    auth: AuthService,
+    request: Request,
+    estimated_cost: int = 0,
+) -> AuthError | None:
+    """校验当前请求方是否有发起查题的资格（会员或积分余额足够）。"""
+    user = current_user(request)
+    bearer = authorization_bearer(request)
+    try:
+        token = tokens.resolve_token(bearer) if bearer else None
+    except AuthError as exc:
+        return exc
+    if user is None and token is not None:
+        user = auth.resolve_user_by_id(token["user_id"])
+    if user is None:
+        return None
+    # 检查无限天数
+    unlimited_expires_at = float(user.get("unlimited_expires_at") or 0.0)
+    if unlimited_expires_at > time.time():
+        return None
+    # 检查积分余额
+    points = int(user.get("points") or 0)
+    required_points = max(estimated_cost, 0)
+    if required_points == 0:
+        return None
+    if points < required_points:
+        return AuthError(
+            "INSUFFICIENT_POINTS",
+            f"积分不足（当前 {points}，需要 {required_points}），请先充值或兑换使用天数",
+            http_status=402,
+        )
+    return None
+
+
 def run_lookup(
     lookup: LocalQuestionIndex | AnswerService,
     usage: UsageService,
@@ -37,6 +72,27 @@ def run_lookup(
     query: QuestionQuery,
 ) -> JSONResponse:
     """执行查题主流程，并完成计费、日志与响应转换。"""
+    estimated_cost = settings.get_max_query_cost()
+    pre_auth_error = check_query_eligibility(tokens, auth, request, estimated_cost)
+    if pre_auth_error is not None:
+        if path == "/ocs/query":
+            return JSONResponse(
+                {
+                    "code": 1,
+                    "message": pre_auth_error.message,
+                    "data": {
+                        "question": query.title,
+                        "answer": None,
+                        "ai": {
+                            "review_required": True,
+                            "error_code": pre_auth_error.code,
+                        },
+                    },
+                },
+                status_code=pre_auth_error.http_status,
+            )
+        return auth_error_response(pre_auth_error)
+
     if not query.request_id:
         query.request_id = secrets.token_hex(12)
     if not query.service_base_url:

@@ -1,10 +1,10 @@
 <script setup lang="ts">
-/** 复制导入脚本弹窗：统一处理 Token 选择、浏览器本地明文替换和 OCS 配置展示。 */
+/** 复制导入脚本弹窗：处理 Key 选择、脚本复制和无状态分享链接。 */
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { tokenApi } from '@/api/endpoints'
-import { ApiException, getApiTokenSecret } from '@/api/http'
+import { ApiException } from '@/api/http'
 import type { ApiToken, OcsConfig } from '@/api/types'
 
 const router = useRouter()
@@ -12,33 +12,18 @@ const router = useRouter()
 const importScriptVisible = ref(false)
 const tokenSelectVisible = ref(false)
 const selectedTokenId = ref('')
+const currentTokenId = ref('')
 const importScriptContent = ref('')
 const importScriptConfig = ref<OcsConfig | null>(null)
 const selectableTokens = ref<ApiToken[]>([])
 const isTokenSecretMissing = ref(false)
-
-function replaceTokenPlaceholder(value: string, tokenId: string): string {
-  const secret = getApiTokenSecret(tokenId)
-  if (!secret) {
-    isTokenSecretMissing.value = true
-    return value.replaceAll('{{TOKEN}}', 'YOUR_API_KEY_HERE')
-  }
-  return value.replaceAll('{{TOKEN}}', secret)
-}
-
-function fillConfigToken(config: OcsConfig, tokenId: string): OcsConfig {
-  const payload = JSON.parse(JSON.stringify(config)) as OcsConfig
-  for (const item of payload) {
-    if (item.headers?.Authorization) {
-      item.headers.Authorization = replaceTokenPlaceholder(item.headers.Authorization, tokenId)
-    }
-  }
-  return payload
-}
+const shareUrl = ref('')
+const sharing = ref(false)
 
 async function open(tokenId?: string) {
   try {
     isTokenSecretMissing.value = false
+    shareUrl.value = ''
     const res = await tokenApi.importScript(tokenId)
     if (res.mode === 'select_token') {
       selectableTokens.value = res.token_options || []
@@ -51,8 +36,10 @@ async function open(tokenId?: string) {
     if (!finalTokenId) {
       throw new ApiException('请先创建密钥', 'TOKEN_REQUIRED', 404)
     }
-    importScriptContent.value = replaceTokenPlaceholder(res.script || '', finalTokenId)
-    importScriptConfig.value = res.ocs_config ? fillConfigToken(res.ocs_config, finalTokenId) : null
+    currentTokenId.value = finalTokenId
+    isTokenSecretMissing.value = Boolean(res.requires_local_secret || !res.token_option?.is_recoverable)
+    importScriptContent.value = res.script || ''
+    importScriptConfig.value = res.ocs_config || null
     importScriptVisible.value = true
   } catch (err) {
     const apiError = err instanceof ApiException ? err : null
@@ -75,12 +62,41 @@ async function confirmTokenSelection() {
 }
 
 async function copy(text: string) {
+  if (!text) {
+    ElMessage.warning('暂无可复制内容')
+    return
+  }
   try {
     await navigator.clipboard.writeText(text)
     ElMessage.success('已复制到剪贴板')
   } catch {
     ElMessage.warning('复制失败，请手动复制')
   }
+}
+
+async function generateShareLink() {
+  if (!currentTokenId.value) {
+    ElMessage.warning('请先选择一个 API Key')
+    return
+  }
+  if (isTokenSecretMissing.value) {
+    ElMessage.warning('该 API Key 无法恢复完整密钥，请新建一个 API Key')
+    return
+  }
+  sharing.value = true
+  try {
+    const res = await tokenApi.shareLink(currentTokenId.value)
+    shareUrl.value = res.share_url
+    await copy(res.share_url)
+  } catch (err) {
+    ElMessage.error(err instanceof ApiException ? err.message : '生成分享链接失败')
+  } finally {
+    sharing.value = false
+  }
+}
+
+async function copyShareLink() {
+  await copy(shareUrl.value)
 }
 
 defineExpose({ open })
@@ -112,8 +128,8 @@ defineExpose({ open })
       type="warning"
       :closable="false"
       class="mb-4"
-      title="提示：系统检测到 API Key 存在，但当前浏览器未缓存其原始明文。出于安全考虑，系统不会在服务器端保存明文密钥。"
-      description="您仍可正常复制，但复制后需手动将代码中的 YOUR_API_KEY_HERE 替换为您保存的实际 API Key，或在「API Key 管理」页面重新创建一个新密钥。"
+      title="提示：该 API Key 无法恢复完整密钥。"
+      description="脚本和配置中保留了 {{TOKEN}} 占位符。请新建一个 API Key 后重新复制导入，或手动替换为你保存的实际密钥。"
     />
     <el-alert
       v-else
@@ -143,7 +159,16 @@ defineExpose({ open })
       v-if="importScriptConfig"
       class="max-h-60 overflow-auto rounded-lg bg-[#0f172a] p-3 text-xs leading-relaxed text-slate-200"
     >{{ JSON.stringify(importScriptConfig, null, 2) }}</pre>
+    <div v-if="shareUrl" class="mt-4 rounded-lg border border-brand-500/30 bg-brand-500/5 p-3">
+      <div class="mb-2 text-xs font-medium text-ink-soft">分享链接</div>
+      <div class="flex items-center gap-2">
+        <el-input :model-value="shareUrl" readonly />
+        <el-button :icon="'CopyDocument'" @click="copyShareLink">复制</el-button>
+      </div>
+      <div class="mt-2 text-xs text-ink-muted">链接不会过期，吊销或删除此 API Key 后会立即失效。</div>
+    </div>
     <template #footer>
+      <el-button :disabled="isTokenSecretMissing" :loading="sharing" @click="generateShareLink">分享链接</el-button>
       <el-button type="primary" @click="importScriptVisible = false">我已复制</el-button>
     </template>
   </el-dialog>

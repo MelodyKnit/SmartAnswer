@@ -1,6 +1,6 @@
 # API 契约
 
-更新时间：`2026-07-19`
+更新时间：`2026-08-28`
 
 ## 1. 目的
 
@@ -356,7 +356,7 @@
 
 #### `GET /tokens`
 
-返回当前用户自己的 API 令牌列表。
+返回当前用户自己的 API 令牌摘要列表。响应只包含掩码、状态、额度和 `is_recoverable`，不包含 `token_raw` 或完整 `token`。
 
 #### `POST /tokens`
 
@@ -402,6 +402,7 @@
     "key_mask": "sk_stqb_xx...abcd",
     "description": "我的 OCS",
     "status": "active",
+    "is_recoverable": true,
     "reject_low_confidence": false,
     "min_answer_confidence": 0.0
   },
@@ -414,6 +415,41 @@
   }
 }
 ```
+
+创建接口仅在本次响应返回新生成的完整 `token`；服务端同时将其保存到运行数据库的 `api_tokens.token_raw`，以支持所有者后续复制和分享。普通列表、使用记录、日志和管理摘要不会返回该字段。
+
+#### `POST /tokens/{token_id}/copy-value`
+
+仅当前令牌所有者可调用。令牌必须处于 `active` 状态且存在可恢复原文，成功返回 `{ "ok": true, "token_id": "...", "token": "sk_stqb_..." }`，响应使用 `Cache-Control: no-store`。旧数据库中只有哈希、没有 `token_raw` 的令牌继续可鉴权，但返回 `409 TOKEN_VALUE_UNAVAILABLE`，需要新建令牌。
+
+#### `POST /tokens/{token_id}/share-link`
+
+仅当前令牌所有者可调用。成功返回：
+
+```json
+{
+  "ok": true,
+  "token_id": "t_001",
+  "share_url": "https://example.com/share/apikey#key=sk_stqb_xxx"
+}
+```
+
+分享链接不写入数据库、不设置期限、不记录访问次数。Key 位于 URL fragment，浏览器请求 `GET /share/apikey` 或 `GET /api/v1/shares/apikey-template` 时不会把 fragment 发送到服务端；分享页在浏览器本地将 Key 替换到模板中。令牌被吊销或删除后，已复制的配置立即失效。分享动作失败时分别返回 `404 TOKEN_NOT_FOUND`、`409 TOKEN_INACTIVE` 或 `409 TOKEN_VALUE_UNAVAILABLE`。
+
+#### `GET /shares/apikey-template`
+
+公开接口，无需登录。返回当前站点的用户脚本和 OCS 配置模板，其中认证值固定保留 `{{TOKEN}}` 占位符，不读取任何令牌记录，也不返回任何完整 Key：
+
+```json
+{
+  "ok": true,
+  "template_id": "ocs_local_question_bank",
+  "script": "...{{TOKEN}}...",
+  "ocs_config": [{ "headers": { "Authorization": "Bearer {{TOKEN}}" } }]
+}
+```
+
+分享页必须从 `/share/apikey#key=...` 的 fragment 读取 Key；不要改用 `?key=...` 查询参数，以免原文进入服务端、代理或访问日志。
 
 #### `POST /tokens/{token_id}/revoke`
 

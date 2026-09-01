@@ -155,6 +155,25 @@ export const tokenApi = {
     api.delete<{ ok: true; message: string }>(`/tokens/${encodeURIComponent(tokenId)}`),
   importScript: (tokenId?: string) =>
     api.get<{ ok: true } & TokenImportScriptResponse>('/tokens/import-script', tokenId ? { token_id: tokenId } : {}),
+  copyValue: (tokenId: string) =>
+    api.post<{ ok: true; token_id: string; token: string }>(
+      `/tokens/${encodeURIComponent(tokenId)}/copy-value`,
+    ),
+  shareLink: (tokenId: string) =>
+    api.post<{ ok: true; token_id: string; share_url: string }>(
+      `/tokens/${encodeURIComponent(tokenId)}/share-link`,
+    ),
+}
+
+/* ---------------- 无状态 API Key 分享 ---------------- */
+export const shareApi = {
+  apikeyTemplate: () =>
+    api.get<{
+      ok: true
+      template_id: string
+      script: string
+      ocs_config: OcsConfig
+    }>('/shares/apikey-template'),
 }
 
 /* ---------------- 使用记录 / 反馈 / 看板 ---------------- */

@@ -54,6 +54,11 @@ class SettingsService(PlatformDomainService):
             stored = self.repository.get_settings("billing", keys=set(defaults.keys()))
             return {key: max(0, int(stored.get(key, default))) for key, default in defaults.items()}
 
+    def get_max_query_cost(self) -> int:
+        """返回一次查题链路可能产生的最高积分消耗。"""
+
+        return max(self.get_billing().values(), default=0)
+
     def get_image_generation_policy(self) -> dict[str, int]:
         """返回文本生图的积分、限流与资产保留策略。"""
 
@@ -79,14 +84,17 @@ class SettingsService(PlatformDomainService):
 
     def calculate_points_cost(self, resolution_mode: str) -> int:
         """根据查题命中方式计算本次调用的积分消耗。"""
-        if resolution_mode == "input_anomaly":
+        mode = str(resolution_mode or "").strip()
+        if mode in {"input_anomaly", "not_found", "model_error", "invalid_request", ""}:
             return 0
         billing = self.get_billing()
-        if resolution_mode == "llm_fallback":
+        if mode == "llm_fallback":
             return billing["llm_fallback"]
-        if resolution_mode in {"exact_match", "fuzzy_match", "known_rule", "ai_cache"}:
+        if mode in {"exact_match", "fuzzy_match", "known_rule", "ai_cache"}:
             return billing["local_hit"]
-        return billing["web_search"]
+        if mode == "web_search":
+            return billing["web_search"]
+        return 0
 
     def system_points_value(self, key: str) -> int:
         """读取非负整数型积分策略配置。"""

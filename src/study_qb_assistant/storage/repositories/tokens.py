@@ -61,6 +61,7 @@ class TokenRepository(SqlAlchemyRepository):
         entity.user_id = record.user_id
         entity.key_hash = record.key_hash
         entity.key_mask = record.key_mask
+        entity.token_raw = record.token_raw
         entity.description = record.description
         entity.status = record.status
         entity.created_at = record.created_at
@@ -77,6 +78,7 @@ class TokenRepository(SqlAlchemyRepository):
             user_id=entity.user_id,
             key_hash=entity.key_hash,
             key_mask=entity.key_mask,
+            token_raw=str(getattr(entity, "token_raw", "") or ""),
             description=entity.description,
             status=entity.status,
             created_at=entity.created_at,

@@ -109,19 +109,4 @@ export const api = {
   delete: <T = unknown>(url: string) => request<T>({ url, method: 'DELETE' }),
 }
 
-
-const API_TOKEN_SECRET_PREFIX = 'stqb_api_token_secret:'
-
-export function setApiTokenSecret(tokenId: string, secret: string): void {
-  localStorage.setItem(`${API_TOKEN_SECRET_PREFIX}${tokenId}`, secret)
-}
-
-export function getApiTokenSecret(tokenId: string): string | null {
-  return localStorage.getItem(`${API_TOKEN_SECRET_PREFIX}${tokenId}`)
-}
-
-export function removeApiTokenSecret(tokenId: string): void {
-  localStorage.removeItem(`${API_TOKEN_SECRET_PREFIX}${tokenId}`)
-}
-
 export default http

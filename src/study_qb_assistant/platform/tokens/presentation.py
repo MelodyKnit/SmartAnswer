@@ -8,7 +8,7 @@ from .records import ApiTokenRecord
 
 
 def hash_token(token: str) -> str:
-    """对原始令牌做 SHA-256 摘要，避免明文落库。"""
+    """生成用于 Bearer 查询的 SHA-256 索引。"""
 
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
@@ -22,7 +22,7 @@ def mask_token(token: str) -> str:
 
 
 def public_token_dict(token: ApiTokenRecord) -> dict:
-    """生成对前端安全可见的令牌信息。"""
+    """生成不包含原始令牌的公开令牌摘要。"""
 
     return {
         "token_id": token.token_id,
@@ -37,4 +37,5 @@ def public_token_dict(token: ApiTokenRecord) -> dict:
         "quota_used": token.quota_used,
         "reject_low_confidence": token.reject_low_confidence,
         "min_answer_confidence": token.min_answer_confidence,
+        "is_recoverable": bool(token.token_raw),
     }

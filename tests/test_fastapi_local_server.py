@@ -2379,6 +2379,8 @@ class FastAPILocalServerTests(unittest.TestCase):
             self.assertEqual(query_res.status_code, 200)
             alice_after_query = client.get("/users/me", headers=alice_headers).json()["user"]
             self.assertEqual(alice_after_query["points"], 100)
+            usage_logs = platform.usage.list_usage_logs(username="alice")
+            self.assertEqual(usage_logs[0]["points_cost"], 0)
 
             # 4. 再次兑换 30 天卡，自动在原有到期时间顺延 (7 + 30 = 37 天)
             days30_code_res = client.post(
@@ -2429,6 +2431,34 @@ class FastAPILocalServerTests(unittest.TestCase):
             self.assertEqual(empty_days.status_code, 400)
             self.assertEqual(empty_points.json()["error"]["code"], "INVALID_INPUT")
             self.assertEqual(empty_days.json()["error"]["code"], "INVALID_INPUT")
+
+            # 7. 积分不足且非会员用户发起查题应被 402 拦截
+            client.post("/auth/register", json={"username": "broke", "password": "password123"})
+            auth.set_points("broke", 0)
+            broke_headers = {
+                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'broke', 'password': 'password123'}).json()['token']}"
+            }
+            broke_query = client.post(
+                "/query",
+                json={"title": "零积分测试题目"},
+                headers=broke_headers,
+            )
+            self.assertEqual(broke_query.status_code, 402)
+            self.assertEqual(broke_query.json()["error"]["code"], "INSUFFICIENT_POINTS")
+
+            broke_token_res = client.post(
+                "/tokens",
+                json={"description": "broke-token"},
+                headers=broke_headers,
+            )
+            broke_token = broke_token_res.json()["token"]
+            broke_ocs_query = client.get(
+                "/ocs/query",
+                params={"title": "零积分测试题目", "type": "single"},
+                headers={"Authorization": f"Bearer {broke_token}"},
+            )
+            self.assertEqual(broke_ocs_query.status_code, 402)
+            self.assertEqual(broke_ocs_query.json()["code"], 1)
             with self.assertRaises(AuthError) as fractional_count:
                 platform.wallet.create_redeem_code(
                     created_by="boss",
@@ -3678,7 +3708,9 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(token_a.status_code, 200)
         self.assertEqual(one_token.json()["mode"], "direct")
         self.assertEqual(one_token.json()["template_id"], "ocs_local_question_bank")
-        self.assertIn("{{TOKEN}}", one_token.json()["script"])
+        self.assertIn(token_a.json()["token"], one_token.json()["script"])
+        self.assertNotIn("{{TOKEN}}", one_token.json()["script"])
+        self.assertFalse(one_token.json()["requires_local_secret"])
         self.assertIn("// ==UserScript==", one_token.json()["script"])
         self.assertIn('baseUrl: "http://testserver"', one_token.json()["script"])
         self.assertIn("image_data_urls", one_token.json()["script"])
@@ -3687,6 +3719,7 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(one_token.json()["ocs_config"][0]["type"], "GM_xmlhttpRequest")
         self.assertEqual(one_token.json()["ocs_config"][0]["name"], "AI题库 · A")
         self.assertIn("/ocs/query", one_token.json()["ocs_config"][0]["url"])
+        self.assertIn(token_a.json()["token"], one_token.json()["ocs_config"][0]["headers"]["Authorization"])
         self.assertEqual(token_b.status_code, 200)
         self.assertEqual(multiple_tokens.json()["mode"], "select_token")
         self.assertEqual(len(multiple_tokens.json()["token_options"]), 2)
@@ -4404,6 +4437,28 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(blocked.json()["error"]["code"], "EMAIL_DOMAIN_NOT_ALLOWED")
         self.assertEqual(sent.status_code, 200)
         self.assertEqual(registered.status_code, 200)
+
+    def test_ocs_refresh_status_head_probe_returns_ok(self) -> None:
+        """OCS 刷新题库状态功能会发送 HEAD /?t=... 探活请求，服务应返回 200 OK。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformServices(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(),
+                    auth_service=auth,
+                    platform_services=platform,
+                    require_auth=True,
+                )
+            )
+
+            head_response = client.head("/?t=1725158400000")
+            get_response = client.get("/?t=1725158400000")
+
+        self.assertEqual(head_response.status_code, 200)
+        self.assertEqual(get_response.status_code, 200)
 
 
 def _sample_index() -> LocalQuestionIndex:
