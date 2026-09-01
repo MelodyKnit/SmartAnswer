@@ -166,13 +166,19 @@ class RemoteReleaseScriptTests(unittest.TestCase):
         self.assertFalse((self.project_dir / "deploy-data" / "backups").exists())
 
     def test_deployment_workflow_uses_scp_port_option(self) -> None:
-        """SCP 必须使用大写 -P，避免非 22 端口被误当成源文件。"""
+        """非标准端口连接必须正确匹配已配置的 SSH 主机密钥。"""
+
+        for workflow_path in (RELEASE_WORKFLOW, UPDATE_WORKFLOW):
+            workflow = workflow_path.read_text(encoding="utf-8")
+
+            self.assertIn('scp_args=(-P "$DEPLOY_PORT"', workflow)
+            self.assertIn('ssh-keygen -F "$DEPLOY_HOST"', workflow)
+            self.assertIn('ssh-keygen -F "[$DEPLOY_HOST]:$DEPLOY_PORT"', workflow)
+            self.assertIn('HostKeyAlias=$DEPLOY_HOST', workflow)
+            self.assertNotIn('scp "${ssh_args[@]}"', workflow)
 
         workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
-
-        self.assertIn('scp_args=(-P "$DEPLOY_PORT"', workflow)
         self.assertIn('scp "${scp_args[@]}" docker-compose.yaml', workflow)
-        self.assertNotIn('scp "${ssh_args[@]}"', workflow)
 
     def test_deployment_workflows_stage_assets_for_rootless_deployment(self) -> None:
         """部署账户在同一 rootless Docker context 中安装并执行发布文件。"""
