@@ -149,8 +149,9 @@ The official source defaults to `MelodyKnit/SmartAnswer`. The image build inject
 `owner/repository` into `STQB_SOURCE_REPOSITORY`; a valid injected value overrides that default
 for a fork or separately released deployment. `check` retrieves the latest formal Release
 anonymously and validates the repository, tag, version, commit SHA, image name and immutable
-digest in `release-manifest.json`. Production deployment remains a GitHub Actions `production`
-Environment responsibility.
+digest in `release-manifest.json`. Production deployment is performed by each server's local
+`deploy/update-from-github.sh` updater and `deploy/apply-release.sh`; GitHub Actions does not
+receive server deployment credentials or connect to a production host.
 
 The update response includes `version_relation`: `behind` means a newer formal Release is
 available, `current` means the versions match, and `ahead` means the running service was deployed

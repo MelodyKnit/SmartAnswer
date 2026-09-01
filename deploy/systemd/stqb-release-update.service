@@ -1,0 +1,9 @@
+[Unit]
+Description=StudyQuestionBankAssistant local GitHub Release updater
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Adjust the project and config paths when the service is installed.
+ExecStart=%h/study-qb-assistant/deploy/update-from-github.sh %h/.config/study-qb-assistant/update.env

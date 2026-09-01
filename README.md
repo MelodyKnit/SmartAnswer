@@ -58,7 +58,7 @@ npm run build
 
 ## 部署与数据
 
-- Docker Compose 使用仓库根目录的 `docker-compose.yaml`；详细步骤见[部署说明](docs/deployment.md)。
+- Docker Compose 使用仓库根目录的 `docker-compose.yaml`；详细步骤见[部署说明](docs/deployment.md)。服务器通过本地更新器主动拉取正式 Release，不需要 GitHub SSH 部署审批。
 - 运行数据、SQLite 数据库、日志和图片资产位于配置的数据目录，Docker 默认通过 `deploy-data` 卷持久化。
 - `.env`、数据库、运行数据、日志、图片和本地实验目录均不得提交。部署前仅复制并填写 `.env.example` 中实际需要的配置。
 
@@ -77,7 +77,7 @@ npm run build
 
 ## 发布约定
 
-正式发布时同步更新 `pyproject.toml` 版本号、提交版本变更并创建同名 Git tag。服务器部署使用经过验证的发布版本；本地未提交实验和运行数据不进入发布物。
+正式发布时同步更新 `pyproject.toml` 版本号、提交版本变更并创建同名 Git tag。GitHub Actions 负责构建并发布 Release，服务器上的本地更新器会自动拉取经过验证的发布版本；本地未提交实验和运行数据不进入发布物。
 
 ## License
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** 公开 GitHub Release 状态面板；部署始终由 GitHub Actions 负责。 */
+/** 公开 GitHub Release 状态面板；部署由服务器本地更新器负责。 */
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { projectUpdateApi } from '@/api/endpoints'
@@ -123,7 +123,7 @@ onMounted(() => void loadStatus())
       <div class="text-sm text-ink">{{ status?.message }}</div>
       <div v-if="status?.error" class="mt-1 text-sm text-danger">{{ status.error }}</div>
       <div class="mt-2 text-xs text-ink-muted">
-        正式部署由 GitHub Actions 的 production 环境审批后执行，应用不会保存 GitHub 凭据或触发部署。
+        应用只检查公开 Release；服务器由本地更新器自动拉取并部署，应用不会保存 GitHub 凭据或触发部署。
       </div>
     </div>
 

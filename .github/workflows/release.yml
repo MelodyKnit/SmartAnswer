@@ -17,11 +17,6 @@ jobs:
   release:
     name: Validate, package and publish Release
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.version.outputs.version }}
-      image: ${{ steps.image.outputs.name }}
-      image_digest: ${{ steps.build.outputs.digest }}
-      build_sha: ${{ github.sha }}
     steps:
       - name: Checkout tagged source
         uses: actions/checkout@v4
@@ -102,7 +97,8 @@ jobs:
 
       - name: Validate backend
         run: |
-          bash -n deploy/remote-release.sh
+          bash -n deploy/apply-release.sh
+          bash -n deploy/update-from-github.sh
           ruff --version
           ruff check src tests
           pytest -q
@@ -183,74 +179,3 @@ jobs:
               --generate-notes \
               --title "${GITHUB_REF_NAME}"
           fi
-
-  deploy:
-    name: Deploy immutable release
-    needs: release
-    runs-on: ubuntu-latest
-    environment:
-      name: production
-    concurrency:
-      group: study-qb-production-deploy
-      cancel-in-progress: false
-    env:
-      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
-      DEPLOY_PORT: ${{ vars.DEPLOY_PORT }}
-      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
-      DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
-      DEPLOY_HEALTH_URL: ${{ vars.DEPLOY_HEALTH_URL }}
-      DEPLOY_DOCKER_CONTEXT: ${{ vars.DEPLOY_DOCKER_CONTEXT || 'rootless' }}
-      DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
-      DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
-      IMAGE_REF: ${{ needs.release.outputs.image }}@${{ needs.release.outputs.image_digest }}
-      VERSION: ${{ needs.release.outputs.version }}
-      BUILD_SHA: ${{ needs.release.outputs.build_sha }}
-    steps:
-      - name: Checkout deployment assets
-        uses: actions/checkout@v4
-
-      - name: Validate deployment configuration
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "${DEPLOY_HOST}" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "Invalid DEPLOY_HOST" >&2; exit 1; }
-          [[ "${DEPLOY_PORT}" =~ ^[1-9][0-9]{0,4}$ ]] || { echo "Invalid DEPLOY_PORT" >&2; exit 1; }
-          (( 10#${DEPLOY_PORT} <= 65535 )) || { echo "Invalid DEPLOY_PORT" >&2; exit 1; }
-          [[ "${DEPLOY_USER}" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] || { echo "Invalid DEPLOY_USER" >&2; exit 1; }
-          [[ "${DEPLOY_PATH}" =~ ^/[A-Za-z0-9._/-]+$ ]] || { echo "Invalid DEPLOY_PATH" >&2; exit 1; }
-          [[ "${DEPLOY_HEALTH_URL}" =~ ^https?://127\.0\.0\.1:[1-9][0-9]{0,4}$ ]] || { echo "Invalid DEPLOY_HEALTH_URL" >&2; exit 1; }
-          [[ "${DEPLOY_DOCKER_CONTEXT}" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "Invalid DEPLOY_DOCKER_CONTEXT" >&2; exit 1; }
-          [[ "${IMAGE_REF}" =~ ^ghcr\.io/[a-z0-9_.-]+/[a-z0-9_.-]+@sha256:[a-f0-9]{64}$ ]] || { echo "Invalid image digest" >&2; exit 1; }
-          [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid release version" >&2; exit 1; }
-          [[ "${BUILD_SHA}" =~ ^[a-f0-9]{40}$ ]] || { echo "Invalid release revision" >&2; exit 1; }
-          [[ -n "${DEPLOY_SSH_PRIVATE_KEY}" ]] || { echo "DEPLOY_SSH_PRIVATE_KEY is not configured" >&2; exit 1; }
-          [[ -n "${DEPLOY_KNOWN_HOSTS}" ]] || { echo "DEPLOY_KNOWN_HOSTS is not configured" >&2; exit 1; }
-
-      - name: Configure SSH
-        shell: bash
-        run: |
-          set -euo pipefail
-          install -d -m 700 "$HOME/.ssh"
-          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
-          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
-          chmod 600 "$HOME/.ssh/id_ed25519" "$HOME/.ssh/known_hosts"
-
-      - name: Apply immutable release image
-        shell: bash
-        run: |
-          set -euo pipefail
-          ssh_args=(-p "$DEPLOY_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes)
-          scp_args=(-P "$DEPLOY_PORT" -o BatchMode=yes -o StrictHostKeyChecking=yes)
-          remote_target="${DEPLOY_USER}@${DEPLOY_HOST}"
-          remote_stage_dir="$(ssh "${ssh_args[@]}" "$remote_target" 'set -euo pipefail; mkdir -p "$HOME/.cache"; mktemp -d "$HOME/.cache/stqb-release.XXXXXX"')"
-          # 生产机可能使用 root 或普通部署用户；两者的 HOME 路径都由远端
-          # mktemp 生成，限制在受控缓存目录内，避免把任意远程路径带回清理逻辑。
-          [[ "$remote_stage_dir" =~ ^/(root|home/[A-Za-z0-9_-]+)/\.cache/stqb-release\.[A-Za-z0-9]+$ ]] || { echo "Invalid remote staging directory" >&2; exit 1; }
-          cleanup_remote_stage() {
-            ssh "${ssh_args[@]}" "$remote_target" "rm -rf '$remote_stage_dir'" || true
-          }
-          trap cleanup_remote_stage EXIT
-          scp "${scp_args[@]}" docker-compose.yaml "$remote_target:$remote_stage_dir/docker-compose.release.yaml"
-          scp "${scp_args[@]}" deploy/remote-release.sh "$remote_target:$remote_stage_dir/remote-release.sh"
-          ssh "${ssh_args[@]}" "$remote_target" \
-            "set -euo pipefail; install -d -m 0755 '$DEPLOY_PATH/deploy'; install -m 0644 '$remote_stage_dir/docker-compose.release.yaml' '$DEPLOY_PATH/deploy/docker-compose.release.yaml'; install -m 0700 '$remote_stage_dir/remote-release.sh' '$DEPLOY_PATH/deploy/remote-release.sh'; STQB_DEPLOY_DOCKER_CONTEXT='$DEPLOY_DOCKER_CONTEXT' bash '$DEPLOY_PATH/deploy/remote-release.sh' '$DEPLOY_PATH' '$IMAGE_REF' '$VERSION' '$BUILD_SHA' '$DEPLOY_HEALTH_URL'"

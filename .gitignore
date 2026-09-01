@@ -82,6 +82,12 @@ data/runtime/
 data/manifests/
 configs/answer-quality-rules.json
 
+# --- Server-local release updater state (keep deployment config and generated overlays out of Git) ---
+deploy/update.env
+deploy/.update.lock
+deploy/docker-compose.release.yaml
+deploy/docker-compose.release-image.yaml
+
 # --- IDE 及编辑器配置 ---
 # 仅保留基础团队环境设置，忽略个人任务、调试运行配置和日志
 .vscode/

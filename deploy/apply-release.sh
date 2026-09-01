@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# GitHub Actions 在每次正式发布后通过 SSH 调用本脚本。
-# 它运行在生产服务所属的 rootless Docker 用户下：不使用 sudo、不安装 systemd
-# 单元、不保留 GitHub 凭据，也不运行于业务容器内。
+# Apply one already-validated release locally on the deployment host.
+# The pull/update wrapper supplies the immutable image reference; this script
+# owns the local Compose switch, data backup, health check and rollback.
 
 set -euo pipefail
 
@@ -37,7 +37,7 @@ validate_arguments() {
   [[ "$health_base_url" =~ ^https?://127\.0\.0\.1:[1-9][0-9]{0,4}$ ]] || fail "invalid health URL"
   command -v docker >/dev/null 2>&1 || fail "docker command is unavailable"
 
-  expected_docker_context="${STQB_DEPLOY_DOCKER_CONTEXT:-rootless}"
+  expected_docker_context="${STQB_DEPLOY_DOCKER_CONTEXT:-${STQB_DOCKER_CONTEXT:-rootless}}"
   [[ "$expected_docker_context" =~ ^[A-Za-z0-9._-]+$ ]] || fail "invalid Docker context"
   actual_docker_context="$(docker context show 2>/dev/null || true)"
   [[ "$actual_docker_context" == "$expected_docker_context" ]] || fail "Docker context must be $expected_docker_context, got ${actual_docker_context:-none}"

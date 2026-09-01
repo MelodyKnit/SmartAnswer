@@ -614,7 +614,7 @@
 
 响应还会返回 `version_relation`：`behind` 表示有较新的正式 Release，`current` 表示版本一致，`ahead` 表示当前服务是手动部署或尚未成为正式 Release 的较新版本。只有 `behind` 时 `has_update=true`。
 
-应用不提供部署、任务轮询或 GitHub Token 管理接口。GitHub Actions 的受保护 `production` Environment 负责从 Release 的精确镜像 digest 部署，远端 `remote-release.sh` 负责健康检查和自动回滚。
+应用不提供部署、任务轮询或 GitHub Token 管理接口。GitHub Actions 只负责从版本标签构建并发布 Release；部署服务器上的 `deploy/update-from-github.sh` 主动拉取经过 manifest 校验的精确镜像 digest，`deploy/apply-release.sh` 负责本地健康检查和自动回滚。服务器地址、SSH 凭据和私有仓库凭据均不进入 GitHub Actions。
 应用启动时会幂等清理旧版本遗留的 `project_update_*` 系统配置，包含历史 GitHub Token。
 
 大模型推理、联网搜索和 LLM 学习缓存配置统一通过 `/llm-runtime-config` 维护，系统配置页不再展示这些字段。

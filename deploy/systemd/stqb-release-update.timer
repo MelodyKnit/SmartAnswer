@@ -1,0 +1,11 @@
+[Unit]
+Description=Poll StudyQuestionBankAssistant GitHub Releases
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+Unit=stqb-release-update.service
+
+[Install]
+WantedBy=timers.target

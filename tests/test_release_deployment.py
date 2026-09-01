@@ -1,4 +1,4 @@
-"""GitHub Actions 远程发布脚本回归测试。"""
+"""服务器本地发布切换脚本回归测试。"""
 
 from __future__ import annotations
 
@@ -13,9 +13,8 @@ import unittest
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-RELEASE_SCRIPT = PROJECT_ROOT / "deploy" / "remote-release.sh"
+RELEASE_SCRIPT = PROJECT_ROOT / "deploy" / "apply-release.sh"
 RELEASE_WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "release.yml"
-UPDATE_WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "deploy-release.yml"
 with (PROJECT_ROOT / "pyproject.toml").open("rb") as project_file:
     OLD_VERSION = str(tomllib.load(project_file)["project"]["version"])
 major, minor, patch = (int(part) for part in OLD_VERSION.split("."))
@@ -53,8 +52,8 @@ def find_usable_bash() -> Path | None:
     return None
 
 
-class RemoteReleaseScriptTests(unittest.TestCase):
-    """验证发布脚本的成功切换和自动回滚。"""
+class ApplyReleaseScriptTests(unittest.TestCase):
+    """验证本地发布切换脚本的成功切换和自动回滚。"""
 
     @classmethod
     def setUpClass(cls) -> None:
@@ -165,42 +164,18 @@ class RemoteReleaseScriptTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertFalse((self.project_dir / "deploy-data" / "backups").exists())
 
-    def test_deployment_workflow_uses_scp_port_option(self) -> None:
-        """SCP 必须使用大写 -P，避免非 22 端口被误当成源文件。"""
-
-        workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
-
-        self.assertIn('scp_args=(-P "$DEPLOY_PORT"', workflow)
-        self.assertIn('scp "${scp_args[@]}" docker-compose.yaml', workflow)
-        self.assertNotIn('scp "${ssh_args[@]}"', workflow)
-
-    def test_deployment_workflows_stage_assets_for_rootless_deployment(self) -> None:
-        """部署账户在同一 rootless Docker context 中安装并执行发布文件。"""
-
-        for workflow in (RELEASE_WORKFLOW, UPDATE_WORKFLOW):
-            content = workflow.read_text(encoding="utf-8")
-
-            self.assertIn('mktemp -d "$HOME/.cache/stqb-release.XXXXXX"', content)
-            self.assertIn(
-                "^/(root|home/[A-Za-z0-9_-]+)/\\.cache/stqb-release\\.",
-                content,
-            )
-            self.assertIn("Invalid remote staging directory", content)
-            self.assertIn("install -d -m 0755", content)
-            self.assertIn("STQB_DEPLOY_DOCKER_CONTEXT", content)
-            self.assertNotIn("sudo -n", content)
-            self.assertIn("cleanup_remote_stage", content)
-
     def test_release_workflow_triggers_for_version_tags(self) -> None:
-        """正式版本标签必须触发校验、发布和受保护环境部署。"""
+        """正式版本标签必须触发校验和 Release 发布，不包含服务器部署绑定。"""
 
         workflow = RELEASE_WORKFLOW.read_text(encoding="utf-8")
 
         self.assertIn("push:", workflow)
         self.assertIn('"v*"', workflow)
-        self.assertIn("name: production", workflow)
         self.assertIn("SOURCE_REPOSITORY=${{ github.repository }}", workflow)
         self.assertNotIn("GHCR_READ_TOKEN", workflow)
+        self.assertNotIn("DEPLOY_HOST", workflow)
+        self.assertNotIn("DEPLOY_SSH_PRIVATE_KEY", workflow)
+        self.assertNotIn("production", workflow)
 
     def test_release_workflow_pins_ruff_version(self) -> None:
         """发布校验必须使用确定的 Ruff 版本，避免默认规则随上游变动。"""
@@ -223,20 +198,6 @@ class RemoteReleaseScriptTests(unittest.TestCase):
             workflow.index("Install frontend dependencies"),
             workflow.index("Build frontend"),
         )
-
-    def test_existing_release_workflow_validates_manifest_before_remote_deploy(self) -> None:
-        """人工重部署只接受已发布且经过 manifest 校验的不可变镜像。"""
-
-        workflow = UPDATE_WORKFLOW.read_text(encoding="utf-8")
-
-        self.assertIn("workflow_dispatch", workflow)
-        self.assertIn("release-manifest.json", workflow)
-        self.assertIn("Release manifest validation failed", workflow)
-        self.assertIn('scp_args=(-P "$DEPLOY_PORT"', workflow)
-        self.assertIn("remote-release.sh", workflow)
-        self.assertIn("name: production", workflow)
-        self.assertNotIn("operation_id", workflow)
-        self.assertNotIn("GHCR_READ_TOKEN", workflow)
 
     def test_release_script_resolves_the_running_sqlite_database_path(self) -> None:
         """发布备份必须遵从容器实际数据库配置，而非假设固定文件名。"""
