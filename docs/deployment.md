@@ -10,7 +10,7 @@
 - `Dockerfile`：构建 Python 运行时和前端静态资源。
 - `docker-compose.yaml`：只接受 `STQB_IMAGE_REF` 指向的镜像 digest，拒绝可变标签启动。
 - `.env.server`：服务器本地业务配置，未提交到仓库。
-- `.env.release`：本地更新器生成，记录当前镜像 digest、版本和提交号。
+- `.env.release`：本地更新器生成，记录当前运行镜像、对应的远程 Release digest、版本和提交号。
 - `docker-compose.override.yml`：服务器本地运维覆盖层，更新器不会覆盖。
 - `deploy/update-from-github.sh`：服务器本地 Release 检查与更新入口。
 - `deploy/apply-release.sh`：本地 Compose 切换、数据备份、健康检查和自动回滚。
@@ -56,11 +56,14 @@ STQB_HEALTH_URL=http://127.0.0.1:3003
 STQB_DOCKER_CONTEXT=rootless
 STQB_PLATFORM=linux/amd64
 STQB_ALLOW_DOWNGRADE=false
+STQB_ALLOW_SOURCE_FALLBACK=true
 ```
 
 `STQB_HEALTH_URL` 必须是服务器本机地址，不是公网域名；应填写运行用户实际可访问的
 宿主机映射端口，例如 `http://127.0.0.1:13003`。仓库和 GHCR 都公开时无需任何
-凭据。私有仓库使用服务器本地的 `STQB_GITHUB_TOKEN_FILE`；私有 GHCR 使用
+凭据。GHCR 不可读时，更新器默认从经过 manifest 校验的 Release commit 在本机重新构建
+镜像；可设置 `STQB_ALLOW_SOURCE_FALLBACK=false` 强制只使用镜像。私有仓库使用服务器本地的
+`STQB_GITHUB_TOKEN_FILE`；私有 GHCR 使用
 `STQB_GHCR_USERNAME` 和 `STQB_GHCR_TOKEN_FILE`。凭据文件权限应为 `600`，不写入项目、
 GitHub Actions 或容器环境。
 
@@ -73,7 +76,9 @@ GitHub Actions 或容器环境。
 ## 自动更新
 
 更新器只跟随正式发布的 `vX.Y.Z` GitHub Release，不直接读取普通分支。GitHub Release
-发布后，下一次轮询会自动执行：
+发布后，下一次轮询会自动执行。如果 GHCR 包是私有的或暂时不可读，更新器会在完成
+同样的 manifest 校验后，从对应 Release commit 在服务器本地构建镜像再切换；这不需要
+服务器凭据进入 GitHub。也可以通过 `STQB_ALLOW_SOURCE_FALLBACK=false` 禁用该回退。
 
 ```text
 读取 Release metadata

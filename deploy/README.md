@@ -15,8 +15,11 @@ GitHub 仓库。
   `http://127.0.0.1:3003`。
 - `STQB_DOCKER_CONTEXT`：默认使用 `rootless`；必须与运行服务用户执行 `docker context show`
   的结果一致。
+- `STQB_ALLOW_SOURCE_FALLBACK`：默认启用。GHCR 镜像不可读时，从 manifest 指定的 Release
+  commit 下载源码并在本机带版本元数据构建；可设为 `false` 强制只使用镜像。
 
-公开仓库和公开 GHCR 镜像不需要凭据。私有仓库使用 `STQB_GITHUB_TOKEN_FILE`，私有
+公开仓库和公开 GHCR 镜像不需要凭据。GHCR 不可读时默认使用经过 manifest 校验的源码
+构建回退。私有仓库使用 `STQB_GITHUB_TOKEN_FILE`，私有
 GHCR 镜像使用 `STQB_GHCR_USERNAME` 与 `STQB_GHCR_TOKEN_FILE`。凭据文件只保存在
 服务器，权限应为 `600`。
 

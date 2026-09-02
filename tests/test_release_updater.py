@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import io
 import os
 import shutil
 import stat
 import subprocess
 import sys
 import tempfile
+import tarfile
 import unittest
 from pathlib import Path
 
@@ -93,6 +95,7 @@ class ReleaseUpdaterTests(unittest.TestCase):
         self.candidate_updater = self.root / "candidate-updater.sh"
         self.apply_log = self.root / "apply.log"
         self.docker_log = self.root / "docker.log"
+        self.source_archive = self.root / "source.tar.gz"
 
         self.write_release(tag="v0.7.0", version="0.7.0", repository="MelodyKnit/SmartAnswer")
         self.write_text(
@@ -116,6 +119,7 @@ rm -f "$project_dir/deploy/docker-compose.release.yaml"
         self.write_executable(self.candidate_updater, """#!/usr/bin/env bash
 exit 0
 """)
+        self.write_source_archive()
         self.install_fake_commands()
         self.config_file = self.root / "update.env"
         self.write_config()
@@ -139,6 +143,56 @@ exit 0
             self.candidate_updater.read_text(encoding="utf-8"),
         )
         self.assertFalse((self.deploy_dir / "docker-compose.release.yaml").exists())
+
+    def test_private_registry_falls_back_to_validated_source(self) -> None:
+        """GHCR 不可读时，从相同 Release 提交构建本地镜像后继续部署。"""
+
+        completed = self.run_updater(docker_pull_fails=True)
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        apply_log = self.apply_log.read_text(encoding="utf-8")
+        self.assertIn("stqb-local/smartanswer:release-0.7.0-aaaaaaaaaaaa", apply_log)
+        self.assertIn(NEW_IMAGE, apply_log)
+        self.assertIn("building the validated Release source locally", completed.stdout)
+        self.assertIn("build --pull", self.docker_log.read_text(encoding="utf-8"))
+
+    def test_source_fallback_can_be_disabled(self) -> None:
+        """关闭源码回退后，私有镜像不可读应在切换前失败。"""
+
+        self.write_text(
+            self.config_file,
+            self.config_file.read_text(encoding="utf-8")
+            + "STQB_ALLOW_SOURCE_FALLBACK=false\n",
+        )
+
+        completed = self.run_updater(docker_pull_fails=True)
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("source fallback is disabled", completed.stderr)
+        self.assertFalse(self.apply_log.exists())
+
+    def test_local_fallback_release_is_idempotent(self) -> None:
+        """本地构建镜像通过远程 Release digest 识别为同一版本。"""
+
+        local_image = "stqb-local/smartanswer:release-0.7.0-aaaaaaaaaaaa"
+        self.write_text(
+            self.project_dir / ".env.release",
+            chr(10).join(
+                (
+                    f"STQB_IMAGE_REF={local_image}",
+                    f"STQB_RELEASE_IMAGE_REF={NEW_IMAGE}",
+                    f"STQB_RELEASE_VERSION={NEW_VERSION}",
+                    f"STQB_RELEASE_SHA={NEW_SHA}",
+                    "",
+                )
+            ),
+        )
+
+        completed = self.run_updater()
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("already running 0.7.0", completed.stdout)
+        self.assertFalse(self.apply_log.exists())
 
     def test_current_release_is_idempotent(self) -> None:
         """同一版本和 digest 重复轮询时不重新拉取或重启容器。"""
@@ -292,7 +346,7 @@ exit 0
             ),
         )
 
-    def run_updater(self) -> subprocess.CompletedProcess[str]:
+    def run_updater(self, *, docker_pull_fails: bool = False) -> subprocess.CompletedProcess[str]:
         """使用伪造 GitHub、Docker 和 flock 命令执行完整拉取流程。"""
 
         environment = {
@@ -306,7 +360,11 @@ exit 0
             "FAKE_APPLY_LOG": self.bash_path(self.apply_log),
             "FAKE_APPLY_IMAGE": self.bash_path(self.root / "apply-image.txt"),
             "FAKE_DOCKER_LOG": self.bash_path(self.docker_log),
+            "FAKE_SOURCE_ARCHIVE": self.bash_path(self.source_archive),
             "FAKE_PYTHON": self.bash_path(Path(sys.executable)),
+            "FAKE_VERSION": NEW_VERSION,
+            "FAKE_SHA": NEW_SHA,
+            "FAKE_DOCKER_PULL_FAILS": "1" if docker_pull_fails else "0",
         }
         command = [
             str(self.bash),
@@ -334,6 +392,7 @@ args="$*"
 case "$args" in
   *"/releases/latest"*|*"/releases/tags/"*) cat "$FAKE_RELEASE_JSON" ;;
   *"/releases/assets/"*) cat "$FAKE_MANIFEST_JSON" ;;
+  *"/tarball/"*) cat "$FAKE_SOURCE_ARCHIVE" ;;
   *"/contents/docker-compose.yaml"*) cat "$FAKE_COMPOSE" ;;
   *"/contents/deploy/apply-release.sh"*) cat "$FAKE_APPLY" ;;
   *"/contents/deploy/update-from-github.sh"*) cat "$FAKE_UPDATER" ;;
@@ -345,6 +404,12 @@ set -euo pipefail
 printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
 if [[ "$#" -ge 2 && "$1" == "context" && "$2" == "show" ]]; then
   printf 'rootless'
+elif [[ "${1:-}" == "pull" && "${FAKE_DOCKER_PULL_FAILS:-0}" == "1" ]]; then
+  exit 1
+elif [[ "${1:-}" == "build" ]]; then
+  exit 0
+elif [[ "${1:-}" == "run" ]]; then
+  printf '%s:%s\n' "$FAKE_VERSION" "$FAKE_SHA"
 elif [[ "$#" -ge 1 && "$1" == "login" ]]; then
   cat >/dev/null
 fi
@@ -359,6 +424,19 @@ exec "$FAKE_PYTHON" "$@"
         self.write_executable(self.fake_bin / "docker", docker_script)
         self.write_executable(self.fake_bin / "flock", flock_script)
         self.write_executable(self.fake_bin / "python3", python_script)
+
+    def write_source_archive(self) -> None:
+        """写入 GitHub tarball 形态的最小源码归档。"""
+
+        files = {
+            "smartanswer-bda0698/Dockerfile": b"FROM scratch\n",
+            "smartanswer-bda0698/docker-compose.yaml": b"services:\n",
+        }
+        with tarfile.open(self.source_archive, mode="w:gz") as archive:
+            for name, content in files.items():
+                info = tarfile.TarInfo(name)
+                info.size = len(content)
+                archive.addfile(info, fileobj=io.BytesIO(content))
 
     def bash_path(self, path: Path) -> str:
         """把 Windows 原生路径转换成 Git Bash 可读取的路径。"""

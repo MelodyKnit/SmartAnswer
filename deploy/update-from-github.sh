@@ -9,6 +9,7 @@ readonly DEFAULT_GITHUB_API_URL="https://api.github.com"
 readonly DEFAULT_HEALTH_URL="http://127.0.0.1:3003"
 readonly DEFAULT_DOCKER_CONTEXT="rootless"
 readonly DEFAULT_PLATFORM="linux/amd64"
+readonly DEFAULT_SOURCE_FALLBACK="true"
 
 config_file="${1:-${STQB_UPDATE_CONFIG:-}}"
 project_dir=""
@@ -18,6 +19,7 @@ health_url=""
 docker_context=""
 platform=""
 allow_downgrade=""
+allow_source_fallback=""
 release_tag=""
 github_token_file=""
 ghcr_username=""
@@ -54,6 +56,7 @@ health_url="${STQB_HEALTH_URL:-$DEFAULT_HEALTH_URL}"
 docker_context="${STQB_DOCKER_CONTEXT:-$DEFAULT_DOCKER_CONTEXT}"
 platform="${STQB_PLATFORM:-$DEFAULT_PLATFORM}"
 allow_downgrade="${STQB_ALLOW_DOWNGRADE:-false}"
+allow_source_fallback="${STQB_ALLOW_SOURCE_FALLBACK:-$DEFAULT_SOURCE_FALLBACK}"
 release_tag="${STQB_RELEASE_TAG:-}"
 github_token_file="${STQB_GITHUB_TOKEN_FILE:-}"
 ghcr_username="${STQB_GHCR_USERNAME:-}"
@@ -67,6 +70,7 @@ github_api_url="${github_api_url%/}"
 [[ "$docker_context" =~ ^[A-Za-z0-9._-]+$ ]] || fail "invalid STQB_DOCKER_CONTEXT"
 [[ "$platform" =~ ^[A-Za-z0-9._/-]+$ ]] || fail "invalid STQB_PLATFORM"
 [[ "$allow_downgrade" == "true" || "$allow_downgrade" == "false" ]] || fail "STQB_ALLOW_DOWNGRADE must be true or false"
+[[ "$allow_source_fallback" == "true" || "$allow_source_fallback" == "false" ]] || fail "STQB_ALLOW_SOURCE_FALLBACK must be true or false"
 if [[ -n "$release_tag" ]]; then
   [[ "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "invalid STQB_RELEASE_TAG"
 fi
@@ -76,6 +80,7 @@ require_command curl
 require_command docker
 require_command flock
 require_command python3
+require_command tar
 
 if [[ -n "$github_token_file" ]]; then
   [[ -r "$github_token_file" ]] || fail "STQB_GITHUB_TOKEN_FILE is not readable"
@@ -226,7 +231,10 @@ current_version=""
 current_image_ref=""
 if [[ -f "$current_env" ]]; then
   current_version="$(awk -F= '$1 == "STQB_RELEASE_VERSION" { print $2; exit }' "$current_env" | tr -d '\r')"
-  current_image_ref="$(awk -F= '$1 == "STQB_IMAGE_REF" { print $2; exit }' "$current_env" | tr -d '\r')"
+  current_image_ref="$(awk -F= '$1 == "STQB_RELEASE_IMAGE_REF" { print $2; exit }' "$current_env" | tr -d '\r')"
+  if [[ -z "$current_image_ref" ]]; then
+    current_image_ref="$(awk -F= '$1 == "STQB_IMAGE_REF" { print $2; exit }' "$current_env" | tr -d '\r')"
+  fi
 fi
 
 release_decision="$(python3 - "$current_version" "$current_image_ref" "$version" "$image_ref" "$allow_downgrade" <<'PY'
@@ -279,6 +287,8 @@ esac
 candidate_compose="$stage_dir/docker-compose.yaml"
 candidate_apply="$stage_dir/apply-release.sh"
 candidate_updater="$stage_dir/update-from-github.sh"
+source_archive="$stage_dir/source.tar.gz"
+source_dir="$stage_dir/source"
 if ! github_get 'application/vnd.github.raw' "$repository_api_url/contents/docker-compose.yaml?ref=$build_sha" > "$candidate_compose"; then
   fail "unable to download docker-compose.yaml from the release commit"
 fi
@@ -304,12 +314,37 @@ fi
 actual_docker_context="$(docker context show 2>/dev/null || true)"
 [[ "$actual_docker_context" == "$docker_context" ]] || fail "Docker context must be $docker_context, got ${actual_docker_context:-none}"
 
+candidate_image_ref="$image_ref"
+if ! docker pull "$image_ref" >/dev/null 2>&1; then
+  [[ "$allow_source_fallback" == "true" ]] || fail "release image is unavailable and source fallback is disabled"
+  log "registry image is unavailable; building the validated Release source locally"
+  if ! github_get 'application/vnd.github+json' "$github_api_url/repos/$source_repository/tarball/$build_sha" > "$source_archive"; then
+    fail "unable to download the validated Release source archive"
+  fi
+  mkdir -p "$source_dir"
+  tar -xzf "$source_archive" -C "$source_dir" --strip-components=1
+  [[ -f "$source_dir/Dockerfile" && -f "$source_dir/docker-compose.yaml" ]] || fail "Release source archive is incomplete"
+  local_tag="stqb-local/smartanswer:release-${version}-${build_sha:0:12}"
+  docker build \
+    --pull \
+    --platform "$platform" \
+    --build-arg "APP_VERSION=$version" \
+    --build-arg "BUILD_SHA=$build_sha" \
+    --build-arg "SOURCE_REPOSITORY=$source_repository" \
+    --tag "$local_tag" \
+    "$source_dir"
+  candidate_image_ref="$local_tag"
+fi
+
+candidate_build="$(docker run --rm --entrypoint python "$candidate_image_ref" -c 'from study_qb_assistant.version import BUILD_INFO; print(BUILD_INFO.version + ":" + BUILD_INFO.build_sha)' 2>/dev/null || true)"
+[[ "$candidate_build" == "$version:$build_sha" ]] || fail "candidate image build metadata does not match Release manifest"
+
 candidate_compose_target="$project_dir/deploy/docker-compose.release.yaml"
 install_atomic "$candidate_compose" "$candidate_compose_target" 0644
 export STQB_DEPLOY_DOCKER_CONTEXT="$docker_context"
 
 log "applying $resolved_release_tag ($digest)"
-if ! bash "$candidate_apply" "$project_dir" "$image_ref" "$version" "$build_sha" "$health_url"; then
+if ! bash "$candidate_apply" "$project_dir" "$candidate_image_ref" "$version" "$build_sha" "$health_url" "$image_ref"; then
   # apply-release.sh installs its own cleanup trap after argument validation;
   # remove the candidate here too when validation fails before that trap exists.
   rm -f "$candidate_compose_target"

@@ -123,6 +123,21 @@ class ApplyReleaseScriptTests(unittest.TestCase):
         )
         self.assertNotIn("login", docker_commands)
 
+    def test_local_fallback_image_preserves_release_digest_identity(self) -> None:
+        """本地构建镜像运行时仍保存远程 Release digest，便于后续幂等检查。"""
+
+        local_image = "stqb-local/smartanswer:release-0.7.0-aaaaaaaaaaaa"
+        completed = self.run_release(
+            health_version=NEW_VERSION,
+            image_ref=local_image,
+            release_image_ref=NEW_IMAGE,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        release_environment = (self.project_dir / ".env.release").read_text(encoding="utf-8")
+        self.assertIn(f"STQB_IMAGE_REF={local_image}", release_environment)
+        self.assertIn(f"STQB_RELEASE_IMAGE_REF={NEW_IMAGE}", release_environment)
+
     def test_compose_failure_restores_previous_release(self) -> None:
         """新容器首次启动失败时恢复旧 Compose 与旧镜像引用。"""
 
@@ -267,6 +282,8 @@ class ApplyReleaseScriptTests(unittest.TestCase):
         running_image: str = "",
         running_version: str = "",
         docker_context: str = "rootless",
+        image_ref: str = NEW_IMAGE,
+        release_image_ref: str = NEW_IMAGE,
     ) -> subprocess.CompletedProcess[str]:
         """通过伪造外部命令执行完整发布流程。"""
 
@@ -293,10 +310,11 @@ class ApplyReleaseScriptTests(unittest.TestCase):
             "release-test",
             self.bash_path(RELEASE_SCRIPT),
             self.bash_path(self.project_dir),
-            NEW_IMAGE,
+            image_ref,
             NEW_VERSION,
             NEW_SHA,
             "http://127.0.0.1:3003",
+            release_image_ref,
         ]
         process = subprocess.Popen(
             command,

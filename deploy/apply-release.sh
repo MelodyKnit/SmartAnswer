@@ -7,12 +7,15 @@ set -euo pipefail
 
 readonly SERVICE_NAME="study-qb-assistant"
 readonly CONTAINER_DATA_DIR="/app/data"
+readonly REMOTE_IMAGE_RE='^ghcr\.io/[a-z0-9_.-]+/[a-z0-9_.-]+@sha256:[a-f0-9]{64}$'
+readonly LOCAL_IMAGE_RE='^stqb-local/smartanswer:release-[0-9]+\.[0-9]+\.[0-9]+-[a-f0-9]{12}$'
 
 project_dir="${1:-}"
 image_ref="${2:-}"
 version="${3:-}"
 build_sha="${4:-}"
 health_base_url="${5:-}"
+release_image_ref="${6:-$image_ref}"
 compose_file=""
 candidate_compose_file=""
 local_override_file=""
@@ -21,6 +24,7 @@ release_env=""
 database_path=""
 database_container_path=""
 database_mode="sqlite"
+image_source=""
 
 fail() {
   printf 'Release deployment failed: %s\n' "$1" >&2
@@ -31,7 +35,14 @@ validate_arguments() {
   local actual_docker_context expected_docker_context
 
   [[ "$project_dir" =~ ^/[A-Za-z0-9._/-]+$ ]] || fail "invalid project directory"
-  [[ "$image_ref" =~ ^ghcr\.io/[a-z0-9_.-]+/[a-z0-9_.-]+@sha256:[a-f0-9]{64}$ ]] || fail "invalid image reference"
+  if [[ "$image_ref" =~ $REMOTE_IMAGE_RE ]]; then
+    image_source="remote"
+  elif [[ "$image_ref" =~ $LOCAL_IMAGE_RE ]]; then
+    image_source="local"
+  else
+    fail "invalid image reference"
+  fi
+  [[ "$release_image_ref" =~ $REMOTE_IMAGE_RE ]] || fail "invalid release image reference"
   [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "invalid release version"
   [[ "$build_sha" =~ ^[a-f0-9]{40}$ ]] || fail "invalid build revision"
   [[ "$health_base_url" =~ ^https?://127\.0\.0\.1:[1-9][0-9]{0,4}$ ]] || fail "invalid health URL"
@@ -130,8 +141,8 @@ write_release_environment() {
 
   umask 077
   temporary="$(mktemp "$project_dir/.env.release.XXXXXX")"
-  printf 'STQB_IMAGE_REF=%s\nSTQB_RELEASE_VERSION=%s\nSTQB_RELEASE_SHA=%s\n' \
-    "$image_ref" "$version" "$build_sha" > "$temporary"
+  printf 'STQB_IMAGE_REF=%s\nSTQB_RELEASE_IMAGE_REF=%s\nSTQB_RELEASE_VERSION=%s\nSTQB_RELEASE_SHA=%s\n' \
+    "$image_ref" "$release_image_ref" "$version" "$build_sha" > "$temporary"
   mv "$temporary" "$target"
 }
 
@@ -286,8 +297,13 @@ if [[ -f "$compose_file" ]]; then
 fi
 capture_unmanaged_release
 
-# 公开 GHCR 包允许匿名拉取；生产始终使用 Release manifest 中的不可变 digest。
-docker pull "$image_ref"
+# Prefer the immutable registry image. The updater may supply a locally built
+# image only after it has validated the exact Release source commit.
+if [[ "$image_source" == "remote" ]]; then
+  docker pull "$image_ref"
+else
+  docker image inspect "$image_ref" >/dev/null 2>&1 || fail "local fallback image is unavailable"
+fi
 
 candidate_build="$(docker run --rm --entrypoint python "$image_ref" -c 'from study_qb_assistant.version import BUILD_INFO; print(BUILD_INFO.version + ":" + BUILD_INFO.build_sha)')"
 [[ "$candidate_build" == "$version:$build_sha" ]] || fail "image build metadata does not match release"
