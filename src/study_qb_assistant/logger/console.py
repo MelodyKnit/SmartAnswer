@@ -2,18 +2,59 @@
 
 from __future__ import annotations
 
+from collections import deque
 import json
 import logging
 import os
+import re
 import sys
 from datetime import datetime
 from functools import lru_cache
+from threading import Lock
 from typing import Any
 
 LOGGER_NAME = "study_qb_assistant"
 SUCCESS_LEVEL = 25
 logging.addLevelName(SUCCESS_LEVEL, "SUCCESS")
 
+_CONSOLE_BUFFER_LOCK = Lock()
+_CONSOLE_BUFFER: deque[dict[str, Any]] = deque(maxlen=2000)
+_CONSOLE_SECRET_PATTERNS = (
+    re.compile(r"(?i)(bearer\s+)([^\s,;]+)"),
+    re.compile(r"(?i)(\b(?:api[-_ ]?key|token|secret|password)\s*[:=]\s*)([^\s,;]+)"),
+    re.compile(r"(重置令牌(?:（[^）]*）)?[：:]\s*)([^\s]+)"),
+)
+
+
+def append_console_log(record_dict: dict[str, Any]) -> None:
+    """向内存环形缓冲区追加一条格式化后的控制台日志。"""
+    with _CONSOLE_BUFFER_LOCK:
+        _CONSOLE_BUFFER.append(record_dict)
+
+
+def get_console_logs(limit: int = 500, offset: int = 0) -> list[dict[str, Any]]:
+    """获取内存环形缓冲区中的控制台日志。"""
+    with _CONSOLE_BUFFER_LOCK:
+        items = list(_CONSOLE_BUFFER)
+    if offset > 0:
+        items = items[offset:]
+    return items[-limit:] if limit > 0 else items
+
+
+def clear_console_logs() -> None:
+    """清空内存控制台日志缓冲区。"""
+    with _CONSOLE_BUFFER_LOCK:
+        _CONSOLE_BUFFER.clear()
+
+
+def redact_console_text(value: str) -> str:
+    """仅对内存控制台副本脱敏，避免敏感值通过管理端日志接口回显。"""
+
+    result = value
+    for pattern in _CONSOLE_SECRET_PATTERNS:
+        result = pattern.sub(r"\1[redacted]", result)
+    result = re.sub(r"\bsk[-_][A-Za-z0-9_-]+", "[redacted]", result)
+    return result
 
 def console_enabled() -> bool:
     """判断是否启用控制台日志输出。"""
@@ -41,7 +82,7 @@ def env_console_level() -> int:
 def get_console_logger(name: str) -> logging.Logger:
     """获取项目统一控制台 logger。"""
     logger = logging.getLogger(name)
-    logger.setLevel(0)
+    logger.setLevel(logging.DEBUG)
     logger.propagate = False
     if not any(getattr(handler, "_stqb_console", False) for handler in logger.handlers):
         handler = build_console_handler()
@@ -102,6 +143,16 @@ class NoneBotStyleFormatter(logging.Formatter):
         message = record.getMessage()
         if record.exc_info:
             message += "\n" + self.formatException(record.exc_info)
+        buffer_message = redact_console_text(message)
+        raw_formatted = f"{timestamp} [{record.levelname}] {logger_name} | {buffer_message}"
+        append_console_log({
+            "created": record.created,
+            "time": timestamp,
+            "level": record.levelname,
+            "name": logger_name,
+            "message": buffer_message,
+            "raw": raw_formatted,
+        })
         return f"{time_text} [{level_text}] {name_text} | {message}"
 
     def colorize(self, color: str, value: str) -> str:

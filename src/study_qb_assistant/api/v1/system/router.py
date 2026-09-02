@@ -9,6 +9,8 @@ from ....answering import AnswerService
 from ....auth import AuthError
 from ....auth.email_verification import EmailDomainWhitelist
 from ....config import get_global_config
+from ....logger.console import clear_console_logs, get_console_logs
+from ....logger.storage import cleanup_log_storage, get_log_storage_stats
 from ....media.brand_images import BrandLogoError, process_and_save_brand_logo
 from ....platform.updates import ProjectUpdateError
 from ...dependencies import (
@@ -24,6 +26,7 @@ from ...error_responses import internal_error_response
 from ...runtime_config import apply_system_config_to_process
 from .schemas import (
     EmailDomainWhitelistPayload,
+    LogCleanupPayload,
     SystemConfigPayload,
 )
 
@@ -195,6 +198,58 @@ def build_system_router() -> APIRouter:
                 event_name="brand_logo_upload_failed",
                 user_message="处理图片失败",
             )
+
+    @router.get("/system/logs/stats")
+    def system_logs_stats(request: Request) -> JSONResponse:
+        """读取服务器日志目录文件数量、占用大小及时间跨度统计。"""
+        denied = require_permissions(request, {"system:read"})
+        if denied:
+            return denied
+        stats = get_log_storage_stats()
+        return JSONResponse({"ok": True, **stats})
+
+    @router.post("/system/logs/cleanup")
+    def system_logs_cleanup(request: Request, payload: LogCleanupPayload) -> JSONResponse:
+        """手动清理历史日志文件。"""
+        denied = require_permissions(request, {"system:write"})
+        if denied:
+            return denied
+        if payload.mode == "all":
+            res = cleanup_log_storage(clear_all=True)
+        elif payload.mode == "files":
+            keep = payload.keep_files if payload.keep_files is not None else 10
+            res = cleanup_log_storage(keep_last_n_files=keep)
+        elif payload.mode == "days":
+            days = payload.days if payload.days is not None else 30
+            res = cleanup_log_storage(before_seconds=days * 86400.0)
+        else:
+            return JSONResponse(
+                {"ok": False, "error": {"code": "INVALID_INPUT", "message": "不支持的清理模式"}},
+                status_code=400,
+            )
+        return JSONResponse({"ok": True, **res, "stats": get_log_storage_stats()})
+
+    @router.get("/system/logs/console")
+    def system_logs_console(
+        request: Request,
+        limit: int = 500,
+        offset: int = 0,
+    ) -> JSONResponse:
+        """读取内存中的最新控制台终端日志流。"""
+        denied = require_permissions(request, {"system:read"})
+        if denied:
+            return denied
+        lines = get_console_logs(limit=min(2000, max(1, limit)), offset=max(0, offset))
+        return JSONResponse({"ok": True, "logs": lines})
+
+    @router.post("/system/logs/console/clear")
+    def system_logs_console_clear(request: Request) -> JSONResponse:
+        """清空内存控制台日志缓冲区。"""
+        denied = require_permissions(request, {"system:write"})
+        if denied:
+            return denied
+        clear_console_logs()
+        return JSONResponse({"ok": True})
 
     return router
 

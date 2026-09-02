@@ -69,6 +69,14 @@ class SettingsService(PlatformDomainService):
             "retention_days": self.system_points_value("image_generation_retention_days"),
         }
 
+    def get_log_storage_policy(self) -> tuple[int, int]:
+        """返回日志自动清理使用的保留天数和容量上限。"""
+
+        return (
+            self.system_points_value("log_retention_days"),
+            self.system_points_value("log_max_size_mb"),
+        )
+
     def set_billing(self, values: dict[str, int]) -> dict:
         """更新积分计费配置。"""
         current = self.get_billing()
@@ -345,6 +353,8 @@ class SettingsService(PlatformDomainService):
                 "image_generation_max_active_jobs",
                 "image_generation_daily_limit",
                 "image_generation_retention_days",
+                "log_retention_days",
+                "log_max_size_mb",
             }:
                 try:
                     parsed = max(0, int(text or "0"))
@@ -368,6 +378,16 @@ class SettingsService(PlatformDomainService):
                     raise AuthError(
                         "INVALID_INPUT", "生图保留天数不能超过 3650", http_status=400
                     )
+                elif key == "log_retention_days":
+                    if parsed < 1 or parsed > 365:
+                        raise AuthError(
+                            "INVALID_INPUT", "日志最大保留时间必须在 1 到 365 天之间", http_status=400
+                        )
+                elif key == "log_max_size_mb":
+                    if parsed < 10 or parsed > 102400:
+                        raise AuthError(
+                            "INVALID_INPUT", "日志容量上限必须在 10 到 102400 MB 之间", http_status=400
+                        )
                 text = str(parsed)
             normalized[key] = text
         with self.lock:

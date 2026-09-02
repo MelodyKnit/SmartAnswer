@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Sequence
 
 from sqlalchemy import select
 
@@ -39,10 +40,20 @@ class WalletRepository(SqlAlchemyRepository):
             return self._redeem_code_record(entity) if entity else None
 
     def save_wallet_order(self, record: WalletOrderRecord) -> None:
+        self.save_wallet_orders((record,))
+
+    def save_wallet_orders(self, records: Sequence[WalletOrderRecord]) -> None:
+        """在一个事务中保存多条已经生效的钱包流水。"""
+
+        if not records:
+            return
         with self.session_factory() as session:
-            entity = self._wallet_order_entity(record)
-            session.add(entity)
-            session.commit()
+            try:
+                session.add_all(self._wallet_order_entity(record) for record in records)
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
 
     def grant_wallet_benefit(self, record: WalletOrderRecord) -> WalletOrderRecord:
         """原子发放权益并写入钱包流水。"""

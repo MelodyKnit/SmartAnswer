@@ -23,7 +23,13 @@ from .console import (
     logger_name_for_event,
     message_for_event,
 )
-from .storage import append_recent_event, load_recent_events, log_path, redact
+from .storage import (
+    append_recent_event,
+    load_recent_events,
+    log_path,
+    maybe_enforce_log_storage_policy,
+    redact,
+)
 
 # 用于保护多线程环境下对内存中最近日志队列及写日志文件操作的并发锁
 _LOCK = Lock()
@@ -53,6 +59,7 @@ def log_event(event: str, payload: dict[str, Any]) -> None:
         with path.open("a", encoding="utf-8", newline="\n") as handle:
             json.dump(entry, handle, ensure_ascii=False)
             handle.write("\n")
+    maybe_enforce_log_storage_policy()
 
 
 def recent_events(limit: int = 30) -> list[dict[str, Any]]:

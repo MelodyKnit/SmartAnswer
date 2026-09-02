@@ -158,6 +158,23 @@ available, `current` means the versions match, and `ahead` means the running ser
 manually or from a version that has not yet become a formal GitHub Release. `has_update` is true
 only for `behind`.
 
+### System log administration
+
+The following endpoints require `system:read` or `system:write` as indicated. Log files remain in
+the server's configured runtime data directory; the API returns file names and sizes, but never
+the server filesystem path.
+
+- `GET /api/v1/system/logs/stats` (`system:read`): returns file count, total size, time range and
+  per-file metadata.
+- `POST /api/v1/system/logs/cleanup` (`system:write`): manually cleans by `days`, `files` or
+  `all`; positive bounds are validated before any deletion.
+- `GET /api/v1/system/logs/console` (`system:read`): reads the bounded in-memory console buffer.
+- `POST /api/v1/system/logs/console/clear` (`system:write`): clears that buffer.
+
+`log_retention_days` and `log_max_size_mb` are system configuration values. The running service
+periodically enforces both values while writing logs; it removes expired or oldest archived files
+and does not truncate the active log file for capacity enforcement.
+
 ### `POST /api/v1/query` 单输入框请求
 
 在线搜题可使用 `raw_text` 提交完整粘贴内容，服务端会在进入检索链路前解析题干和末尾选项：

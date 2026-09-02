@@ -1,6 +1,8 @@
 """系统配置接口请求模型。"""
 
-from pydantic import BaseModel, ConfigDict
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SystemConfigPayload(BaseModel):
@@ -34,9 +36,20 @@ class SystemConfigPayload(BaseModel):
     email_code_daily_limit: str | None = None
     email_code_ip_hourly_limit: str | None = None
     email_code_max_attempts: str | None = None
+    log_retention_days: str | None = None
+    log_max_size_mb: str | None = None
 
 
 class EmailDomainWhitelistPayload(BaseModel):
     """邮箱域名白名单整体替换请求。"""
 
     domains: list[str]
+
+
+class LogCleanupPayload(BaseModel):
+    """日志清理请求模型。"""
+
+    model_config = ConfigDict(extra="ignore")
+    mode: Literal["days", "files", "all"] = "days"
+    days: int | None = Field(default=None, ge=1, le=3650)
+    keep_files: int | None = Field(default=None, ge=1, le=10000)

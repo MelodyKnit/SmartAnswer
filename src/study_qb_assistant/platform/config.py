@@ -32,6 +32,8 @@ SYSTEM_CONFIG_KEYS = {
     "email_code_daily_limit",
     "email_code_ip_hourly_limit",
     "email_code_max_attempts",
+    "log_retention_days",
+    "log_max_size_mb",
 }
 
 SYSTEM_CONFIG_BOOLEAN_KEYS = {
@@ -97,6 +99,8 @@ SYSTEM_CONFIG_DEFAULTS = {
     "email_code_daily_limit": "5",
     "email_code_ip_hourly_limit": "20",
     "email_code_max_attempts": "5",
+    "log_retention_days": "30",
+    "log_max_size_mb": "500",
 }
 
 LLM_RUNTIME_DEFAULTS = {

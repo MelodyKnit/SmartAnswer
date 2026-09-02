@@ -422,6 +422,32 @@ export interface EmailDomainWhitelist {
   domains: string[]
 }
 
+export interface LogFileInfo {
+  name: string
+  size_bytes: number
+  size_mb: number
+  updated_at: string
+}
+
+export interface LogStorageStats {
+  ok: true
+  file_count: number
+  total_size_bytes: number
+  total_size_mb: number
+  oldest_time: string | null
+  newest_time: string | null
+  files: LogFileInfo[]
+}
+
+export interface ConsoleLogLine {
+  created: number
+  time: string
+  level: string
+  name: string
+  message: string
+  raw: string
+}
+
 export interface SiteConfig {
   site_title: string
   site_logo_url: string

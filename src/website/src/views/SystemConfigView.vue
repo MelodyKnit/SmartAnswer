@@ -4,20 +4,21 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { billingApi, systemConfigApi } from '@/api/endpoints'
+import { billingApi, systemApi, systemConfigApi } from '@/api/endpoints'
 import { ApiException } from '@/api/http'
 import PageHeader from '@/components/PageHeader.vue'
 import SiteLogo from '@/components/SiteLogo.vue'
 import ProjectUpdatePanel from '@/components/system/ProjectUpdatePanel.vue'
 import { useSiteStore } from '@/stores/site'
 import { getToken } from '@/api/http'
+import type { LogStorageStats } from '@/api/types'
 import type { InviteRewardMode } from '@/api/types'
 
 const loading = ref(false)
 const saving = ref(false)
 const route = useRoute()
 const site = useSiteStore()
-const activeTab = ref<'platform' | 'billing' | 'account'>('platform')
+const activeTab = ref<'platform' | 'billing' | 'account' | 'logs'>('platform')
 
 const uploadHeaders = computed(() => {
   const token = getToken()
@@ -74,6 +75,8 @@ const form = reactive({
   email_code_daily_limit: 5,
   email_code_ip_hourly_limit: 20,
   email_code_max_attempts: 5,
+  log_retention_days: 30,
+  log_max_size_mb: 500,
 })
 
 const billingForm = reactive({
@@ -81,6 +84,11 @@ const billingForm = reactive({
   web_search: 2,
   llm_fallback: 3,
 })
+
+const logStats = ref<LogStorageStats | null>(null)
+const loadingLogStats = ref(false)
+const cleaningLogs = ref(false)
+const keepFilesCount = ref(10)
 
 const emailDomainWhitelist = ref<string[]>([])
 const savedEmailDomainWhitelist = ref<string[]>([])
@@ -197,6 +205,37 @@ async function saveEmailDomainWhitelist() {
   }
 }
 
+async function fetchLogStats() {
+  loadingLogStats.value = true
+  try {
+    const res = await systemApi.logStats()
+    logStats.value = res
+  } catch (err) {
+    // 忽略加载错误
+  } finally {
+    loadingLogStats.value = false
+  }
+}
+
+async function handleCleanup(mode: 'days' | 'files' | 'all', days?: number) {
+  cleaningLogs.value = true
+  try {
+    const res = await systemApi.cleanupLogs({
+      mode,
+      days,
+      keep_files: mode === 'files' ? keepFilesCount.value : undefined,
+    })
+    logStats.value = res.stats
+    const mb = (res.freed_bytes / (1024 * 1024)).toFixed(2)
+    ElMessage.success(`清理完成：删除了 ${res.deleted_files} 个文件，释放约 ${mb} MB 空间`)
+    await fetchLogStats()
+  } catch (err) {
+    ElMessage.error(err instanceof ApiException ? err.message : '清理失败')
+  } finally {
+    cleaningLogs.value = false
+  }
+}
+
 async function load() {
   loading.value = true
   try {
@@ -235,12 +274,15 @@ async function load() {
     form.email_code_daily_limit = Number(res.config.email_code_daily_limit || 5)
     form.email_code_ip_hourly_limit = Number(res.config.email_code_ip_hourly_limit || 20)
     form.email_code_max_attempts = Number(res.config.email_code_max_attempts || 5)
+    form.log_retention_days = Number(res.config.log_retention_days || 30)
+    form.log_max_size_mb = Number(res.config.log_max_size_mb || 500)
     billingForm.local_hit = Number(billing.billing.local_hit || 0)
     billingForm.web_search = Number(billing.billing.web_search || 0)
     billingForm.llm_fallback = Number(billing.billing.llm_fallback || 0)
     emailDomainWhitelist.value = [...whitelist.domains]
     savedEmailDomainWhitelist.value = [...whitelist.domains]
     emailDomainDraft.value = ''
+    void fetchLogStats()
   } catch (err) {
     ElMessage.error(err instanceof ApiException ? err.message : '加载系统配置失败')
   } finally {
@@ -288,6 +330,8 @@ async function save() {
       email_code_daily_limit: String(form.email_code_daily_limit),
       email_code_ip_hourly_limit: String(form.email_code_ip_hourly_limit),
       email_code_max_attempts: String(form.email_code_max_attempts),
+      log_retention_days: String(form.log_retention_days),
+      log_max_size_mb: String(form.log_max_size_mb),
     }
     if (form.smtp_password.trim()) {
       body.smtp_password = form.smtp_password
@@ -587,6 +631,78 @@ onMounted(load)
               <p class="text-xs text-ink-muted">
                 开启邮箱验证后，新用户注册必须通过白名单邮箱接收验证码；SMTP 密码留空不会覆盖已有配置。
               </p>
+            </div>
+          </div>
+        </el-tab-pane>
+
+        <!-- 日志设置 -->
+        <el-tab-pane label="日志设置" name="logs">
+          <div class="space-y-4 mt-2">
+            <!-- 日志存储概览卡片 -->
+            <div class="app-card p-6" v-loading="loadingLogStats">
+              <div class="mb-4 flex items-center justify-between">
+                <div>
+                  <h3 class="text-base font-semibold text-ink">服务器日志管理</h3>
+                  <p class="mt-1 text-xs text-ink-muted">
+                    管理服务器运行日志文件。日志文件会随运行时间不断累积，建议定期清理以释放磁盘空间。
+                  </p>
+                </div>
+                <el-button size="small" @click="fetchLogStats">刷新统计</el-button>
+              </div>
+
+              <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 rounded-xl border border-line bg-card-soft p-4">
+                <div>
+                  <div class="text-xs text-ink-muted">日志文件数</div>
+                  <div class="mt-1 text-lg font-bold text-ink">
+                    {{ logStats?.file_count ?? 0 }} <span class="text-xs font-normal text-ink-muted">个</span>
+                  </div>
+                </div>
+                <div>
+                  <div class="text-xs text-ink-muted">日志总大小</div>
+                  <div class="mt-1 text-lg font-bold text-ink">
+                    {{ logStats?.total_size_mb ?? 0 }} <span class="text-xs font-normal text-ink-muted">MB</span>
+                  </div>
+                </div>
+                <div>
+                  <div class="text-xs text-ink-muted">时间范围</div>
+                  <div class="mt-1 text-sm font-medium text-ink">
+                    {{ logStats?.oldest_time ? `${logStats.oldest_time} ~ ${logStats.newest_time}` : '暂无日志' }}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 自动清理与策略设置 -->
+            <div class="app-card p-6">
+              <h3 class="mb-4 text-base font-semibold text-ink">自动存储与清理策略</h3>
+              <el-form label-position="top" class="grid grid-cols-1 gap-x-6 md:grid-cols-2">
+                <el-form-item label="日志最大保留时间 (天)">
+                  <el-input-number v-model="form.log_retention_days" :min="1" :max="365" class="w-full" />
+                  <div class="mt-1 text-xs text-ink-muted">超出设定天数的日志文件将在系统检查时自动清理。</div>
+                </el-form-item>
+                <el-form-item label="单机日志容量上限 (MB)">
+                  <el-input-number v-model="form.log_max_size_mb" :min="10" :max="102400" :step="100" class="w-full" />
+                  <div class="mt-1 text-xs text-ink-muted">当日志目录总体积超过该阈值时自动移除最早的归档日志。</div>
+                </el-form-item>
+              </el-form>
+            </div>
+
+            <!-- 手动快捷清理 -->
+            <div class="app-card p-6">
+              <h3 class="mb-4 text-base font-semibold text-ink">清理历史日志</h3>
+              <p class="mb-4 text-xs text-ink-muted">移除所选时间截点之前创建的所有日志条目或保留最近特定数量的文件。</p>
+              <div class="flex flex-wrap items-center gap-3">
+                <el-button :loading="cleaningLogs" @click="handleCleanup('days', 1)">24 小时前</el-button>
+                <el-button :loading="cleaningLogs" @click="handleCleanup('days', 7)">7 天前</el-button>
+                <el-button :loading="cleaningLogs" @click="handleCleanup('days', 30)">30 天前</el-button>
+                <el-button type="danger" plain :loading="cleaningLogs" @click="handleCleanup('all')">清空所有日志</el-button>
+                <div class="flex items-center gap-2 ml-auto">
+                  <span class="text-xs text-ink-soft">保留最近</span>
+                  <el-input-number v-model="keepFilesCount" :min="1" :max="100" size="small" style="width: 100px" />
+                  <span class="text-xs text-ink-soft">个文件</span>
+                  <el-button size="small" type="danger" :loading="cleaningLogs" @click="handleCleanup('files')">清理旧文件</el-button>
+                </div>
+              </div>
             </div>
           </div>
         </el-tab-pane>

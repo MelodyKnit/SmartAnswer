@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import secrets
+import time
+
 from fastapi import APIRouter, Request
 from starlette.responses import JSONResponse
 
 from ....auth import AuthError
 from ....auth.email_verification import EmailVerificationService, normalize_email
+from ....platform.wallet.records import WalletOrderRecord
 from ...dependencies import (
     get_auth_service,
     get_notification_service,
     get_settings_service,
+    get_wallet_service,
 )
 from ...security import (
     SESSION_COOKIE,
@@ -19,7 +24,7 @@ from ...security import (
     session_token_from_request,
     unauthorized_response,
 )
-from ....logger import console_log
+from ....logger import console_log, log_event
 from .schemas import (
     EmailVerificationCodePayload,
     LoginPayload,
@@ -74,19 +79,68 @@ def build_auth_router() -> APIRouter:
             invite_reward = platform.get_invite_reward_policy()
             has_invite_code = bool(payload.invite_code.strip())
             inviter_bonus = int(invite_reward["inviter_points"]) if has_invite_code else 0
+            invitee_bonus = int(invite_reward["invitee_points"]) if has_invite_code else 0
             user = auth.register(
                 payload.username,
                 payload.password,
                 email,
                 invite_code=payload.invite_code,
                 inviter_bonus=inviter_bonus,
-                invitee_bonus=int(invite_reward["invitee_points"]) if has_invite_code else 0,
+                invitee_bonus=invitee_bonus,
                 initial_points=platform.get_default_user_points(),
             )
             if verification is not None and email_code_record is not None:
                 verification.consume_code(email_code_record.code_id)
             if has_invite_code and user.get("invited_by"):
+                wallet_service = get_wallet_service(request)
                 inviter = auth.get_user(str(user["invited_by"]))
+                now_ts = time.time()
+                wallet_orders: list[WalletOrderRecord] = []
+                if inviter and inviter_bonus > 0:
+                    wallet_orders.append(
+                        WalletOrderRecord(
+                            order_id=secrets.token_hex(12),
+                            user_id=str(inviter["user_id"]),
+                            username=str(inviter["username"]),
+                            kind="points",
+                            points_delta=inviter_bonus,
+                            days_delta=0,
+                            source="invite_bonus",
+                            source_id=str(user["user_id"]),
+                            status="completed",
+                            created_by=str(user["username"]),
+                            created_at=now_ts,
+                        )
+                    )
+                if invitee_bonus > 0:
+                    wallet_orders.append(
+                        WalletOrderRecord(
+                            order_id=secrets.token_hex(12),
+                            user_id=str(user["user_id"]),
+                            username=str(user["username"]),
+                            kind="points",
+                            points_delta=invitee_bonus,
+                            days_delta=0,
+                            source="invite_bonus",
+                            source_id=str(inviter["user_id"]) if inviter else None,
+                            status="completed",
+                            created_by=str(inviter["username"]) if inviter else "system",
+                            created_at=now_ts,
+                        )
+                    )
+                if wallet_orders:
+                    try:
+                        wallet_service.record_wallet_orders(wallet_orders)
+                    except Exception as exc:
+                        # 注册与余额变更已经由 AuthService 完成，审计流水失败不能回滚已提交的注册。
+                        log_event(
+                            "invite_reward_audit_failed",
+                            {
+                                "user_id": str(user["user_id"]),
+                                "order_count": len(wallet_orders),
+                                "error_type": type(exc).__name__,
+                            },
+                        )
                 if inviter:
                     notification_service.try_create_notification(
                         user_id=str(inviter["user_id"]),

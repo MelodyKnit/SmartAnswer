@@ -15,6 +15,7 @@ from ..answering import AnswerService
 from ..auth import AuthService
 from ..config import get_global_config
 from ..logger import log_event
+from ..logger.storage import configure_log_storage_policy
 from ..platform.container import PlatformServices
 from ..search import LocalQuestionIndex
 from ..storage.repositories.questions import SqlAlchemyQuestionRepository
@@ -45,6 +46,7 @@ def create_app(
     )
     auth = auth_service or AuthService(database_locator)
     services = platform_services or PlatformServices(database_locator)
+    configure_log_storage_policy(services.settings.get_log_storage_policy)
     question_repository = SqlAlchemyQuestionRepository(database_locator)
     auth_required = (
         get_global_config().require_auth if require_auth is None else require_auth

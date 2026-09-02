@@ -849,6 +849,17 @@ class FastAPILocalServerTests(unittest.TestCase):
                 self.assertTrue(
                     any("邀请好友成功" in item["title"] for item in owner_notices["items"])
                 )
+                owner_orders = client.get(
+                    "/api/v1/wallet/orders",
+                    headers=headers,
+                ).json()
+                if expected_inviter_points > 100:
+                    self.assertTrue(
+                        any(
+                            order["source"] == "invite_bonus" and order["points_delta"] == (expected_inviter_points - 100)
+                            for order in owner_orders["orders"]
+                        )
+                    )
 
             records = {item["username"]: item for item in users.json()["users"]}
             self.assertTrue(owner.json()["ok"])
@@ -906,6 +917,48 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(profile.json()["billing"]["invite_bonus_points"], 25)
         self.assertEqual(invalid.status_code, 400)
         self.assertEqual(invalid.json()["error"]["code"], "INVALID_INPUT")
+
+    def test_invite_reward_audit_failure_does_not_fail_registration(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformServices(database_path)
+            platform.settings.set_system_config({"invite_bonus_points": "50", "invite_reward_mode": "both"})
+            client = TestClient(
+                create_app(
+                    _sample_index(),
+                    auth_service=auth,
+                    platform_services=platform,
+                    require_auth=True,
+                )
+            )
+            owner = client.post(
+                "/api/v1/auth/register",
+                json={"username": "owner", "password": "password123"},
+            )
+            invite_code = owner.json()["user"]["invite_code"]
+            with mock.patch.object(
+                platform.wallet,
+                "record_wallet_orders",
+                side_effect=RuntimeError("wallet audit unavailable"),
+            ):
+                invited = client.post(
+                    "/api/v1/auth/register",
+                    json={
+                        "username": "alice",
+                        "password": "password123",
+                        "invite_code": invite_code,
+                    },
+                )
+
+            users = {
+                username: auth.get_user(username)
+                for username in ("owner", "alice")
+            }
+
+        self.assertEqual(invited.status_code, 200)
+        self.assertEqual(users["owner"]["points"], 150)
+        self.assertEqual(users["alice"]["points"], 150)
 
     def test_register_rejects_unknown_invite_code(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -3254,6 +3307,64 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(valid_response.json()["events"][0]["title"], "ok")
         self.assertEqual(invalid_response.status_code, 400)
         self.assertEqual(invalid_response.json()["error"]["code"], "INVALID_DATE")
+
+    def test_system_logs_stats_cleanup_and_console_api(self) -> None:
+        """测试系统日志统计、清理以及控制台日志查看与清屏接口。"""
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformServices(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(),
+                    auth_service=auth,
+                    platform_services=platform,
+                    require_auth=True,
+                )
+            )
+            client.post("/api/v1/auth/register", json={"username": "owner", "password": "password123"})
+            headers = {
+                "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'owner', 'password': 'password123'}).json()['token']}"
+            }
+
+            stats_res = client.get("/api/v1/system/logs/stats", headers=headers)
+            self.assertEqual(stats_res.status_code, 200)
+            self.assertTrue(stats_res.json()["ok"])
+            self.assertIn("file_count", stats_res.json())
+            self.assertNotIn("log_dir", stats_res.json())
+
+            invalid_config = client.patch(
+                "/api/v1/system-config",
+                json={"log_retention_days": "0"},
+                headers=headers,
+            )
+            self.assertEqual(invalid_config.status_code, 400)
+            saved_config = client.patch(
+                "/api/v1/system-config",
+                json={"log_retention_days": "7", "log_max_size_mb": "100"},
+                headers=headers,
+            )
+            self.assertEqual(saved_config.status_code, 200)
+            self.assertEqual(saved_config.json()["config"]["log_retention_days"], "7")
+            self.assertEqual(saved_config.json()["config"]["log_max_size_mb"], "100")
+
+            console_res = client.get("/api/v1/system/logs/console", headers=headers)
+            self.assertEqual(console_res.status_code, 200)
+            self.assertTrue(console_res.json()["ok"])
+            self.assertIsInstance(console_res.json()["logs"], list)
+
+            clear_res = client.post("/api/v1/system/logs/console/clear", headers=headers)
+            self.assertEqual(clear_res.status_code, 200)
+            self.assertTrue(clear_res.json()["ok"])
+
+            cleanup_res = client.post(
+                "/api/v1/system/logs/cleanup",
+                json={"mode": "days", "days": 30},
+                headers=headers,
+            )
+            self.assertEqual(cleanup_res.status_code, 200)
+            self.assertTrue(cleanup_res.json()["ok"])
+            self.assertIn("deleted_files", cleanup_res.json())
 
     def test_record_usage_is_atomic_when_usage_log_commit_fails(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

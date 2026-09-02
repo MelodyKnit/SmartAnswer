@@ -6,6 +6,7 @@ import math
 import re
 import secrets
 import time
+from collections.abc import Sequence
 from typing import Any, cast
 
 from ...auth import AuthError
@@ -159,6 +160,19 @@ class WalletService(PlatformDomainService):
             except WalletOperationError as exc:
                 raise wallet_auth_error(exc) from exc
             return order.to_dict()
+
+    def record_wallet_order(self, record: WalletOrderRecord) -> dict:
+        """保存已生效的钱包流水记录。"""
+        return self.record_wallet_orders((record,))[0]
+
+    def record_wallet_orders(self, records: Sequence[WalletOrderRecord]) -> list[dict]:
+        """在一个事务中保存多条已经生效的钱包流水记录。"""
+
+        if not records:
+            return []
+        with self.lock:
+            self.repository.save_wallet_orders(records)
+            return [record.to_dict() for record in records]
 
     def redeem_code(
         self,

@@ -7,6 +7,8 @@ import type {
   AnnouncementLevel,
   AnnouncementStatus,
   EmailDomainWhitelist,
+  ConsoleLogLine,
+  LogStorageStats,
   ApiToken,
   Billing,
   DashboardSummary,
@@ -130,6 +132,15 @@ export const systemApi = {
     api.get<{ ok: true; events: RuntimeEvent[] }>('/debug/recent', params),
   usageAudit: (date?: string) =>
     api.get<{ ok: true; audit: UsageAudit }>('/debug/usage-audit', date ? { date } : {}),
+  logStats: () => api.get<LogStorageStats>('/system/logs/stats'),
+  cleanupLogs: (body: { mode: 'days' | 'files' | 'all'; days?: number; keep_files?: number }) =>
+    api.post<{ ok: true; deleted_files: number; freed_bytes: number; stats: LogStorageStats }>(
+      '/system/logs/cleanup',
+      body,
+    ),
+  consoleLogs: (params?: { limit?: number; offset?: number }) =>
+    api.get<{ ok: true; logs: ConsoleLogLine[] }>('/system/logs/console', params),
+  clearConsoleLogs: () => api.post<{ ok: true }>('/system/logs/console/clear'),
 }
 
 /* ---------------- API 令牌 ---------------- */

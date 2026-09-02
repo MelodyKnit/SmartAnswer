@@ -86,6 +86,8 @@ const WALLET_SOURCE_LABELS: Record<string, string> = {
   usage_charge: '接口扣费',
   feedback_reward: '反馈奖励',
   invite_bonus: '邀请奖励',
+  image_generation: '生图扣费',
+  image_generation_refund: '生图失败退款',
   refund: '退回',
 }
 
