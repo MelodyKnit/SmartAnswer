@@ -111,6 +111,7 @@ class ApplyReleaseScriptTests(unittest.TestCase):
         self.assertTrue(image_override.exists())
         self.assertIn("image: ${STQB_IMAGE_REF", image_override.read_text(encoding="utf-8"))
         docker_commands = self.docker_log.read_text(encoding="utf-8")
+        self.assertIn(f"cwd={self.bash_path(self.project_dir)}", docker_commands)
         self.assertIn(f"pull {NEW_IMAGE}", docker_commands)
         self.assertIn(
             self.bash_path(self.project_dir / "docker-compose.override.yml"),
@@ -376,8 +377,11 @@ class ApplyReleaseScriptTests(unittest.TestCase):
 
         docker_script = r'''#!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
 command="${1:-}"
+printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
+if [[ "$command" == "compose" ]]; then
+  printf 'cwd=%s\n' "$PWD" >> "$FAKE_DOCKER_LOG"
+fi
 case "$command" in
   inspect)
     if [[ " $* " == *".State.Running"* ]] && [[ -n "${FAKE_RUNNING_DATABASE_PATH:-}${FAKE_RUNNING_IMAGE:-}" ]]; then

@@ -66,7 +66,6 @@ compose_with_file() {
   local selected_compose_file="$1"
   shift
   local -a compose_arguments=(
-    --project-directory "$project_dir"
     --env-file "$release_env"
     -f "$selected_compose_file"
   )
@@ -79,7 +78,10 @@ compose_with_file() {
     compose_arguments+=(-f "$image_override_file")
   fi
 
-  docker compose "${compose_arguments[@]}" "$@"
+  (
+    cd "$project_dir" || fail "project directory is unavailable"
+    docker compose "${compose_arguments[@]}" "$@"
+  )
 }
 
 compose_current_release() {
