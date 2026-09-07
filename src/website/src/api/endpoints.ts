@@ -146,22 +146,42 @@ export const systemApi = {
 /* ---------------- API 令牌 ---------------- */
 export const tokenApi = {
   list: () => api.get<{ ok: true; tokens: ApiToken[] }>('/tokens'),
-  create: (description: string, quotaLimit = -1, rejectLowConfidence = false, minAnswerConfidence = 0) =>
+  create: (
+    description: string,
+    quotaLimit = -1,
+    rejectLowConfidence = false,
+    minAnswerConfidence = 0,
+    bindClient = false,
+  ) =>
     api.post<{ ok: true; token: string; token_info: ApiToken; ocs_config: OcsConfig }>('/tokens', {
       description,
       quota_limit: quotaLimit,
       reject_low_confidence: rejectLowConfidence,
       min_answer_confidence: minAnswerConfidence,
+      bind_client: bindClient,
     }),
   revoke: (tokenId: string) =>
     api.post<{ ok: true; token: ApiToken }>(`/tokens/${encodeURIComponent(tokenId)}/revoke`),
-  update: (tokenId: string, description: string, quotaLimit = -1, rejectLowConfidence = false, minAnswerConfidence = 0) =>
-    api.post<{ ok: true; token: ApiToken }>(`/tokens/${encodeURIComponent(tokenId)}`, {
-      description,
-      quota_limit: quotaLimit,
-      reject_low_confidence: rejectLowConfidence,
-      min_answer_confidence: minAnswerConfidence,
-    }),
+  update: (
+    tokenId: string,
+    description: string,
+    quotaLimit = -1,
+    rejectLowConfidence = false,
+    minAnswerConfidence = 0,
+    bindClient?: boolean,
+    resetBoundClient = false,
+  ) =>
+    api.post<{ ok: true; token: ApiToken }>(
+      `/tokens/${encodeURIComponent(tokenId)}`,
+      {
+        description,
+        quota_limit: quotaLimit,
+        reject_low_confidence: rejectLowConfidence,
+        min_answer_confidence: minAnswerConfidence,
+        ...(bindClient === undefined ? {} : { bind_client: bindClient }),
+        ...(resetBoundClient ? { reset_bound_client: true } : {}),
+      },
+    ),
   delete: (tokenId: string) =>
     api.delete<{ ok: true; message: string }>(`/tokens/${encodeURIComponent(tokenId)}`),
   importScript: (tokenId?: string) =>
@@ -185,6 +205,17 @@ export const shareApi = {
       script: string
       ocs_config: OcsConfig
     }>('/shares/apikey-template'),
+}
+
+/* ---------------- 受保护媒体 ---------------- */
+export const mediaApi = {
+  proxyImage: async (url: string): Promise<Blob> => {
+    const response = await http.get<Blob>('/media/proxy', {
+      params: { url },
+      responseType: 'blob',
+    })
+    return response.data
+  },
 }
 
 /* ---------------- 使用记录 / 反馈 / 看板 ---------------- */

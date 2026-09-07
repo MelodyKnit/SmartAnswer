@@ -1,9 +1,9 @@
 <script setup lang="ts">
 /** API 使用记录。 */
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { feedbackApi, tokenApi, usageApi } from '@/api/endpoints'
+import { feedbackApi, mediaApi, tokenApi, usageApi } from '@/api/endpoints'
 import type { ApiToken, UsageLog } from '@/api/types'
 import { ApiException } from '@/api/http'
 import {
@@ -12,6 +12,7 @@ import {
   questionTypeLabel,
   resolutionLabel,
 } from '@/utils/format'
+import { Picture } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { DEFAULT_PAGE_SIZE } from '@/config/constants'
 import { useAuthStore } from '@/stores/auth'
@@ -81,9 +82,13 @@ function onPageChange(next: number) {
 /* 明细抽屉 */
 const detailVisible = ref(false)
 const detail = ref<UsageLog | null>(null)
+const imagePreviewUrls = ref<Record<string, string>>({})
+let detailImageRequestId = 0
+
 function openDetail(row: UsageLog) {
   detail.value = row
   detailVisible.value = true
+  void loadDetailImagePreviews()
 }
 
 /** 解析使用记录里保存的「当时选项」（后端以 JSON 字符串数组持久化）。 */
@@ -109,6 +114,64 @@ const detailImageUrls = computed<string[]>(() => {
 const detailInputFlags = computed<string[]>(() => {
   const flags = detail.value?.context?.input_flags
   return Array.isArray(flags) ? flags.map((item) => String(item)).filter(Boolean) : []
+})
+
+function extractImageUrls(value: string): string[] {
+  const s = String(value || '')
+  const matches = s.match(
+    /https?:\/\/[^\s"'<>]+?\.(png|jpe?g|webp|gif|bmp)(\?[^\s"'<>]*)?(?=https?:\/\/|[\s"'<>]|[),.;:!?]|$)/gi,
+  )
+  return matches
+    ? Array.from(new Set(matches.map((item) => item.replace(/[),.;:]+$/g, ''))))
+    : []
+}
+
+function revokeImagePreviewUrls() {
+  Object.values(imagePreviewUrls.value).forEach((url) => URL.revokeObjectURL(url))
+  imagePreviewUrls.value = {}
+}
+
+function detailImageSourceUrls(): string[] {
+  return Array.from(
+    new Set([
+      ...detailImageUrls.value,
+      ...detailOptions.value.flatMap((option) => extractImageUrls(option)),
+    ]),
+  )
+}
+
+function previewImageUrl(url: string): string {
+  if (url.startsWith('/') || url.startsWith('data:image/')) return url
+  return imagePreviewUrls.value[url] || ''
+}
+
+async function loadDetailImagePreviews() {
+  const requestId = ++detailImageRequestId
+  revokeImagePreviewUrls()
+  await Promise.all(
+    detailImageSourceUrls()
+      .filter((url) => /^https?:\/\//i.test(url))
+      .map(async (url) => {
+        try {
+          const blob = await mediaApi.proxyImage(url)
+          const previewUrl = URL.createObjectURL(blob)
+          if (requestId !== detailImageRequestId || !detailVisible.value) {
+            URL.revokeObjectURL(previewUrl)
+            return
+          }
+          imagePreviewUrls.value = { ...imagePreviewUrls.value, [url]: previewUrl }
+        } catch {
+          // 单张外链图片不可用不影响使用记录其余内容。
+        }
+      }),
+  )
+}
+
+watch(detailVisible, (visible) => {
+  if (!visible) {
+    detailImageRequestId += 1
+    revokeImagePreviewUrls()
+  }
 })
 
 /* 反馈 */
@@ -191,6 +254,8 @@ onMounted(() => {
   }
   load()
 })
+
+onUnmounted(revokeImagePreviewUrls)
 </script>
 
 <template>
@@ -342,27 +407,69 @@ onMounted(() => {
         </div>
         <div v-if="detailOptions.length">
           <div class="mb-1 text-ink-muted">选项（搜题当时）</div>
-          <ul class="space-y-1 rounded-lg bg-card-soft p-3">
+          <ul class="space-y-2 rounded-lg bg-card-soft p-3">
             <li
               v-for="(opt, index) in detailOptions"
               :key="index"
-              class="text-ink"
+              class="break-all text-ink space-y-1.5 border-b border-line/40 pb-2 last:border-b-0 last:pb-0"
             >
-              {{ opt }}
+              <div class="leading-relaxed">{{ opt }}</div>
+              <div v-if="extractImageUrls(opt).length" class="flex flex-wrap gap-2 pt-1">
+                <template v-for="(imgUrl, imgIdx) in extractImageUrls(opt)" :key="imgIdx">
+                  <el-image
+                    v-if="previewImageUrl(imgUrl)"
+                    :src="previewImageUrl(imgUrl)"
+                    :preview-src-list="[previewImageUrl(imgUrl)]"
+                    fit="contain"
+                    preview-teleported
+                    class="h-20 max-w-full rounded border border-line bg-card p-1 shadow-sm"
+                  >
+                    <template #error>
+                      <div class="flex h-20 w-20 items-center justify-center rounded bg-canvas text-xs text-ink-muted">
+                        <el-icon><Picture /></el-icon>
+                      </div>
+                    </template>
+                  </el-image>
+                  <div
+                    v-else
+                    class="flex h-20 w-20 items-center justify-center rounded border border-line bg-canvas text-xs text-ink-muted"
+                    title="图片加载中或不可用"
+                  >
+                    <el-icon><Picture /></el-icon>
+                  </div>
+                </template>
+              </div>
             </li>
           </ul>
         </div>
         <div v-if="detailImageUrls.length">
           <div class="mb-1 text-ink-muted">图片上下文</div>
-          <ul class="space-y-1 rounded-lg bg-card-soft p-3">
-            <li
-              v-for="url in detailImageUrls"
-              :key="url"
-              class="break-all text-ink"
-            >
-              {{ url }}
-            </li>
-          </ul>
+          <div class="flex flex-col gap-3 rounded-lg bg-card-soft p-3">
+            <div v-for="(url, idx) in detailImageUrls" :key="idx" class="space-y-1 max-w-full">
+              <el-image
+                v-if="previewImageUrl(url)"
+                :src="previewImageUrl(url)"
+                :preview-src-list="[previewImageUrl(url)]"
+                fit="contain"
+                preview-teleported
+                class="h-24 max-w-full rounded border border-line bg-card p-1 shadow-sm"
+              >
+                <template #error>
+                  <div class="flex h-24 w-24 items-center justify-center rounded bg-canvas text-xs text-ink-muted">
+                    <el-icon><Picture /></el-icon>
+                  </div>
+                </template>
+              </el-image>
+              <div
+                v-else
+                class="flex h-24 w-24 items-center justify-center rounded border border-line bg-canvas text-xs text-ink-muted"
+                title="图片加载中或不可用"
+              >
+                <el-icon><Picture /></el-icon>
+              </div>
+              <div class="break-all font-mono text-xs text-ink-muted select-all leading-tight">{{ url }}</div>
+            </div>
+          </div>
         </div>
         <div class="rounded-lg bg-success/10 p-3">
           <div class="text-ink-muted">答案</div>

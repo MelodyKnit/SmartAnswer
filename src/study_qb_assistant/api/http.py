@@ -61,6 +61,18 @@ def is_local_proxy_address(value: str) -> bool:
     address = ipaddress.ip_address(value)
     return address.is_private or address.is_loopback or address.is_link_local
 
+
+def extract_client_fingerprint(request: Request) -> str:
+    """结合客户端 IP 与请求环境头（User-Agent 等）计算设备指纹。"""
+    import hashlib
+
+    client_ip = extract_client_ip(request)
+    user_agent = request.headers.get("user-agent", "").strip()
+    accept_language = request.headers.get("accept-language", "").strip()
+    raw_identity = f"{client_ip}|{user_agent}|{accept_language}"
+    return hashlib.sha256(raw_identity.encode("utf-8")).hexdigest()[:32]
+
+
 def model_visible_base_url(request: Request, settings: SettingsService | None = None) -> str:
     """返回模型大概率可访问的服务基础 URL；本地地址返回空串触发 data URL 兜底。"""
 

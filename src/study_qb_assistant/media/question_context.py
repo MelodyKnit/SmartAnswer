@@ -20,6 +20,7 @@ from ..logger import log_event
 from study_qb_assistant.questions.models import QuestionQuery
 
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
+MAX_IMAGE_REDIRECTS = 3
 DATA_URL_PREFIX_PATTERN = re.compile(r"^data:(image/[-+.\w]+);base64,", re.I)
 CHAOXING_IMAGE_REFERER = "https://mooc1.chaoxing.com/"
 IMAGE_FETCH_USER_AGENT = (
@@ -124,30 +125,8 @@ def load_query_image_assets(query: QuestionQuery) -> tuple[ImageAsset, ...]:
 def fetch_public_image(url: str) -> bytes | None:
     """安全抓取公网图片，拒绝内网地址和超大响应。"""
 
-    if not is_public_http_url(url):
-        return None
-    try:
-        with httpx.stream(
-            "GET",
-            url,
-            timeout=10.0,
-            follow_redirects=True,
-            headers=browser_image_request_headers(url),
-        ) as response:
-            response.raise_for_status()
-            content_type = response.headers.get("content-type", "").lower()
-            if content_type and not content_type.startswith("image/"):
-                return None
-            chunks: list[bytes] = []
-            total = 0
-            for chunk in response.iter_bytes():
-                total += len(chunk)
-                if total > MAX_IMAGE_BYTES:
-                    return None
-                chunks.append(chunk)
-            return b"".join(chunks)
-    except Exception:
-        return None
+    content, _mime_type = fetch_public_image_with_mime(url)
+    return content
 
 
 def fetch_public_image_asset(
@@ -178,7 +157,8 @@ def fetch_public_image_with_mime(
 ) -> tuple[bytes | None, str | None]:
     """安全抓取公网图片，同时返回识别出的 mime type。"""
 
-    if not is_public_http_url(url):
+    request_url = str(url or "").strip()
+    if not is_public_http_url(request_url):
         log_image_hydration(
             request_id=request_id,
             url=url,
@@ -188,52 +168,79 @@ def fetch_public_image_with_mime(
         )
         return None, None
     try:
-        with httpx.stream(
-            "GET",
-            url,
-            timeout=10.0,
-            follow_redirects=True,
-            headers=browser_image_request_headers(url, referer=referer),
-        ) as response:
-            response.raise_for_status()
-            content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
-            if content_type and not content_type.startswith("image/"):
-                log_image_hydration(
-                    request_id=request_id,
-                    url=url,
-                    method="httpx_browser_headers",
-                    ok=False,
-                    reason="non_image_content",
-                    mime_type=content_type,
-                )
-                return None, None
-            chunks: list[bytes] = []
-            total = 0
-            for chunk in response.iter_bytes():
-                total += len(chunk)
-                if total > MAX_IMAGE_BYTES:
+        redirect_count = 0
+        while True:
+            with httpx.stream(
+                "GET",
+                request_url,
+                timeout=10.0,
+                follow_redirects=False,
+                headers=browser_image_request_headers(request_url, referer=referer),
+            ) as response:
+                if getattr(response, "is_redirect", False):
+                    location = str(response.headers.get("location") or "").strip()
+                    if not location or redirect_count >= MAX_IMAGE_REDIRECTS:
+                        log_image_hydration(
+                            request_id=request_id,
+                            url=url,
+                            method="httpx_browser_headers",
+                            ok=False,
+                            reason="invalid_redirect",
+                        )
+                        return None, None
+                    redirect_url = str(response.url.join(location))
+                    if not is_public_http_url(redirect_url):
+                        log_image_hydration(
+                            request_id=request_id,
+                            url=url,
+                            method="httpx_browser_headers",
+                            ok=False,
+                            reason="non_public_redirect",
+                        )
+                        return None, None
+                    request_url = redirect_url
+                    redirect_count += 1
+                    continue
+
+                response.raise_for_status()
+                content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
+                if content_type and not content_type.startswith("image/"):
                     log_image_hydration(
                         request_id=request_id,
                         url=url,
                         method="httpx_browser_headers",
                         ok=False,
-                        reason="image_too_large",
+                        reason="non_image_content",
                         mime_type=content_type,
-                        byte_count=total,
                     )
                     return None, None
-                chunks.append(chunk)
-            mime_type = content_type or guess_image_mime(url)
-            image = b"".join(chunks)
-            log_image_hydration(
-                request_id=request_id,
-                url=url,
-                method="httpx_browser_headers",
-                ok=True,
-                mime_type=mime_type,
-                byte_count=len(image),
-            )
-            return image, mime_type
+                chunks: list[bytes] = []
+                total = 0
+                for chunk in response.iter_bytes():
+                    total += len(chunk)
+                    if total > MAX_IMAGE_BYTES:
+                        log_image_hydration(
+                            request_id=request_id,
+                            url=url,
+                            method="httpx_browser_headers",
+                            ok=False,
+                            reason="image_too_large",
+                            mime_type=content_type,
+                            byte_count=total,
+                        )
+                        return None, None
+                    chunks.append(chunk)
+                mime_type = content_type or guess_image_mime(request_url)
+                image = b"".join(chunks)
+                log_image_hydration(
+                    request_id=request_id,
+                    url=url,
+                    method="httpx_browser_headers",
+                    ok=True,
+                    mime_type=mime_type,
+                    byte_count=len(image),
+                )
+                return image, mime_type
     except httpx.HTTPStatusError as exc:
         log_image_hydration(
             request_id=request_id,
@@ -450,6 +457,16 @@ def fetch_image_via_playwright(
         browser = manager.chromium.launch(**launch_options)
         headers = browser_image_request_headers(url, referer=referer)
         context = browser.new_context(extra_http_headers=headers or {})
+
+        def guard_route(route, route_request) -> None:
+            """阻止浏览器重定向或子请求进入非公网地址。"""
+
+            if is_public_http_url(str(route_request.url)):
+                route.continue_()
+            else:
+                route.abort()
+
+        context.route("**/*", guard_route)
         page = context.new_page()
         response = page.goto(url, wait_until="domcontentloaded", timeout=10000)
         if response is None or not response.ok:
@@ -459,6 +476,16 @@ def fetch_image_via_playwright(
                 method="playwright",
                 ok=False,
                 reason="navigation_failed",
+            )
+            return None, None
+        final_url = str(response.url or "").strip()
+        if not is_public_http_url(final_url):
+            log_image_hydration(
+                request_id=request_id,
+                url=url,
+                method="playwright",
+                ok=False,
+                reason="non_public_redirect",
             )
             return None, None
         mime_type = response.headers.get("content-type", "").split(";", 1)[

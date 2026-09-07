@@ -71,6 +71,8 @@ class TokenRepository(SqlAlchemyRepository):
         entity.quota_limit = record.quota_limit
         entity.reject_low_confidence = 1 if record.reject_low_confidence else 0
         entity.min_answer_confidence = record.min_answer_confidence
+        entity.bind_client = 1 if record.bind_client else 0
+        entity.bound_client_id = record.bound_client_id
 
     def _token_record(self, entity: ApiTokenEntity) -> ApiTokenRecord:
         return ApiTokenRecord(
@@ -93,4 +95,6 @@ class TokenRepository(SqlAlchemyRepository):
             min_answer_confidence=float(
                 getattr(entity, "min_answer_confidence", 0.0) or 0.0
             ),
+            bind_client=bool(getattr(entity, "bind_client", 0)),
+            bound_client_id=str(getattr(entity, "bound_client_id", "") or ""),
         )

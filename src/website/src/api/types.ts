@@ -63,6 +63,8 @@ export interface ApiToken {
   quota_used?: number
   reject_low_confidence?: boolean
   min_answer_confidence?: number
+  bind_client?: boolean
+  is_bound?: boolean
   is_recoverable: boolean
 }
 

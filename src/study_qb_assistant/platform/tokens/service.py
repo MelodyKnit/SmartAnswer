@@ -25,6 +25,7 @@ class TokenService(PlatformDomainService):
         quota_limit: int = -1,
         reject_low_confidence: bool = False,
         min_answer_confidence: float = 0.0,
+        bind_client: bool = False,
     ) -> tuple[str, dict]:
         """为指定用户创建新的 API 令牌。"""
         with self.lock:
@@ -41,6 +42,8 @@ class TokenService(PlatformDomainService):
                 quota_limit=int(quota_limit),
                 reject_low_confidence=bool(reject_low_confidence),
                 min_answer_confidence=normalized_confidence(min_answer_confidence),
+                bind_client=bool(bind_client),
+                bound_client_id="",
             )
             self.repository.save_token(record)
             return raw, public_token_dict(record)
@@ -126,20 +129,33 @@ class TokenService(PlatformDomainService):
         *,
         user_id: str,
         token_id: str,
-        description: str = "",
-        quota_limit: int = -1,
-        reject_low_confidence: bool = False,
-        min_answer_confidence: float = 0.0,
+        description: str | None = None,
+        quota_limit: int | None = None,
+        reject_low_confidence: bool | None = None,
+        min_answer_confidence: float | None = None,
+        bind_client: bool | None = None,
+        reset_bound_client: bool = False,
     ) -> dict:
         """更新用户自己的 API 令牌配置。"""
         with self.lock:
             token = self.repository.get_token(token_id)
             if token is None or token.user_id != user_id:
                 raise AuthError("TOKEN_NOT_FOUND", "令牌不存在", http_status=404)
-            token.description = description.strip()
-            token.quota_limit = int(quota_limit)
-            token.reject_low_confidence = bool(reject_low_confidence)
-            token.min_answer_confidence = normalized_confidence(min_answer_confidence)
+            if description is not None:
+                token.description = description.strip()
+            if quota_limit is not None:
+                token.quota_limit = int(quota_limit)
+            if reject_low_confidence is not None:
+                token.reject_low_confidence = bool(reject_low_confidence)
+            if min_answer_confidence is not None:
+                token.min_answer_confidence = normalized_confidence(min_answer_confidence)
+            if bind_client is not None:
+                # 若关闭了绑定开关，或者显式重置绑定，清空已绑定的设备标识
+                if not bind_client or reset_bound_client:
+                    token.bound_client_id = ""
+                token.bind_client = bool(bind_client)
+            elif reset_bound_client:
+                token.bound_client_id = ""
             self.repository.save_token(token)
             return public_token_dict(token)
 
@@ -151,8 +167,12 @@ class TokenService(PlatformDomainService):
                 raise AuthError("TOKEN_NOT_FOUND", "令牌不存在", http_status=404)
             self.repository.delete_token(token_id)
 
-    def resolve_token(self, raw_token: str | None) -> dict | None:
-        """解析原始 Bearer 令牌，并校验当前剩余额度。"""
+    def resolve_token(
+        self,
+        raw_token: str | None,
+        client_id: str | None = None,
+    ) -> dict | None:
+        """解析原始 Bearer 令牌，并校验当前剩余额度及单设备独占绑定。"""
         with self.lock:
             if not raw_token:
                 return None
@@ -161,6 +181,17 @@ class TokenService(PlatformDomainService):
                 return None
             if token.quota_limit >= 0 and token.quota_used >= token.quota_limit:
                 raise AuthError("TOKEN_QUOTA_EXCEEDED", "API Key 调用额度已用完", http_status=401)
+            # 单设备绑定限制
+            if token.bind_client and client_id:
+                if not token.bound_client_id:
+                    token.bound_client_id = client_id
+                    self.repository.save_token(token)
+                elif token.bound_client_id != client_id:
+                    raise AuthError(
+                        "TOKEN_DEVICE_LOCKED",
+                        "该 API Key 已与其他设备绑定，无法跨设备使用",
+                        http_status=403,
+                    )
             return public_token_dict(token)
 
     def copy_token_value(self, *, user_id: str, token_id: str) -> str:

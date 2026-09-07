@@ -241,7 +241,7 @@ async function loadPreview(job: ImageGenerationJob) {
 async function refreshJobs() {
   const result = await imageGenerationApi.list({ limit: 24 })
   revokePreviewUrls()
-  jobs.value = result.jobs
+  jobs.value = result.jobs.filter((job) => job.status !== 'deleted')
   await Promise.all(jobs.value.filter((job) => job.status === 'succeeded').map(loadPreview))
   const newestActive = jobs.value.find((job) => job.status === 'queued' || job.status === 'running')
   activeJobId.value = newestActive?.job_id || ''

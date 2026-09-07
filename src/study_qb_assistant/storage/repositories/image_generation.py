@@ -418,6 +418,8 @@ class ImageGenerationRepository(SqlAlchemyRepository):
                 statement = statement.where(ImageGenerationJobEntity.user_id == user_id)
             if status:
                 statement = statement.where(ImageGenerationJobEntity.status == status)
+            else:
+                statement = statement.where(ImageGenerationJobEntity.status != "deleted")
             entities = session.scalars(
                 statement.offset(max(0, offset)).limit(max(1, min(limit, 100)))
             ).all()
@@ -432,6 +434,8 @@ class ImageGenerationRepository(SqlAlchemyRepository):
                 statement = statement.where(ImageGenerationJobEntity.user_id == user_id)
             if status:
                 statement = statement.where(ImageGenerationJobEntity.status == status)
+            else:
+                statement = statement.where(ImageGenerationJobEntity.status != "deleted")
             return int(session.scalar(statement) or 0)
 
     def list_assets(self, job_id: str) -> list[ImageGenerationAssetRecord]:

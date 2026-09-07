@@ -16,6 +16,7 @@ from .dependencies import (
     get_permission_service,
     get_token_service,
 )
+from .http import extract_client_fingerprint
 from .legacy import unversioned_api_path
 
 SESSION_COOKIE = "stqb_session"
@@ -122,8 +123,9 @@ def guard_protected_request(request: Request) -> JSONResponse | None:
         if token:
             token_service = get_token_service(request)
             auth = get_auth_service(request)
+            client_id = extract_client_fingerprint(request)
             try:
-                token_info = token_service.resolve_token(token)
+                token_info = token_service.resolve_token(token, client_id=client_id)
             except AuthError as exc:
                 return auth_error_response(exc)
             if token_info is not None and auth.resolve_user_by_id(token_info["user_id"]):
@@ -142,7 +144,10 @@ def bearer_authorized(request: Request) -> bool:
         return False
     if token in ocs_api_keys():
         return True
-    token_info = get_token_service(request).resolve_token(token)
+    token_info = get_token_service(request).resolve_token(
+        token,
+        client_id=extract_client_fingerprint(request),
+    )
     if token_info is None:
         return False
     return get_auth_service(request).resolve_user_by_id(token_info["user_id"]) is not None

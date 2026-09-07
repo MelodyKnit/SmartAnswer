@@ -24,6 +24,8 @@ class ApiTokenRecord:
     quota_limit: int = -1
     reject_low_confidence: bool = False
     min_answer_confidence: float = 0.0
+    bind_client: bool = False
+    bound_client_id: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -40,6 +42,8 @@ class ApiTokenRecord:
             "quota_limit": self.quota_limit,
             "reject_low_confidence": self.reject_low_confidence,
             "min_answer_confidence": self.min_answer_confidence,
+            "bind_client": self.bind_client,
+            "is_bound": bool(self.bind_client and self.bound_client_id),
             "is_recoverable": bool(self.token_raw),
         }
 
@@ -60,4 +64,6 @@ class ApiTokenRecord:
             quota_limit=int(payload.get("quota_limit", -1) if payload.get("quota_limit") is not None else -1),
             reject_low_confidence=bool(payload.get("reject_low_confidence", False)),
             min_answer_confidence=float(payload.get("min_answer_confidence", 0.0) or 0.0),
+            bind_client=bool(payload.get("bind_client", False)),
+            bound_client_id=str(payload.get("bound_client_id", "") or ""),
         )

@@ -90,6 +90,8 @@ def ensure_sqlite_compat_columns(engine: Engine) -> None:
             "quota_limit": "INTEGER DEFAULT -1",
             "reject_low_confidence": "INTEGER DEFAULT 0",
             "min_answer_confidence": "REAL DEFAULT 0.0",
+            "bind_client": "INTEGER DEFAULT 0",
+            "bound_client_id": "TEXT DEFAULT ''",
         },
         "import_scripts": {
             "description": "TEXT DEFAULT ''",
@@ -214,6 +216,8 @@ def ensure_sql_compat_columns(engine: Engine) -> None:
             "quota_used": "INTEGER DEFAULT 0",
             "reject_low_confidence": "INTEGER DEFAULT 0",
             "min_answer_confidence": "FLOAT DEFAULT 0.0",
+            "bind_client": "INTEGER DEFAULT 0",
+            "bound_client_id": "VARCHAR(128) DEFAULT ''",
         },
         "usage_logs": {
             "elapsed_ms": "FLOAT DEFAULT 0.0",

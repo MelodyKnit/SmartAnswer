@@ -1,6 +1,6 @@
 # API 契约
 
-更新时间：`2026-08-28`
+更新时间：`2026-09-07`
 
 ## 1. 目的
 
@@ -366,7 +366,8 @@
 {
   "description": "我的 OCS",
   "reject_low_confidence": false,
-  "min_answer_confidence": 0.0
+  "min_answer_confidence": 0.0,
+  "bind_client": false
 }
 ```
 
@@ -390,6 +391,7 @@
 - `reject_low_confidence` 默认为 `false`，保持旧 API Key 行为兼容。
 - `min_answer_confidence` 为 `0.0` 时使用系统默认信任线；设置为 `0.8` 等值时，该 API Key 会拒绝低于阈值的 OCS 自动回填。
 - 被拒绝的低置信度 OCS 响应返回 `code=1`、`message=低信任度答案未作答`，`data.answer=null`，并在 `data.ai.error_code` 中标记 `LOW_CONFIDENCE_ANSWER`。
+- `bind_client=true` 时，API Key 在首次有效的 Bearer 请求中绑定该客户端环境。后续来自其他环境的请求返回 `403 TOKEN_DEVICE_LOCKED`；所有者关闭绑定并保存后，再开启即可让下一次有效调用重新绑定。
 
 响应：
 
@@ -417,6 +419,10 @@
 ```
 
 创建接口仅在本次响应返回新生成的完整 `token`；服务端同时将其保存到运行数据库的 `api_tokens.token_raw`，以支持所有者后续复制和分享。普通列表、使用记录、日志和管理摘要不会返回该字段。
+
+#### `POST /tokens/{token_id}`
+
+仅当前令牌所有者可调用。请求字段均为可选，省略字段保持当前值，避免旧客户端更新名称或额度时意外关闭新的令牌能力。`reset_bound_client=true` 可在保持 `bind_client=true` 的同时清除当前绑定，供下一次有效调用建立新绑定。
 
 #### `POST /tokens/{token_id}/copy-value`
 
@@ -750,6 +756,10 @@
 - 拥有 `dashboard:all` 的角色可查看所有用户日志
 - 每条日志包含 `elapsed_ms`，表示服务端查题链路耗时（毫秒），旧历史记录可能为 `0.0`
 - 本地题库命中时，每条日志会尽量包含 `question_id`、`source_name`、`source_type`、`source_id`、`source_url`，用于反馈中心定位题库记录。旧历史记录或纯联网来源可能为空。
+
+#### `GET /media/proxy?url=...`
+
+为控制台使用记录中的外部题目图片提供受保护预览。启用接口鉴权时要求登录，只接受经过公网地址校验的 `http(s)` 图片 URL，且会逐跳校验重定向目标，拒绝内网、回环和保留地址。响应使用 `Cache-Control: private, no-store`；前端应通过带登录凭据的 Blob 请求加载图片，不应把此接口作为公开图片直链。
 
 ### 4.8 反馈
 

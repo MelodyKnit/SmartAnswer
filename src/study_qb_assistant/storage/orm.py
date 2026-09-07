@@ -84,6 +84,8 @@ class ApiTokenEntity(Base):
     quota_limit: Mapped[int] = mapped_column(Integer, default=-1)
     reject_low_confidence: Mapped[int] = mapped_column(Integer, default=0)
     min_answer_confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    bind_client: Mapped[int] = mapped_column(Integer, default=0)
+    bound_client_id: Mapped[str] = mapped_column(String(128), default="")
 
 
 class QuestionEntity(Base):

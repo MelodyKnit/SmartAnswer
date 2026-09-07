@@ -265,6 +265,8 @@ class TokenSharingTests(unittest.TestCase):
         engine.dispose()
 
         self.assertIn("token_raw", columns)
+        self.assertIn("bind_client", columns)
+        self.assertIn("bound_client_id", columns)
 
     def test_runtime_log_redaction_never_keeps_token_value(self) -> None:
         raw_token = "sk_stqb_test_only_value"

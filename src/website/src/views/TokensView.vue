@@ -18,10 +18,12 @@ const newDescription = ref('')
 const newQuotaLimit = ref(-1)
 const newRejectLowConfidence = ref(false)
 const newMinAnswerConfidence = ref(0)
+const newBindClient = ref(false)
 
 const editVisible = ref(false)
 const updating = ref(false)
 const revoking = ref(false)
+const originalBindClient = ref(false)
 const editForm = ref({
   token_id: '',
   key_mask: '',
@@ -30,6 +32,8 @@ const editForm = ref({
   quota_limit: -1,
   reject_low_confidence: false,
   min_answer_confidence: 0,
+  bind_client: false,
+  is_bound: false,
 })
 
 const revealVisible = ref(false)
@@ -52,6 +56,7 @@ function openCreate() {
   newQuotaLimit.value = -1
   newRejectLowConfidence.value = false
   newMinAnswerConfidence.value = 0
+  newBindClient.value = false
   createVisible.value = true
 }
 
@@ -63,6 +68,7 @@ async function submitCreate() {
       newQuotaLimit.value,
       newRejectLowConfidence.value,
       newMinAnswerConfidence.value,
+      newBindClient.value,
     )
     createVisible.value = false
     revealToken.value = res.token
@@ -135,6 +141,7 @@ async function copyToken(token: ApiToken) {
 }
 
 function openEdit(token: ApiToken) {
+  originalBindClient.value = Boolean(token.bind_client)
   editForm.value = {
     token_id: token.token_id,
     key_mask: token.key_mask,
@@ -143,6 +150,8 @@ function openEdit(token: ApiToken) {
     quota_limit: token.quota_limit ?? -1,
     reject_low_confidence: Boolean(token.reject_low_confidence),
     min_answer_confidence: token.min_answer_confidence ?? 0,
+    bind_client: Boolean(token.bind_client),
+    is_bound: Boolean(token.is_bound),
   }
   editVisible.value = true
 }
@@ -153,6 +162,8 @@ async function submitUpdate() {
     return
   }
   updating.value = true
+  // 关闭绑定会清除已绑定设备；之后重新开启时由下一次有效调用重新绑定。
+  const resetBound = !editForm.value.bind_client || (!originalBindClient.value && editForm.value.bind_client)
   try {
     await tokenApi.update(
       editForm.value.token_id,
@@ -160,6 +171,8 @@ async function submitUpdate() {
       editForm.value.quota_limit,
       editForm.value.reject_low_confidence,
       editForm.value.min_answer_confidence,
+      editForm.value.bind_client,
+      resetBound,
     )
     editVisible.value = false
     ElMessage.success('修改成功')
@@ -306,6 +319,17 @@ onMounted(load)
         <el-form-item label="低信任度不作答">
           <el-switch v-model="newRejectLowConfidence" />
         </el-form-item>
+        <el-form-item>
+          <template #label>
+            <div class="inline-flex items-center gap-1">
+              <span>单设备绑定</span>
+              <el-tooltip content="开启后仅允许首次使用的设备答题；网络或浏览器环境变化时，需重置绑定" placement="top">
+                <el-icon class="cursor-pointer text-ink-muted hover:text-ink"><QuestionFilled /></el-icon>
+              </el-tooltip>
+            </div>
+          </template>
+          <el-switch v-model="newBindClient" />
+        </el-form-item>
         <el-form-item label="最低作答置信度 (0 表示使用系统配置)">
           <el-input-number
             v-model="newMinAnswerConfidence"
@@ -334,6 +358,17 @@ onMounted(load)
         </el-form-item>
         <el-form-item label="低信任度不作答">
           <el-switch v-model="editForm.reject_low_confidence" />
+        </el-form-item>
+        <el-form-item>
+          <template #label>
+            <div class="inline-flex items-center gap-1">
+              <span>单设备绑定</span>
+              <el-tooltip content="开启后仅允许首次使用的设备答题；关闭并保存后再开启，即可重置绑定设备" placement="top">
+                <el-icon class="cursor-pointer text-ink-muted hover:text-ink"><QuestionFilled /></el-icon>
+              </el-tooltip>
+            </div>
+          </template>
+          <el-switch v-model="editForm.bind_client" />
         </el-form-item>
         <el-form-item label="最低作答置信度 (0 表示使用系统配置)">
           <el-input-number

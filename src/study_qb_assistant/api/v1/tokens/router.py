@@ -13,7 +13,7 @@ from ...security import (
     unauthorized_response,
 )
 from ...http import base_url_from_request
-from .schemas import TokenCreatePayload
+from .schemas import TokenCreatePayload, TokenUpdatePayload
 
 
 def build_token_router() -> APIRouter:
@@ -44,6 +44,7 @@ def build_token_router() -> APIRouter:
             quota_limit=payload.quota_limit,
             reject_low_confidence=payload.reject_low_confidence,
             min_answer_confidence=payload.min_answer_confidence,
+            bind_client=payload.bind_client,
         )
         settings = get_settings_service(request)
         token_config = build_ocs_config(
@@ -71,7 +72,7 @@ def build_token_router() -> APIRouter:
         return JSONResponse({"ok": True, "token": token})
 
     @router.post("/tokens/{token_id}")
-    def tokens_update(request: Request, token_id: str, payload: TokenCreatePayload) -> JSONResponse:
+    def tokens_update(request: Request, token_id: str, payload: TokenUpdatePayload) -> JSONResponse:
         user = current_user(request)
         if user is None:
             return unauthorized_response("请先登录")
@@ -84,6 +85,8 @@ def build_token_router() -> APIRouter:
                 quota_limit=payload.quota_limit,
                 reject_low_confidence=payload.reject_low_confidence,
                 min_answer_confidence=payload.min_answer_confidence,
+                bind_client=payload.bind_client,
+                reset_bound_client=payload.reset_bound_client,
             )
         except AuthError as exc:
             return auth_error_response(exc)

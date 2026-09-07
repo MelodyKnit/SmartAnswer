@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import sys
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import Mock, patch
+
+import httpx
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = PROJECT_ROOT / "src"
@@ -16,6 +19,7 @@ from study_qb_assistant.media.question_context import (  # noqa: E402
     CHAOXING_IMAGE_REFERER,
     browser_image_request_headers,
     build_model_query,
+    fetch_public_image_with_mime,
 )
 from study_qb_assistant.questions.models import QuestionQuery  # noqa: E402
 
@@ -150,6 +154,80 @@ class ImageOcrHydrationTests(unittest.TestCase):
 
         self.assertEqual(hydrated.image_data_urls, ())
         stream.assert_not_called()
+
+    def test_http_image_fetch_rejects_redirect_to_private_address(self) -> None:
+        """公网外链不能通过重定向访问内网地址。"""
+
+        redirect = httpx.Response(
+            302,
+            headers={"location": "http://127.0.0.1/private.png"},
+            request=httpx.Request("GET", "https://cdn.example.test/question.png"),
+        )
+        with (
+            patch(
+                "study_qb_assistant.media.question_context.is_public_http_url",
+                side_effect=[True, False],
+            ),
+            patch(
+                "study_qb_assistant.media.question_context.httpx.stream",
+                return_value=nullcontext(redirect),
+            ) as stream,
+            patch("study_qb_assistant.media.question_context.log_event") as log_event,
+        ):
+            image, mime_type = fetch_public_image_with_mime(
+                "https://cdn.example.test/question.png"
+            )
+
+        self.assertIsNone(image)
+        self.assertIsNone(mime_type)
+        self.assertFalse(stream.call_args.kwargs["follow_redirects"])
+        log_event.assert_any_call(
+            "image_hydration",
+            {
+                "request_id": None,
+                "domain": "cdn.example.test",
+                "method": "httpx_browser_headers",
+                "ok": False,
+                "reason": "non_public_redirect",
+                "mime_type": "",
+                "byte_count": 0,
+            },
+        )
+
+    def test_http_image_fetch_validates_public_redirect_before_reading_image(self) -> None:
+        """公网图片的合法重定向仍应保持可用。"""
+
+        redirect = httpx.Response(
+            302,
+            headers={"location": "https://images.example.test/final.png"},
+            request=httpx.Request("GET", "https://cdn.example.test/question.png"),
+        )
+        image = httpx.Response(
+            200,
+            content=b"image-content",
+            headers={"content-type": "image/png"},
+            request=httpx.Request("GET", "https://images.example.test/final.png"),
+        )
+        with (
+            patch(
+                "study_qb_assistant.media.question_context.is_public_http_url",
+                return_value=True,
+            ),
+            patch(
+                "study_qb_assistant.media.question_context.httpx.stream",
+                side_effect=[nullcontext(redirect), nullcontext(image)],
+            ) as stream,
+            patch("study_qb_assistant.media.question_context.log_event"),
+        ):
+            content, mime_type = fetch_public_image_with_mime(
+                "https://cdn.example.test/question.png"
+            )
+
+        self.assertEqual(content, b"image-content")
+        self.assertEqual(mime_type, "image/png")
+        self.assertEqual(stream.call_count, 2)
+        self.assertFalse(stream.call_args_list[0].kwargs["follow_redirects"])
+        self.assertEqual(stream.call_args_list[1].args[1], "https://images.example.test/final.png")
 
 
 if __name__ == "__main__":

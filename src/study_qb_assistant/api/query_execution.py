@@ -21,7 +21,7 @@ from ..platform.usage import UsageService
 from ..questions.models import QuestionQuery
 from ..search import LocalQuestionIndex
 from .dependencies import get_ocs_integration
-from .http import model_visible_base_url, extract_client_ip
+from .http import model_visible_base_url, extract_client_ip, extract_client_fingerprint
 from .security import auth_error_response, authorization_bearer, current_user
 
 
@@ -34,8 +34,9 @@ def check_query_eligibility(
     """校验当前请求方是否有发起查题的资格（会员或积分余额足够）。"""
     user = current_user(request)
     bearer = authorization_bearer(request)
+    client_id = extract_client_fingerprint(request)
     try:
-        token = tokens.resolve_token(bearer) if bearer else None
+        token = tokens.resolve_token(bearer, client_id=client_id) if bearer else None
     except AuthError as exc:
         return exc
     if user is None and token is not None:
@@ -206,7 +207,10 @@ def record_usage(
 ) -> dict | None:
     """记录本次调用的积分消耗与审计日志。"""
     user = current_user(request)
-    token = tokens.resolve_token(authorization_bearer(request))
+    token = tokens.resolve_token(
+        authorization_bearer(request),
+        client_id=extract_client_fingerprint(request),
+    )
     if user is None and token is None:
         return None
     if user is None and token is not None:

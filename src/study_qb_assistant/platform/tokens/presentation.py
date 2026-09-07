@@ -37,5 +37,7 @@ def public_token_dict(token: ApiTokenRecord) -> dict:
         "quota_used": token.quota_used,
         "reject_low_confidence": token.reject_low_confidence,
         "min_answer_confidence": token.min_answer_confidence,
+        "bind_client": token.bind_client,
+        "is_bound": bool(token.bind_client and token.bound_client_id),
         "is_recoverable": bool(token.token_raw),
     }

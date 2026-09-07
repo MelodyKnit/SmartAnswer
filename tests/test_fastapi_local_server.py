@@ -3366,6 +3366,158 @@ class FastAPILocalServerTests(unittest.TestCase):
             self.assertTrue(cleanup_res.json()["ok"])
             self.assertIn("deleted_files", cleanup_res.json())
 
+    def test_api_token_single_device_binding_and_reset(self) -> None:
+        """首次使用绑定 API Key；部分更新不解绑，关闭再开启后才能换设备。"""
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformServices(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(),
+                    auth_service=auth,
+                    platform_services=platform,
+                    require_auth=True,
+                )
+            )
+            client.post("/api/v1/auth/register", json={"username": "owner", "password": "password123"})
+            headers = {
+                "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'owner', 'password': 'password123'}).json()['token']}"
+            }
+
+            # 1. 创建开启单设备绑定的 API Key
+            create_res = client.post(
+                "/api/v1/tokens",
+                json={"description": "single-device-key", "bind_client": True},
+                headers=headers,
+            )
+            self.assertEqual(create_res.status_code, 200)
+            token_id = create_res.json()["token_info"]["token_id"]
+            raw_token = create_res.json()["token"]
+
+            # 2. 设备 A 首次请求 -> 放行并自动绑定
+            device_a_headers = {
+                "Authorization": f"Bearer {raw_token}",
+                "User-Agent": "Device-A-Browser/1.0",
+                "Accept-Language": "zh-CN",
+            }
+            res_a = client.get(
+                "/ocs/query",
+                params={"title": "示例题", "type": "single"},
+                headers=device_a_headers,
+            )
+            self.assertEqual(res_a.status_code, 200)
+            self.assertEqual(res_a.json()["code"], 0)
+
+            # 3. 设备 B 请求 -> 被 403 拦截
+            device_b_headers = {
+                "Authorization": f"Bearer {raw_token}",
+                "User-Agent": "Device-B-Browser/2.0",
+                "Accept-Language": "en-US",
+            }
+            res_b = client.get(
+                "/ocs/query",
+                params={"title": "示例题", "type": "single"},
+                headers=device_b_headers,
+            )
+            self.assertEqual(res_b.status_code, 403)
+
+            # 4. 旧客户端只更新其他字段时，不能因默认值而意外关闭绑定。
+            preserve_res = client.post(
+                f"/api/v1/tokens/{token_id}",
+                json={"description": "renamed-key"},
+                headers=headers,
+            )
+            self.assertEqual(preserve_res.status_code, 200)
+            self.assertTrue(preserve_res.json()["token"]["bind_client"])
+            self.assertTrue(preserve_res.json()["token"]["is_bound"])
+            self.assertEqual(
+                client.get(
+                    "/ocs/query",
+                    params={"title": "示例题", "type": "single"},
+                    headers=device_b_headers,
+                ).status_code,
+                403,
+            )
+
+            # 5. 用户关闭绑定并保存，再重新开启；下次调用由设备 B 建立新绑定。
+            disable_res = client.post(
+                f"/api/v1/tokens/{token_id}",
+                json={"bind_client": False},
+                headers=headers,
+            )
+            self.assertEqual(disable_res.status_code, 200)
+            self.assertFalse(disable_res.json()["token"]["bind_client"])
+            self.assertFalse(disable_res.json()["token"]["is_bound"])
+            enable_res = client.post(
+                f"/api/v1/tokens/{token_id}",
+                json={"bind_client": True},
+                headers=headers,
+            )
+            self.assertEqual(enable_res.status_code, 200)
+            self.assertTrue(enable_res.json()["token"]["bind_client"])
+            self.assertFalse(enable_res.json()["token"]["is_bound"])
+
+            # 6. 现在设备 B 发起请求 -> 成为新的绑定设备并成功放行
+            res_b_after = client.get(
+                "/ocs/query",
+                params={"title": "示例题", "type": "single"},
+                headers=device_b_headers,
+            )
+            self.assertEqual(res_b_after.status_code, 200)
+            self.assertEqual(res_b_after.json()["code"], 0)
+
+    def test_media_proxy_serves_valid_images_and_rejects_ssrf(self) -> None:
+        """媒体代理仅对登录用户开放，并阻断内网 SSRF 风险。"""
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformServices(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(),
+                    auth_service=auth,
+                    platform_services=platform,
+                    require_auth=True,
+                )
+            )
+            unauthenticated = client.get(
+                "/api/v1/media/proxy", params={"url": "https://example.com/demo.png"}
+            )
+            client.post(
+                "/api/v1/auth/register",
+                json={"username": "viewer", "password": "password123"},
+            )
+            login = client.post(
+                "/api/v1/auth/login",
+                json={"username": "viewer", "password": "password123"},
+            )
+            headers = {"Authorization": f"Bearer {login.json()['token']}"}
+
+            # 非法/私有内网地址拦截（防 SSRF）
+            invalid = client.get(
+                "/api/v1/media/proxy",
+                params={"url": "http://127.0.0.1:8080/test.png"},
+                headers=headers,
+            )
+            self.assertEqual(invalid.status_code, 400)
+
+            # 正常公网图片代理
+            with mock.patch(
+                "study_qb_assistant.api.v1.media.router.fetch_public_image_with_mime",
+                return_value=(b"\x89PNG\r\n\x1afake", "image/png"),
+            ):
+                ok_res = client.get(
+                    "/api/v1/media/proxy",
+                    params={"url": "https://example.com/demo.png"},
+                    headers=headers,
+                )
+                self.assertEqual(unauthenticated.status_code, 401)
+                self.assertEqual(ok_res.status_code, 200)
+                self.assertEqual(ok_res.headers.get("content-type"), "image/png")
+                self.assertEqual(ok_res.headers.get("cache-control"), "private, no-store")
+                self.assertEqual(ok_res.content, b"\x89PNG\r\n\x1afake")
+
     def test_record_usage_is_atomic_when_usage_log_commit_fails(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
