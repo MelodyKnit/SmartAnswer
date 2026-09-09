@@ -32,6 +32,7 @@ from study_qb_assistant.questions.models import (  # noqa: E402
     QuestionQuery,
 )  # noqa: E402
 from study_qb_assistant.platform.container import PlatformServices  # noqa: E402
+from study_qb_assistant.platform.wallet.records import WalletOrderRecord  # noqa: E402
 from study_qb_assistant.llm.http_client import HttpClientError  # noqa: E402
 from study_qb_assistant.llm.providers import OpenAICompatibleProvider  # noqa: E402
 from study_qb_assistant.search import LocalQuestionIndex  # noqa: E402
@@ -1076,6 +1077,173 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertFalse(disabled_status.json()["first_user_allowed"])
         self.assertEqual(blocked.status_code, 403)
         self.assertEqual(blocked.json()["error"]["code"], "REGISTRATION_DISABLED")
+
+    def test_slider_captcha_protects_registration_and_repeated_login(self) -> None:
+        """滑块挑战应签发一次性凭证，并在注册和重复登录失败后真实生效。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformServices(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(),
+                    auth_service=auth,
+                    platform_services=platform,
+                    require_auth=True,
+                )
+            )
+
+            owner_register = client.post(
+                "/auth/register", json={"username": "owner", "password": "password123"}
+            )
+            owner_login = client.post(
+                "/auth/login", json={"username": "owner", "password": "password123"}
+            )
+            headers = {"Authorization": f"Bearer {owner_login.json()['token']}"}
+            configured = client.patch(
+                "/system-config",
+                json={
+                    "registration_captcha_enabled": "true",
+                    "login_captcha_enabled": "true",
+                    "login_failure_threshold": "2",
+                },
+                headers=headers,
+            )
+            invalid_threshold = client.patch(
+                "/system-config",
+                json={"login_failure_threshold": "5"},
+                headers=headers,
+            )
+
+            registration_missing = client.post(
+                "/auth/register", json={"username": "learner", "password": "password123"}
+            )
+            registration_challenge = client.get("/auth/captcha/slider")
+            registration_service = client.app.state.slider_captcha
+            registration_challenge_id = registration_challenge.json()["challenge_id"]
+            registration_x = registration_service._challenges[registration_challenge_id]["x"]
+            registration_verify = client.post(
+                "/auth/captcha/slider/verify",
+                json={"challenge_id": registration_challenge_id, "x": registration_x},
+            )
+            registration_token = registration_verify.json()["captcha_token"]
+            registration_success = client.post(
+                "/auth/register",
+                json={
+                    "username": "learner",
+                    "password": "password123",
+                    "captcha_token": registration_token,
+                },
+            )
+            registration_replay = client.post(
+                "/auth/register",
+                json={
+                    "username": "otherlearner",
+                    "password": "password123",
+                    "captcha_token": registration_token,
+                },
+            )
+
+            wrong_one = client.post(
+                "/auth/login", json={"username": "owner", "password": "not-the-password"}
+            )
+            wrong_two = client.post(
+                "/auth/login", json={"username": "owner", "password": "not-the-password"}
+            )
+            captcha_required = client.post(
+                "/auth/login", json={"username": "owner", "password": "password123"}
+            )
+            login_challenge = client.get("/auth/captcha/slider")
+            login_challenge_id = login_challenge.json()["challenge_id"]
+            login_x = registration_service._challenges[login_challenge_id]["x"]
+            login_verify = client.post(
+                "/auth/captcha/slider/verify",
+                json={"challenge_id": login_challenge_id, "x": login_x},
+            )
+            recovered_login = client.post(
+                "/auth/login",
+                json={
+                    "username": "owner",
+                    "password": "password123",
+                    "captcha_token": login_verify.json()["captcha_token"],
+                },
+            )
+            status = client.get("/auth/register-status")
+
+        self.assertEqual(owner_register.status_code, 200)
+        self.assertEqual(configured.status_code, 200)
+        self.assertEqual(invalid_threshold.status_code, 400)
+        self.assertEqual(invalid_threshold.json()["error"]["code"], "INVALID_INPUT")
+        self.assertEqual(registration_missing.status_code, 400)
+        self.assertEqual(registration_missing.json()["error"]["code"], "CAPTCHA_REQUIRED")
+        self.assertEqual(registration_challenge.status_code, 200)
+        self.assertTrue(registration_challenge.json()["bg_image"].startswith("data:image/png;base64,"))
+        self.assertEqual(registration_verify.status_code, 200)
+        self.assertTrue(registration_token.startswith("cap_"))
+        self.assertEqual(registration_success.status_code, 200)
+        self.assertEqual(registration_replay.status_code, 400)
+        self.assertEqual(registration_replay.json()["error"]["code"], "CAPTCHA_INVALID")
+        self.assertEqual(wrong_one.status_code, 401)
+        self.assertEqual(wrong_two.status_code, 401)
+        self.assertEqual(captcha_required.status_code, 400)
+        self.assertEqual(captcha_required.json()["error"]["code"], "CAPTCHA_REQUIRED")
+        self.assertEqual(login_verify.status_code, 200)
+        self.assertEqual(recovered_login.status_code, 200)
+        self.assertTrue(recovered_login.json()["ok"])
+        self.assertTrue(status.json()["registration_captcha_enabled"])
+        self.assertTrue(status.json()["login_captcha_enabled"])
+        self.assertEqual(status.json()["login_failure_threshold"], 2)
+
+    def test_wallet_order_total_uses_database_count_beyond_page_limit(self) -> None:
+        """钱包分页总数不能受列表接口 500 条上限影响。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformServices(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(),
+                    auth_service=auth,
+                    platform_services=platform,
+                    require_auth=True,
+                )
+            )
+            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            login = client.post(
+                "/auth/login", json={"username": "owner", "password": "password123"}
+            )
+            headers = {"Authorization": f"Bearer {login.json()['token']}"}
+            user = auth.get_user("owner")
+            assert user is not None
+            now = time.time()
+            platform.wallet.record_wallet_orders(
+                [
+                    WalletOrderRecord(
+                        order_id=f"wallet-count-{index}",
+                        user_id=str(user["user_id"]),
+                        username="owner",
+                        kind="points",
+                        points_delta=1,
+                        source="manual_credit",
+                        source_id=None,
+                        status="completed",
+                        created_by="owner",
+                        created_at=now + index,
+                    )
+                    for index in range(501)
+                ]
+            )
+            wallet_orders = client.get("/wallet/orders", params={"limit": 10}, headers=headers)
+            wallet_changes = client.get("/wallet/changes", params={"limit": 10}, headers=headers)
+
+        self.assertEqual(wallet_orders.status_code, 200)
+        self.assertEqual(wallet_orders.json()["total"], 501)
+        self.assertEqual(len(wallet_orders.json()["orders"]), 10)
+        self.assertEqual(wallet_changes.status_code, 200)
+        self.assertEqual(wallet_changes.json()["total"], 501)
+        self.assertEqual(len(wallet_changes.json()["orders"]), 10)
 
     def test_site_config_is_public_and_follows_system_config(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -2345,9 +2513,30 @@ class FastAPILocalServerTests(unittest.TestCase):
                 json={"code": limited.json()["redeem_code"]["code"]},
                 headers=headers,
             )
+            # 删除兑换码与批量删除兑换码验证
+            del_res = client.delete(
+                f"/wallet/redeem-codes/{limited.json()['redeem_code']['code_id']}",
+                headers=headers,
+            )
+            batch_del_res = client.post(
+                "/wallet/redeem-codes/batch-delete",
+                json={"code_ids": [permanent.json()["redeem_code"]["code_id"]]},
+                headers=headers,
+            )
+            empty_batch_del = client.post(
+                "/wallet/redeem-codes/batch-delete",
+                json={"code_ids": []},
+                headers=headers,
+            )
+            codes_after_del = client.get("/wallet/redeem-codes", headers=headers)
 
         self.assertEqual(permanent.status_code, 200)
         self.assertEqual(permanent.json()["redeem_code"]["expires_at"], 0.0)
+        self.assertEqual(del_res.status_code, 200)
+        self.assertEqual(batch_del_res.status_code, 200)
+        self.assertEqual(batch_del_res.json()["deleted_count"], 1)
+        self.assertEqual(empty_batch_del.status_code, 422)
+        self.assertEqual(len(codes_after_del.json()["redeem_codes"]), 0)
         self.assertEqual(limited.status_code, 200)
         self.assertAlmostEqual(
             limited.json()["redeem_code"]["expires_at"], future_expires_at, delta=1

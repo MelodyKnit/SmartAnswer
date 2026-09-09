@@ -58,7 +58,7 @@ npm run build
 
 ## 部署与数据
 
-- Docker Compose 使用仓库根目录的 `docker-compose.yaml`；详细步骤见[部署说明](docs/deployment.md)。服务器通过本地更新器主动拉取正式 Release，不需要 GitHub SSH 部署审批。
+- Docker Compose 使用仓库根目录的 `docker-compose.yaml`；详细步骤见[部署说明](docs/setup/deployment.md)。服务器通过本地更新器主动拉取正式 Release，不需要 GitHub SSH 部署审批。
 - 运行数据、SQLite 数据库、日志和图片资产位于配置的数据目录，Docker 默认通过 `deploy-data` 卷持久化。
 - `.env`、数据库、运行数据、日志、图片和本地实验目录均不得提交。部署前仅复制并填写 `.env.example` 中实际需要的配置。
 

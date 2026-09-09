@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from collections.abc import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from ...platform.wallet.errors import WalletOperationError
 from ...platform.wallet.records import RedeemCodeRecord, WalletOrderRecord
@@ -38,6 +38,30 @@ class WalletRepository(SqlAlchemyRepository):
         with self.session_factory() as session:
             entity = session.scalar(select(RedeemCodeEntity).where(RedeemCodeEntity.code == code))
             return self._redeem_code_record(entity) if entity else None
+
+    def delete_redeem_code(self, code_id: str) -> bool:
+        with self.session_factory() as session:
+            entity = session.scalar(
+                select(RedeemCodeEntity).where(RedeemCodeEntity.code_id == code_id)
+            )
+            if entity is None:
+                return False
+            session.delete(entity)
+            session.commit()
+            return True
+
+    def delete_redeem_codes(self, code_ids: Sequence[str]) -> int:
+        if not code_ids:
+            return 0
+        with self.session_factory() as session:
+            entities = session.scalars(
+                select(RedeemCodeEntity).where(RedeemCodeEntity.code_id.in_(code_ids))
+            ).all()
+            count = len(entities)
+            for entity in entities:
+                session.delete(entity)
+            session.commit()
+            return count
 
     def save_wallet_order(self, record: WalletOrderRecord) -> None:
         self.save_wallet_orders((record,))
@@ -140,6 +164,7 @@ class WalletRepository(SqlAlchemyRepository):
         username: str | None = None,
         kind: str = "",
         source: str = "",
+        excluded_sources: Sequence[str] = (),
         limit: int = 100,
         offset: int = 0,
     ) -> list[WalletOrderRecord]:
@@ -151,10 +176,34 @@ class WalletRepository(SqlAlchemyRepository):
                 stmt = stmt.where(WalletOrderEntity.kind == kind)
             if source:
                 stmt = stmt.where(WalletOrderEntity.source == source)
+            elif excluded_sources:
+                stmt = stmt.where(WalletOrderEntity.source.notin_(excluded_sources))
             entities = session.scalars(
                 stmt.offset(max(0, int(offset))).limit(max(1, min(limit, 500)))
             ).all()
             return [self._wallet_order_record(entity) for entity in entities]
+
+    def count_wallet_orders(
+        self,
+        *,
+        username: str | None = None,
+        kind: str = "",
+        source: str = "",
+        excluded_sources: Sequence[str] = (),
+    ) -> int:
+        """按与列表一致的筛选条件统计流水总数。"""
+
+        with self.session_factory() as session:
+            stmt = select(func.count()).select_from(WalletOrderEntity)
+            if username:
+                stmt = stmt.where(WalletOrderEntity.username == username)
+            if kind:
+                stmt = stmt.where(WalletOrderEntity.kind == kind)
+            if source:
+                stmt = stmt.where(WalletOrderEntity.source == source)
+            elif excluded_sources:
+                stmt = stmt.where(WalletOrderEntity.source.notin_(excluded_sources))
+            return int(session.scalar(stmt) or 0)
 
     def _apply_redeem_code(self, entity: RedeemCodeEntity, record: RedeemCodeRecord) -> None:
         entity.code_id = record.code_id

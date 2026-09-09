@@ -121,6 +121,16 @@ class WalletService(PlatformDomainService):
         with self.lock:
             return [item.to_dict() for item in self.repository.list_redeem_codes()]
 
+    def delete_redeem_code(self, code_id: str) -> bool:
+        """删除单条兑换码。"""
+        with self.lock:
+            return self.repository.delete_redeem_code(code_id)
+
+    def delete_redeem_codes(self, code_ids: list[str]) -> int:
+        """批量删除兑换码。"""
+        with self.lock:
+            return self.repository.delete_redeem_codes(code_ids)
+
     def grant_wallet(
         self,
         *,
@@ -206,6 +216,7 @@ class WalletService(PlatformDomainService):
         username: str | None = None,
         kind: str = "",
         source: str = "",
+        excluded_sources: Sequence[str] = (),
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict]:
@@ -217,6 +228,7 @@ class WalletService(PlatformDomainService):
                     username=username,
                     kind=kind,
                     source=source,
+                    excluded_sources=excluded_sources,
                     limit=limit,
                     offset=offset,
                 )
@@ -230,6 +242,7 @@ class WalletService(PlatformDomainService):
         source: str = "",
         limit: int = 100,
         offset: int = 0,
+        excluded_sources: Sequence[str] = ("image_generation", "image_generation_refund"),
     ) -> list[dict]:
         """列出钱包变更流水，供管理端分页查看。"""
 
@@ -237,6 +250,7 @@ class WalletService(PlatformDomainService):
             username=username,
             kind=kind,
             source=source,
+            excluded_sources=() if source else excluded_sources,
             limit=limit,
             offset=offset,
         )
@@ -247,17 +261,17 @@ class WalletService(PlatformDomainService):
         username: str | None = None,
         kind: str = "",
         source: str = "",
+        excluded_sources: Sequence[str] = (),
     ) -> int:
         """统计钱包流水数量。"""
 
-        return len(
-            self.list_wallet_orders(
+        with self.lock:
+            return self.repository.count_wallet_orders(
                 username=username,
                 kind=kind,
                 source=source,
-                limit=5000,
+                excluded_sources=excluded_sources,
             )
-        )
 
 
 def require_positive_amount(value: object, field_name: str) -> int:

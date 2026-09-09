@@ -466,6 +466,14 @@ class AuthService:
         if record[1] >= THROTTLE_MAX_FAILURES:
             record[2] = now + THROTTLE_LOCK
 
+    def get_failure_count(self, key: str) -> int:
+        """获取指定账号/IP在当前窗口内的失败次数。"""
+        now = time.time()
+        record = self._failures.get(key)
+        if not record or now - record[0] > THROTTLE_WINDOW:
+            return 0
+        return int(record[1])
+
     def load_users(self) -> list[UserRecord]:
         """兼容旧调用，返回全部用户记录。"""
         return self.repository.list_users()

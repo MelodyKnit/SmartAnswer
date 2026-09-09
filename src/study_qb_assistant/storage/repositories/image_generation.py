@@ -229,20 +229,21 @@ class ImageGenerationRepository(SqlAlchemyRepository):
                 references=input_references or [],
             )
             user.points = int(user.points or 0) - record.points_cost
-            order = WalletOrderEntity(
-                order_id=record.reservation_order_id,
-                user_id=record.user_id,
-                username=record.username,
-                kind="points",
-                points_delta=-record.points_cost,
-                source="image_generation",
-                source_id=record.job_id,
-                status="reserved",
-                created_by=record.username,
-                created_at=record.created_at,
-            )
+            if record.points_cost > 0:
+                order = WalletOrderEntity(
+                    order_id=record.reservation_order_id,
+                    user_id=record.user_id,
+                    username=record.username,
+                    kind="points",
+                    points_delta=-record.points_cost,
+                    source="image_generation",
+                    source_id=record.job_id,
+                    status="reserved",
+                    created_by=record.username,
+                    created_at=record.created_at,
+                )
+                session.add(order)
             entity = image_job_entity(record)
-            session.add(order)
             session.add(entity)
             for input_record in resolved_inputs:
                 session.add(image_job_input_entity(input_record))
@@ -369,20 +370,21 @@ class ImageGenerationRepository(SqlAlchemyRepository):
                 if user is not None:
                     user.points = int(user.points or 0) + int(job.points_cost or 0)
                 order.status = "refunded"
-                session.add(
-                    WalletOrderEntity(
-                        order_id=f"refund_{job.job_id}",
-                        user_id=job.user_id,
-                        username=job.username,
-                        kind="points",
-                        points_delta=int(job.points_cost or 0),
-                        source="image_generation_refund",
-                        source_id=job.job_id,
-                        status="completed",
-                        created_by="system",
-                        created_at=completed_at,
+                if int(job.points_cost or 0) > 0:
+                    session.add(
+                        WalletOrderEntity(
+                            order_id=f"refund_{job.job_id}",
+                            user_id=job.user_id,
+                            username=job.username,
+                            kind="points",
+                            points_delta=int(job.points_cost or 0),
+                            source="image_generation_refund",
+                            source_id=job.job_id,
+                            status="completed",
+                            created_by="system",
+                            created_at=completed_at,
+                        )
                     )
-                )
             job.status = status
             job.error_code = error_code[:64]
             job.error_message = error_message[:2000]

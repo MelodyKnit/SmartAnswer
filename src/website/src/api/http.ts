@@ -39,12 +39,32 @@ export interface ApiError {
 export class ApiException extends Error {
   code: string
   status: number
-  constructor(message: string, code: string, status: number) {
+  metadata: Record<string, unknown>
+  constructor(
+    message: string,
+    code: string,
+    status: number,
+    metadata: Record<string, unknown> = {},
+  ) {
     super(message)
     this.name = 'ApiException'
     this.code = code
     this.status = status
+    this.metadata = metadata
   }
+}
+
+function safeErrorMetadata(data: unknown): Record<string, unknown> {
+  if (!data || typeof data !== 'object') return {}
+  const payload = data as Record<string, unknown>
+  const metadata: Record<string, unknown> = {}
+  if (typeof payload.require_captcha === 'boolean') {
+    metadata.require_captcha = payload.require_captcha
+  }
+  if (typeof payload.fail_count === 'number' && Number.isFinite(payload.fail_count)) {
+    metadata.fail_count = payload.fail_count
+  }
+  return metadata
 }
 
 /** 401 回调：由 auth store 注册，用于令牌失效时自动登出并跳转登录。 */
@@ -79,7 +99,7 @@ http.interceptors.response.use(
     const message =
       apiError?.message || error?.message || '请求失败，请稍后重试'
     const code = apiError?.code || (status ? `HTTP_${status}` : 'NETWORK_ERROR')
-    return Promise.reject(new ApiException(message, code, status))
+    return Promise.reject(new ApiException(message, code, status, safeErrorMetadata(data)))
   },
 )
 
@@ -92,7 +112,7 @@ export async function request<T = unknown>(config: AxiosRequestConfig): Promise<
   const data = response.data
   if (data && typeof data === 'object' && data.ok === false) {
     const err = (data.error as ApiError) || { code: 'UNKNOWN', message: '请求失败' }
-    throw new ApiException(err.message, err.code, response.status)
+    throw new ApiException(err.message, err.code, response.status, safeErrorMetadata(data))
   }
   return data as T
 }

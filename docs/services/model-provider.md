@@ -16,9 +16,9 @@
 
 实现文件：
 
-- [llm/providers/base.py](../src/study_qb_assistant/llm/providers/base.py)
-- [llm/providers/openai_compatible.py](../src/study_qb_assistant/llm/providers/openai_compatible.py)
-- [http_client.py](../src/study_qb_assistant/http_client.py) 包装了 `httpx`，用于处理超时、可选的代理支持、JSON 解码和 HTTP 状态错误。
+- [llm/providers/base.py](../../src/study_qb_assistant/llm/providers/base.py)
+- [llm/providers/openai_compatible.py](../../src/study_qb_assistant/llm/providers/openai_compatible.py)
+- [llm/http_client.py](../../src/study_qb_assistant/llm/http_client.py) 包装了 `httpx`，用于处理超时、可选的代理支持、JSON 解码和 HTTP 状态错误。
 
 模型提供商返回：
 

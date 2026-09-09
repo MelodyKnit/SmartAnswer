@@ -920,6 +920,40 @@ class ImageGenerationApiTests(unittest.TestCase):
             self.assertEqual(insufficient.json()["error"]["code"], "INSUFFICIENT_POINTS")
             self.assertEqual(auth.get_user("owner")["points"], initial_points)
 
+    def test_free_generation_does_not_write_zero_value_wallet_orders(self) -> None:
+        """免费生图不应在钱包流水中留下无实际金额的预扣或退款记录。"""
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            os.environ, {"STQB_DATA_DIR": directory}, clear=False
+        ):
+            client, auth, platform, headers = self.build_client(directory)
+            platform.settings.set_system_config({"image_generation_points": "0"})
+            self.create_active_model(client, headers)
+            platform.image_generation.provider_factory = lambda _model: SuccessfulImageProvider()
+            initial_points = auth.get_user("owner")["points"]
+
+            created = client.post(
+                "/api/v1/image-generations",
+                headers=headers,
+                json={"prompt": "免费生图", "idempotency_key": "free-job-success"},
+            )
+            self.assertEqual(created.status_code, 202)
+            self.assertTrue(platform.image_generation.process_next_job())
+
+            platform.image_generation.provider_factory = lambda _model: FailingImageProvider()
+            failed = client.post(
+                "/api/v1/image-generations",
+                headers=headers,
+                json={"prompt": "免费失败生图", "idempotency_key": "free-job-failure"},
+            )
+            self.assertEqual(failed.status_code, 202)
+            self.assertTrue(platform.image_generation.process_next_job())
+            wallet_orders = platform.wallet.list_wallet_orders(username="owner", limit=100)
+            final_points = auth.get_user("owner")["points"]
+
+        self.assertEqual(final_points, initial_points)
+        self.assertEqual(wallet_orders, [])
+
     def test_enabling_a_model_deactivates_the_previous_one(self) -> None:
         """首版只允许一个可选模型，避免用户请求被隐式分流。"""
 

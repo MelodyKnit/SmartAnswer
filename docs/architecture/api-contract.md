@@ -1,6 +1,6 @@
 # API 契约
 
-更新时间：`2026-09-07`
+更新时间：`2026-09-09`
 
 ## 1. 目的
 
@@ -191,6 +191,8 @@
 
 注册请求携带有效邀请码时，系统按当前 `invite_reward_mode` 决定邀请人、受邀用户或双方获得 `invite_bonus_points`；该规则只作用于后续注册，不回溯既有邀请关系与积分余额。
 
+当系统配置 `registration_captcha_enabled=true` 时，注册请求还必须携带一次性 `captcha_token`。该凭证通过滑块验证接口获得，只在短时间内对同一客户端地址有效，提交一次后立即失效。
+
 请求：
 
 ```json
@@ -198,7 +200,8 @@
   "username": "alice",
   "password": "password123",
   "email": "alice@qq.com",
-  "email_code": "123456"
+  "email_code": "123456",
+  "captcha_token": "cap_xxx"
 }
 ```
 
@@ -226,13 +229,16 @@
 
 #### `POST /auth/login`
 
+当 `login_captcha_enabled=true` 且当前账号/IP 在 5 分钟窗口内的失败次数达到 `login_failure_threshold` 时，登录请求必须携带有效的 `captcha_token`。该阈值只能设置为 `1` 到 `4`，低于原有第 `5` 次失败后的临时账户锁定阈值。
+
 请求：
 
 ```json
 {
   "username": "alice",
   "password": "password123",
-  "remember": true
+  "remember": true,
+  "captcha_token": "cap_xxx"
 }
 ```
 
@@ -281,6 +287,20 @@
   "purpose": "register"
 }
 ```
+
+#### 滑块验证接口
+
+`GET /auth/captcha/slider` 公开返回一次拼图挑战，包含 `challenge_id`、背景和拼图 data URL、图片尺寸以及拼图纵向位置。浏览器按实际拖动位置调用：
+
+```json
+POST /auth/captcha/slider/verify
+{
+  "challenge_id": "...",
+  "x": 132.5
+}
+```
+
+验证成功返回 `{ "ok": true, "captcha_token": "cap_xxx" }`；失败、过期、来源地址不一致或重复挑战返回 `400 CAPTCHA_FAILED`。挑战和凭证均不持久化，应用重启后自动失效。
 
 响应：
 
@@ -727,6 +747,22 @@
 
 兑换时会在同一事务中完成兑换码核销、用户权益发放和钱包流水写入；任一步失败都会回滚。
 
+#### `DELETE /wallet/redeem-codes/{code_id}`
+
+- 权限：`wallet:changes:write`
+- 删除指定兑换码。被删除的兑换码不能再兑换；既有钱包流水保留。
+
+#### `POST /wallet/redeem-codes/batch-delete`
+
+- 权限：`wallet:changes:write`
+- 批量删除已选择的兑换码，最多 1000 条，`code_ids` 不能为空且会自动去重。
+
+```json
+{
+  "code_ids": ["code-id-1", "code-id-2"]
+}
+```
+
 #### `POST /wallet/redeem`
 
 - 角色：登录用户
@@ -739,6 +775,21 @@
   "code": "rc_xxx"
 }
 ```
+
+#### 兑换码分享链接
+
+管理员可在兑换码管理页复制无状态分享链接：
+
+```text
+/share/redeem#code=rc_xxx
+```
+
+- 分享链接由前端使用当前站点地址和兑换码 fragment 生成，不新增分享记录或分享接口。
+- `code` 位于 URL fragment，浏览器请求页面或后端 API 时不会把它发送给服务器；分享页只在浏览器本地读取。
+- 已登录用户打开链接后直接调用现有 `POST /wallet/redeem`，与钱包页手动兑换使用同一套校验、核销、权益发放和流水事务。
+- 未登录用户的兑换码只暂存在当前标签页的 `sessionStorage` 中，登录后返回 `/share/redeem` 并自动完成兑换；兑换码不会放入登录请求 URL。
+- 兑换码仍受原有状态、有效期和最大使用次数约束；停用、过期或耗尽后，分享链接会按原兑换接口返回失败。
+- 自动兑换成功后，分享页清除地址 fragment 和会话暂存，并展示兑换结果；失败时不改变钱包数据，可在当前页面重新尝试。
 
 ### 4.7 使用日志
 

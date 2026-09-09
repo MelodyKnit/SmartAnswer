@@ -61,6 +61,7 @@ export const authApi = {
     email?: string
     email_code?: string
     invite_code?: string
+    captcha_token?: string
   }) => api.post<{ ok: true; user: User }>('/auth/register', body),
   sendEmailVerificationCode: (body: { email: string; purpose?: 'register' }) =>
     api.post<{ ok: true; message: string; cooldown_seconds: number }>('/auth/email-verification-codes', {
@@ -76,8 +77,30 @@ export const authApi = {
       email_registration_mode: 'optional' | 'required' | 'verified'
       email_verification_enabled: boolean
       email_required: boolean
+      registration_captcha_enabled: boolean
+      login_captcha_enabled: boolean
+      login_failure_threshold: number
     }>('/auth/register-status'),
-  login: (body: { username: string; password: string; remember: boolean }) =>
+  sliderCaptchaChallenge: () =>
+    api.get<{
+      ok: true
+      challenge_id: string
+      bg_image: string
+      puzzle_image: string
+      y: number
+      width: number
+      height: number
+      puzzle_width: number
+      puzzle_height: number
+    }>('/auth/captcha/slider'),
+  verifySliderCaptcha: (body: { challenge_id: string; x: number }) =>
+    api.post<{ ok: true; captcha_token: string }>('/auth/captcha/slider/verify', body),
+  login: (body: {
+    username: string
+    password: string
+    remember: boolean
+    captcha_token?: string
+  }) =>
     api.post<{ ok: true; user: User; token: string; expires_in: number }>('/auth/login', body),
   session: () => api.get<{ ok: true; user: User }>('/auth/session'),
   logout: () => api.post<{ ok: true }>('/auth/logout'),
@@ -421,6 +444,10 @@ export const walletApi = {
     code?: string
     count?: number
   }) => api.post<{ ok: true; redeem_code: RedeemCode }>('/wallet/redeem-codes', body),
+  deleteRedeemCode: (codeId: string) =>
+    api.delete<{ ok: true; message: string }>(`/wallet/redeem-codes/${encodeURIComponent(codeId)}`),
+  batchDeleteRedeemCodes: (codeIds: string[]) =>
+    api.post<{ ok: true; deleted_count: number }>('/wallet/redeem-codes/batch-delete', { code_ids: codeIds }),
   redeem: (code: string) =>
     api.post<{ ok: true; order: WalletOrder; wallet: WalletSummary; user?: User }>('/wallet/redeem', { code }),
 }

@@ -5,16 +5,18 @@ from __future__ import annotations
 import secrets
 import time
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Body, Request
 from starlette.responses import JSONResponse
 
 from ....auth import AuthError
 from ....auth.email_verification import EmailVerificationService, normalize_email
+from ....auth.security import THROTTLE_MAX_FAILURES
 from ....platform.wallet.records import WalletOrderRecord
 from ...dependencies import (
     get_auth_service,
     get_notification_service,
     get_settings_service,
+    get_slider_captcha_service,
     get_wallet_service,
 )
 from ...security import (
@@ -31,12 +33,27 @@ from .schemas import (
     RegisterPayload,
     ResetConfirmPayload,
     ResetRequestPayload,
+    SliderVerifyPayload,
 )
 
 
 def build_auth_router() -> APIRouter:
     """构建认证域路由。"""
     router = APIRouter()
+
+    def client_ip(request: Request) -> str:
+        return request.client.host if request.client else ""
+
+    def is_config_enabled(config: dict, key: str, *, default: bool) -> bool:
+        value = str(config.get(key, "true" if default else "false")).strip().lower()
+        return value not in {"0", "false", "no", "off", "disabled"}
+
+    def login_failure_threshold(config: dict) -> int:
+        try:
+            value = int(config.get("login_failure_threshold") or 2)
+        except (TypeError, ValueError):
+            value = 2
+        return min(max(value, 1), THROTTLE_MAX_FAILURES - 1)
 
     @router.get("/auth/session")
     def session(request: Request) -> JSONResponse:
@@ -45,8 +62,35 @@ def build_auth_router() -> APIRouter:
             return unauthorized_response("请先登录")
         return JSONResponse({"ok": True, "user": user})
 
+    @router.get("/auth/captcha/slider")
+    def slider_captcha_challenge(request: Request) -> JSONResponse:
+        """生成一个滑块拼图挑战。"""
+        slider_service = get_slider_captcha_service(request)
+        challenge = slider_service.create_challenge(client_ip=client_ip(request))
+        return JSONResponse({"ok": True, **challenge})
+
+    @router.post("/auth/captcha/slider/verify")
+    def slider_captcha_verify(request: Request, payload: SliderVerifyPayload) -> JSONResponse:
+        """核验滑块拖拽偏移量。"""
+        slider_service = get_slider_captcha_service(request)
+        captcha_token = slider_service.verify_challenge(
+            payload.challenge_id, payload.x, client_ip=client_ip(request)
+        )
+        if captcha_token is None:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": {"code": "CAPTCHA_FAILED", "message": "滑块验证未通过，请重试"},
+                },
+                status_code=400,
+            )
+        return JSONResponse({"ok": True, "captcha_token": captcha_token})
+
     @router.post("/auth/register")
-    def register(request: Request, payload: RegisterPayload) -> JSONResponse:
+    def register(
+        request: Request,
+        payload: RegisterPayload = Body(default_factory=RegisterPayload),
+    ) -> JSONResponse:
         auth = get_auth_service(request)
         platform = get_settings_service(request)
         notification_service = get_notification_service(request)
@@ -56,6 +100,26 @@ def build_auth_router() -> APIRouter:
                     "REGISTRATION_DISABLED", "系统已关闭用户注册", http_status=403
                 )
             )
+        # 检查是否启用了注册滑块验证
+        sys_config = platform.get_system_config()
+        reg_captcha_enabled = is_config_enabled(
+            sys_config, "registration_captcha_enabled", default=False
+        )
+        captcha_token_str = payload.get_clean_captcha_token()
+        if reg_captcha_enabled:
+            if not captcha_token_str:
+                return JSONResponse(
+                    {"ok": False, "error": {"code": "CAPTCHA_REQUIRED", "message": "请先完成滑块验证"}},
+                    status_code=400,
+                )
+            slider_service = get_slider_captcha_service(request)
+            if not slider_service.consume_token(
+                captcha_token_str, client_ip=client_ip(request)
+            ):
+                return JSONResponse(
+                    {"ok": False, "error": {"code": "CAPTCHA_INVALID", "message": "滑块验证凭证已失效，请重新验证"}},
+                    status_code=400,
+                )
         try:
             email_code_record = None
             verification = None
@@ -196,32 +260,91 @@ def build_auth_router() -> APIRouter:
     def register_status(request: Request) -> JSONResponse:
         auth = get_auth_service(request)
         platform = get_settings_service(request)
-        config_enabled = platform.is_registration_enabled()
+        registration_config_enabled = platform.is_registration_enabled()
         first_user_allowed = not auth.has_users()
+        sys_config = platform.get_system_config()
         return JSONResponse(
             {
                 "ok": True,
-                "registration_enabled": config_enabled or first_user_allowed,
-                "config_enabled": config_enabled,
+                "registration_enabled": registration_config_enabled or first_user_allowed,
+                "config_enabled": registration_config_enabled,
                 "first_user_allowed": first_user_allowed,
                 "email_registration_mode": platform.get_registration_email_mode(),
                 "email_verification_enabled": platform.is_email_verification_enabled(),
                 "email_required": platform.is_registration_email_required(),
+                "registration_captcha_enabled": is_config_enabled(
+                    sys_config, "registration_captcha_enabled", default=False
+                ),
+                "login_captcha_enabled": is_config_enabled(
+                    sys_config, "login_captcha_enabled", default=True
+                ),
+                "login_failure_threshold": login_failure_threshold(sys_config),
             }
         )
 
     @router.post("/auth/login")
-    def login(request: Request, payload: LoginPayload) -> JSONResponse:
+    def login(
+        request: Request,
+        payload: LoginPayload = Body(default_factory=LoginPayload),
+    ) -> JSONResponse:
         auth = get_auth_service(request)
+        platform = get_settings_service(request)
+        current_client_ip = client_ip(request)
+        login_id = (payload.username or "").strip()
+        throttle_key = f"{login_id}\n{current_client_ip}"
+        fail_count = auth.get_failure_count(throttle_key)
+
+        sys_config = platform.get_system_config()
+        login_captcha_enabled = is_config_enabled(
+            sys_config, "login_captcha_enabled", default=True
+        )
+        threshold = login_failure_threshold(sys_config)
+
+        require_captcha = login_captcha_enabled and fail_count >= threshold
+        captcha_token_str = payload.get_clean_captcha_token()
+        if require_captcha:
+            if not captcha_token_str:
+                return JSONResponse(
+                    {
+                        "ok": False,
+                        "error": {"code": "CAPTCHA_REQUIRED", "message": "登录失败次数过多，请输入滑块验证码"},
+                        "require_captcha": True,
+                        "fail_count": fail_count,
+                    },
+                    status_code=400,
+                )
+            slider_service = get_slider_captcha_service(request)
+            if not slider_service.consume_token(
+                captcha_token_str, client_ip=current_client_ip
+            ):
+                return JSONResponse(
+                    {
+                        "ok": False,
+                        "error": {"code": "CAPTCHA_INVALID", "message": "滑块验证已失效或超时，请重新滑动"},
+                        "require_captcha": True,
+                        "fail_count": fail_count,
+                    },
+                    status_code=400,
+                )
+
         try:
             token, user, ttl = auth.login(
                 payload.username,
                 payload.password,
                 remember=payload.remember,
-                client_ip=request.client.host if request.client else "",
+                client_ip=current_client_ip,
             )
         except AuthError as exc:
-            return auth_error_response(exc)
+            new_fail_count = auth.get_failure_count(throttle_key)
+            new_require_captcha = login_captcha_enabled and new_fail_count >= threshold
+            data = {
+                "ok": False,
+                "error": {"code": exc.code, "message": exc.message},
+                "require_captcha": new_require_captcha,
+                "fail_count": new_fail_count,
+            }
+            return JSONResponse(data, status_code=exc.http_status)
+
         response = JSONResponse(
             {"ok": True, "user": user, "token": token, "expires_in": ttl}
         )

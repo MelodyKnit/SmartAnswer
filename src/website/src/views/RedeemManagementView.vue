@@ -1,11 +1,13 @@
 <script setup lang="ts">
 /** 兑换管理：管理员维护兑换码、手动发放权益，并查看全局兑换/权益变更记录。 */
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { QuestionFilled } from '@element-plus/icons-vue'
 import { billingApi, walletApi } from '@/api/endpoints'
 import type { RedeemCode, WalletOrder } from '@/api/types'
 import { ApiException } from '@/api/http'
 import { formatDateTime, walletSourceLabel } from '@/utils/format'
+import { buildRedeemShareUrl } from '@/utils/redeem-share'
 import PageHeader from '@/components/PageHeader.vue'
 import { DEFAULT_PAGE_SIZE } from '@/config/constants'
 
@@ -13,6 +15,8 @@ const loading = ref(false)
 const codesLoading = ref(false)
 const orders = ref<WalletOrder[]>([])
 const codes = ref<RedeemCode[]>([])
+const selectedCodes = ref<RedeemCode[]>([])
+const batchDeleting = ref(false)
 const page = ref(1)
 const total = ref(0)
 
@@ -120,8 +124,60 @@ function codeExpiryTimestamp() {
   return timestamp
 }
 
+function handleCodeSelectionChange(rows: RedeemCode[]) {
+  selectedCodes.value = rows
+}
+
+async function deleteCode(row: RedeemCode) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除兑换码「${row.code}」吗？删除后将无法再使用该兑换码进行兑换。`,
+      '删除确认',
+      {
+        type: 'warning',
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+      }
+    )
+  } catch {
+    return
+  }
+  try {
+    await walletApi.deleteRedeemCode(row.code_id)
+    ElMessage.success('兑换码已删除')
+    await loadCodes()
+  } catch (error) {
+    ElMessage.error(error instanceof ApiException ? error.message : '删除失败')
+  }
+}
+
+async function batchDeleteCodes() {
+  if (!selectedCodes.value.length) return
+  try {
+    await ElMessageBox.confirm(
+      `确定批量删除选中的 ${selectedCodes.value.length} 个兑换码吗？删除后将无法恢复。`,
+      '批量删除确认',
+      { type: 'warning', confirmButtonText: '批量删除', cancelButtonText: '取消' }
+    )
+  } catch {
+    return
+  }
+  batchDeleting.value = true
+  try {
+    const ids = selectedCodes.value.map((c) => c.code_id)
+    const res = await walletApi.batchDeleteRedeemCodes(ids)
+    ElMessage.success(`已删除 ${res.deleted_count} 个兑换码`)
+    await loadCodes()
+  } catch (error) {
+    ElMessage.error(error instanceof ApiException ? error.message : '批量删除失败')
+  } finally {
+    batchDeleting.value = false
+  }
+}
+
 async function loadCodes() {
   codesLoading.value = true
+  selectedCodes.value = []
   try {
     const res = await walletApi.redeemCodes()
     codes.value = res.redeem_codes
@@ -250,6 +306,16 @@ async function copyCode(code: string) {
   }
 }
 
+async function shareCode(code: string) {
+  const shareUrl = buildRedeemShareUrl(window.location.origin, code)
+  try {
+    await navigator.clipboard.writeText(shareUrl)
+    ElMessage.success('兑换分享链接已复制')
+  } catch {
+    ElMessage.warning('分享链接复制失败，请检查浏览器剪贴板权限')
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -282,13 +348,35 @@ onMounted(load)
                 <div class="text-base font-semibold text-ink">兑换码列表</div>
                 <div class="mt-1 text-sm text-ink-soft">支持积分类型与天数类型兑换码的生成与维护。</div>
               </div>
-              <el-button type="primary" :icon="'Plus'" @click="codeVisible = true">创建兑换码</el-button>
+              <div class="flex items-center gap-2">
+                <el-button
+                  v-if="selectedCodes.length"
+                  type="danger"
+                  plain
+                  :loading="batchDeleting"
+                  :icon="'Delete'"
+                  @click="batchDeleteCodes"
+                >
+                  批量删除 ({{ selectedCodes.length }})
+                </el-button>
+                <el-button type="primary" :icon="'Plus'" @click="codeVisible = true">创建兑换码</el-button>
+              </div>
             </div>
-            <el-table v-loading="codesLoading" :data="codes" style="width: 100%">
+            <el-table v-loading="codesLoading" :data="codes" style="width: 100%" @selection-change="handleCodeSelectionChange">
+              <el-table-column type="selection" width="45" align="center" />
               <el-table-column label="兑换码" min-width="220">
                 <template #default="{ row }">
                   <code class="rounded bg-canvas px-2 py-1 text-xs font-mono font-bold select-all">{{ row.code }}</code>
                   <el-button link type="primary" size="small" class="ml-2" @click="copyCode(row.code)">复制</el-button>
+                  <el-button
+                    link
+                    type="primary"
+                    size="small"
+                    :icon="'Share'"
+                    @click="shareCode(row.code)"
+                  >
+                    分享
+                  </el-button>
                 </template>
               </el-table-column>
               <el-table-column label="类型与面值" width="160" align="center">
@@ -312,7 +400,7 @@ onMounted(load)
                   </el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="有效期" min-width="170" align="center">
+              <el-table-column label="兑换截止时间" min-width="170" align="center">
                 <template #default="{ row }">
                   <el-tag v-if="!row.expires_at" size="small" type="info" effect="plain">永久有效</el-tag>
                   <el-tag v-else-if="isRedeemCodeExpired(row)" size="small" type="danger" effect="light">已过期</el-tag>
@@ -322,6 +410,11 @@ onMounted(load)
               <el-table-column label="创建人" width="140" prop="created_by" align="center" />
               <el-table-column label="创建时间" min-width="170" align="right">
                 <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
+              </el-table-column>
+              <el-table-column label="操作" width="80" align="center">
+                <template #default="{ row }">
+                  <el-button link type="danger" size="small" @click="deleteCode(row)">删除</el-button>
+                </template>
               </el-table-column>
               <template #empty><el-empty description="暂无兑换码" /></template>
             </el-table>
@@ -449,25 +542,46 @@ onMounted(load)
             <el-radio-button value="manual">手动填写</el-radio-button>
           </el-radio-group>
         </el-form-item>
-        <el-form-item v-if="codeForm.mode === 'manual'" label="兑换码名称">
+        <el-form-item v-if="codeForm.mode === 'manual'">
+          <template #label>
+            <div class="inline-flex items-center gap-1">
+              <span>兑换码名称</span>
+              <el-tooltip content="只支持字母、数字、下划线及连字符。" placement="top">
+                <el-icon :size="11" class="cursor-pointer text-ink-muted/60 hover:text-ink transition-colors"><QuestionFilled /></el-icon>
+              </el-tooltip>
+            </div>
+          </template>
           <el-input v-model="codeForm.code" placeholder="输入自定义兑换码，如 WELCOME_2026" maxlength="64" show-word-limit />
-          <div class="mt-1 text-xs text-ink-muted">只支持字母、数字、下划线及连字符。</div>
         </el-form-item>
         <el-form-item v-if="codeForm.mode === 'random'" label="创建数量">
           <el-input-number v-model="codeForm.count" :min="1" :max="1000" class="w-full" />
-          <div class="mt-1 text-xs text-ink-muted">设置本次批量随机生成的兑换码个数。</div>
         </el-form-item>
         <el-form-item v-if="codeForm.kind === 'points'" label="积分数量">
           <el-input-number v-model="codeForm.points" :min="1" class="w-full" />
         </el-form-item>
-        <el-form-item v-else label="有效天数 (天)">
+        <el-form-item v-else>
+          <template #label>
+            <div class="inline-flex items-center gap-1">
+              <span>无限使用天数 (天)</span>
+              <el-tooltip content="用户兑换后，将在其账号上开通或顺延对应天数的无限制搜题使用时长。" placement="top">
+                <el-icon :size="11" class="cursor-pointer text-ink-muted/60 hover:text-ink transition-colors"><QuestionFilled /></el-icon>
+              </el-tooltip>
+            </div>
+          </template>
           <el-input-number v-model="codeForm.days" :min="1" class="w-full" />
-          <div class="mt-1 text-xs text-ink-muted">用户兑换后增加对应的有效天数。</div>
         </el-form-item>
         <el-form-item label="可用次数">
           <el-input-number v-model="codeForm.max_uses" :min="1" class="w-full" />
         </el-form-item>
-        <el-form-item label="有效期">
+        <el-form-item>
+          <template #label>
+            <div class="inline-flex items-center gap-1">
+              <span>兑换截止时间 (兑换码有效期)</span>
+              <el-tooltip content="该兑换码本身的有效截止时间，逾期将失效无法兑换；留空表示该码永久有效。" placement="top">
+                <el-icon :size="11" class="cursor-pointer text-ink-muted/60 hover:text-ink transition-colors"><QuestionFilled /></el-icon>
+              </el-tooltip>
+            </div>
+          </template>
           <el-date-picker
             v-model="codeForm.expires_at_ms"
             type="datetime"
@@ -476,7 +590,6 @@ onMounted(load)
             clearable
             class="w-full"
           />
-          <div class="mt-1 text-xs text-ink-muted">留空表示永久有效，设置后到期将无法兑换。</div>
         </el-form-item>
       </el-form>
       <template #footer>

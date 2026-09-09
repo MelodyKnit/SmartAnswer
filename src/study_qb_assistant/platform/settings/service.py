@@ -336,6 +336,20 @@ class SettingsService(PlatformDomainService):
                         "注册邮箱策略必须为 optional、required 或 verified",
                         http_status=400,
                     )
+            elif key == "login_failure_threshold":
+                try:
+                    parsed = int(text or SYSTEM_CONFIG_DEFAULTS[key])
+                except ValueError as exc:
+                    raise AuthError(
+                        "INVALID_INPUT", "登录验证码触发次数必须为有效整数", http_status=400
+                    ) from exc
+                if parsed < 1 or parsed > 4:
+                    raise AuthError(
+                        "INVALID_INPUT",
+                        "登录验证码触发次数必须在 1 到 4 次之间",
+                        http_status=400,
+                    )
+                text = str(parsed)
             elif key == "invite_reward_mode":
                 text = text.lower() or SYSTEM_CONFIG_DEFAULTS["invite_reward_mode"]
                 if text not in INVITE_REWARD_MODES:

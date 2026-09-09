@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /** 注册页：用户名、密码、邮箱策略与邀请码。 */
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { FormInstance, FormItemRule, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
@@ -8,6 +8,7 @@ import { useAuthStore } from '@/stores/auth'
 import { ApiException } from '@/api/http'
 import { authApi } from '@/api/endpoints'
 import AuthShell from './AuthShell.vue'
+import SliderCaptcha from '@/components/auth/SliderCaptcha.vue'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -18,6 +19,8 @@ const loading = ref(false)
 const registrationEnabled = ref(true)
 const emailRegistrationMode = ref<'optional' | 'required' | 'verified'>('optional')
 const emailVerificationEnabled = ref(false)
+const registrationCaptchaEnabled = ref(false)
+const captchaRef = ref<InstanceType<typeof SliderCaptcha>>()
 const statusLoading = ref(false)
 const sendingEmailCode = ref(false)
 const emailCountdown = ref(0)
@@ -29,6 +32,7 @@ const form = reactive({
   email: '',
   email_code: '',
   invite_code: '',
+  captcha_token: '',
 })
 
 const emailRequired = computed(() => emailRegistrationMode.value !== 'optional')
@@ -47,10 +51,12 @@ onMounted(async () => {
     registrationEnabled.value = status.registration_enabled
     emailRegistrationMode.value = status.email_registration_mode
     emailVerificationEnabled.value = status.email_verification_enabled
+    registrationCaptchaEnabled.value = status.registration_captcha_enabled
   } catch {
     registrationEnabled.value = true
     emailRegistrationMode.value = 'optional'
     emailVerificationEnabled.value = false
+    registrationCaptchaEnabled.value = false
   } finally {
     statusLoading.value = false
   }
@@ -122,6 +128,11 @@ function startEmailCountdown(seconds = 60) {
   }, 1000)
 }
 
+function resetCaptcha() {
+  form.captcha_token = ''
+  void nextTick(() => captchaRef.value?.reset())
+}
+
 async function sendEmailCode() {
   if (!registrationEnabled.value) {
     ElMessage.warning('系统已关闭用户注册')
@@ -170,6 +181,10 @@ async function submit() {
   if (!formRef.value) return
   const valid = await formRef.value.validate().catch(() => false)
   if (!valid) return
+  if (registrationCaptchaEnabled.value && !form.captcha_token) {
+    ElMessage.warning('请先完成滑块验证')
+    return
+  }
   loading.value = true
   try {
     await auth.register(
@@ -178,10 +193,18 @@ async function submit() {
       form.email || undefined,
       form.invite_code || undefined,
       form.email_code || undefined,
+      form.captcha_token || undefined,
     )
     ElMessage.success('注册成功，请登录')
     router.replace({ name: 'login' })
   } catch (err) {
+    if (
+      registrationCaptchaEnabled.value &&
+      err instanceof ApiException &&
+      ['CAPTCHA_REQUIRED', 'CAPTCHA_INVALID'].includes(err.code)
+    ) {
+      resetCaptcha()
+    }
     ElMessage.error(err instanceof ApiException ? err.message : '注册失败')
   } finally {
     loading.value = false
@@ -245,6 +268,9 @@ async function submit() {
       </el-form-item>
       <el-form-item prop="invite_code">
         <el-input v-model="form.invite_code" placeholder="邀请码（可选，填写后按当前系统策略发放奖励）" :prefix-icon="'Promotion'" @keyup.enter="submit" />
+      </el-form-item>
+      <el-form-item v-if="registrationCaptchaEnabled">
+        <SliderCaptcha ref="captchaRef" :disabled="loading || statusLoading" @verified="form.captcha_token = $event" />
       </el-form-item>
       <el-button
         type="primary"

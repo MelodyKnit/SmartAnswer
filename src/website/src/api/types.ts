@@ -364,6 +364,9 @@ export interface SystemConfig {
   image_generation_retention_days?: string
   answer_retry_times?: string
   registration_enabled?: string
+  registration_captcha_enabled?: string
+  login_captcha_enabled?: string
+  login_failure_threshold?: string
   registration_email_mode?: 'optional' | 'required' | 'verified'
   email_verification_enabled?: string
   smtp_host?: string

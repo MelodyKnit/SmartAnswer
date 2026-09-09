@@ -33,5 +33,5 @@ def hash_password(password: str, salt_hex: str) -> str:
 
 
 def hash_token(token: str) -> str:
-    """对令牌做 SHA-256 摘要，避免明文令牌落盘。"""
+    """对令牌做 SHA-256 摘要，作为鉴权查询索引。"""
     return hashlib.sha256(token.encode("utf-8")).hexdigest()

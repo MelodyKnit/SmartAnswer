@@ -5,7 +5,7 @@
 ## 快速入口
 
 - [环境与依赖](setup/environment.md)：Conda、Node.js、开发服务与环境变量。
-- [部署说明](deployment.md)：Docker Compose、运行数据和生产部署检查。
+- [部署说明](setup/deployment.md)：Docker Compose、运行数据和生产部署检查。
 - [系统架构](architecture/architecture.md)：模块边界、运行时组装和主要数据流。
 - [API 契约](architecture/api-contract.md)：`/api/v1`、`/ocs/query` 与主要请求响应约定。
 - [验收流程](process/acceptance.md)：本地与发布前验证路径。
@@ -13,6 +13,7 @@
 ## 架构与平台
 
 - [系统设计规范](architecture/system-design-specification.md)
+- [UI 设计规范](architecture/ui-design-spec.md)
 - [工作台接口覆盖](architecture/dashboard-interface-coverage.md)
 - [技术栈决策](architecture/stack-decision.md)
 

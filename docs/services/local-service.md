@@ -117,9 +117,13 @@ OCS 或 /query 请求
 - `POST /wallet/grants`
 - `GET /wallet/redeem-codes`
 - `POST /wallet/redeem-codes`
+- `DELETE /wallet/redeem-codes/{code_id}`
+- `POST /wallet/redeem-codes/batch-delete`
 - `POST /wallet/redeem`
 
 钱包兑换支持 `points` 和 `days` 两类权益。天数权益会记录到期时间并只免除查题积分扣费；兑换码核销、权益变更和钱包流水在同一事务中完成。
+
+兑换码管理页可直接复制 `/share/redeem#code=...` 分享链接。分享页不向服务端提交 fragment 中的兑换码；登录用户复用 `POST /wallet/redeem` 自动兑换，未登录用户在当前标签页暂存兑换码，登录后自动续接。分享链接不单独设置期限，兑换码原有的有效期、使用次数和状态规则继续生效。
 - `GET /import-scripts`
 - `POST /import-scripts/generate`
 - `GET /import-scripts/{script_id}`

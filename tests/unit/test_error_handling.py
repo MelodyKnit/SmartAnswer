@@ -65,6 +65,21 @@ class GlobalExceptionHandlerTests(unittest.TestCase):
             "http://localhost:5175",
         )
 
+    def test_cors_preflight_advertises_all_used_mutation_methods(self) -> None:
+        response = self._client().options(
+            "/wallet/redeem-codes/example",
+            headers={
+                "Origin": "http://localhost:5175",
+                "Access-Control-Request-Method": "DELETE",
+            },
+        )
+
+        self.assertEqual(response.status_code, 204)
+        methods = response.headers.get("access-control-allow-methods", "")
+        self.assertIn("PATCH", methods)
+        self.assertIn("PUT", methods)
+        self.assertIn("DELETE", methods)
+
 
 class _FakeCapabilitiesService:
     """get_capabilities 抛出领域错误的假 service。"""

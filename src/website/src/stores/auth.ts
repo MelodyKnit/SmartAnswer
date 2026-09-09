@@ -31,8 +31,18 @@ export const useAuthStore = defineStore('auth', () => {
     return required.some((permission) => hasPermission(permission))
   }
 
-  async function login(username: string, password: string, remember: boolean): Promise<void> {
-    const res = await authApi.login({ username, password, remember })
+  async function login(
+    username: string,
+    password: string,
+    remember: boolean,
+    captchaToken?: string,
+  ): Promise<void> {
+    const res = await authApi.login({
+      username,
+      password,
+      remember,
+      captcha_token: captchaToken || undefined,
+    })
     setToken(res.token)
     user.value = res.user
     await refreshProfile()
@@ -45,6 +55,7 @@ export const useAuthStore = defineStore('auth', () => {
     email?: string,
     inviteCode?: string,
     emailCode?: string,
+    captchaToken?: string,
   ): Promise<User> {
     const res = await authApi.register({
       username,
@@ -52,6 +63,7 @@ export const useAuthStore = defineStore('auth', () => {
       email,
       invite_code: inviteCode || undefined,
       email_code: emailCode || undefined,
+      captcha_token: captchaToken || undefined,
     })
     return res.user
   }

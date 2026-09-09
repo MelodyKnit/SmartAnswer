@@ -90,7 +90,7 @@ http://127.0.0.1:8765/query?title=...&options=A.xxx#B.xxx#C.xxx#D.xxx&type=singl
 }
 ```
 
-开箱即用的本地配置产物是 [ocs-local-study-bank.json](../configs/ocs-local-study-bank.json)。
+开箱即用的本地配置产物是 [ocs-local-study-bank.json](../../configs/ocs-local-study-bank.json)。
 
 服务运行时，它也会在以下地址提供相同的源配置结构：
 
@@ -101,7 +101,7 @@ http://127.0.0.1:8765/api/v1/configs/ocs-local-study-bank.json
 要为其他主机或端口生成相同的结构：
 
 ```powershell
-手动修改 [configs/ocs-local-study-bank.json](../configs/ocs-local-study-bank.json) 中的 base URL
+手动修改 [configs/ocs-local-study-bank.json](../../configs/ocs-local-study-bank.json) 中的 base URL
 ```
 
 适配器逻辑应保留 `confidence`、`review_required` 和 `sources`，以便用户可以看到结果的来源。

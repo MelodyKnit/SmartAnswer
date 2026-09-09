@@ -21,6 +21,7 @@ from ...security import (
 )
 from .schemas import (
     BillingPayload,
+    RedeemCodeBatchDeletePayload,
     RedeemCodePayload,
     WalletGrantPayload,
     WalletRedeemPayload,
@@ -95,7 +96,10 @@ def build_wallet_router() -> APIRouter:
             offset=offset,
         )
         total = wallet_service.count_wallet_orders(
-            username=scoped_username, kind=kind.strip(), source=source.strip()
+            username=scoped_username,
+            kind=kind.strip(),
+            source=source.strip(),
+            excluded_sources=() if source.strip() else ("image_generation", "image_generation_refund"),
         )
         return JSONResponse(
             {"ok": True, "orders": orders, "total": total, "page": page, "limit": limit}
@@ -189,6 +193,30 @@ def build_wallet_router() -> APIRouter:
         except AuthError as exc:
             return auth_error_response(exc)
         return JSONResponse({"ok": True, "redeem_code": code})
+
+    @router.delete("/wallet/redeem-codes/{code_id}")
+    def wallet_redeem_code_delete(request: Request, code_id: str) -> JSONResponse:
+        denied = require_permissions(request, {"wallet:changes:write"})
+        if denied:
+            return denied
+        wallet_service = get_wallet_service(request)
+        if not wallet_service.delete_redeem_code(code_id):
+            return JSONResponse(
+                {"ok": False, "error": {"code": "NOT_FOUND", "message": "兑换码不存在"}},
+                status_code=404,
+            )
+        return JSONResponse({"ok": True, "message": "兑换码已删除"})
+
+    @router.post("/wallet/redeem-codes/batch-delete")
+    def wallet_redeem_codes_batch_delete(
+        request: Request, payload: RedeemCodeBatchDeletePayload
+    ) -> JSONResponse:
+        denied = require_permissions(request, {"wallet:changes:write"})
+        if denied:
+            return denied
+        wallet_service = get_wallet_service(request)
+        deleted_count = wallet_service.delete_redeem_codes(payload.code_ids)
+        return JSONResponse({"ok": True, "deleted_count": deleted_count})
 
     @router.post("/wallet/redeem")
     def wallet_redeem(request: Request, payload: WalletRedeemPayload) -> JSONResponse:

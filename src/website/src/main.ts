@@ -36,7 +36,9 @@ const authStore = useAuthStore(pinia)
 registerUnauthorizedHandler(() => {
   authStore.reset()
   if (router.currentRoute.value.meta.public !== true) {
-    router.replace({ name: 'login', query: { redirect: router.currentRoute.value.fullPath } })
+    // Fragment 可能携带 API Key 或兑换码，不得进入登录页 URL 或后续请求。
+    const redirect = router.currentRoute.value.fullPath.split('#', 1)[0] || '/'
+    router.replace({ name: 'login', query: { redirect } })
   }
 })
 

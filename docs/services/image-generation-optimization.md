@@ -241,12 +241,10 @@ docker compose --env-file .env.release up -d --no-build
 ## 📞 支持
 
 如有问题或建议，请：
-- 查看在线文档：[docs/services/image-generation.md](docs/services/image-generation.md)
+- 查看服务文档：[image-generation.md](image-generation.md)
 - 提交Issue：GitHub Issues
 - 联系管理员
 
 ---
 
-**优化完成时间**：2026-07-31  
-**版本**：v0.3.3（建议）  
-**作者**：Claude Code
+**优化记录时间**：2026-07-31

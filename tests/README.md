@@ -6,6 +6,7 @@
   由 pytest 自动收集运行，包含断言，作为回归保护。
 - **主动调用脚本**：`tests/manual/` 下的脚本，需要手动执行，
   通常以 print 输出结果用于联调、验证或探索，**不参与 pytest 自动收集**。其中可能包含测试模型配置或测试 SQL，严禁用于生产数据库和 `deploy-data`。
+  前端无独立测试框架时，纯浏览器工具函数的轻量 Node 断言也放在这里。
 
 ## 常用命令
 
@@ -19,6 +20,8 @@ conda run -n ai-study-qb pytest -q
 
 ```powershell
 conda run -n ai-study-qb python tests/manual/test_size_inference_simple.py
+
+node --experimental-strip-types --test tests/manual/test_redeem_share.mjs
 ```
 
 ## 目录结构

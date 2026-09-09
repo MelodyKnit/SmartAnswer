@@ -22,6 +22,9 @@ class SystemConfigPayload(BaseModel):
     image_generation_daily_limit: str | None = None
     image_generation_retention_days: str | None = None
     registration_enabled: str | None = None
+    registration_captcha_enabled: str | None = None
+    login_captcha_enabled: str | None = None
+    login_failure_threshold: str | None = None
     registration_email_mode: str | None = None
     email_verification_enabled: str | None = None
     smtp_host: str | None = None

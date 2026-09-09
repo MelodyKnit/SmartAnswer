@@ -9,6 +9,7 @@ from fastapi import Depends, Request
 from ..adapters.ocs import OcsIntegrationPort
 from ..answering import AnswerService
 from ..auth import AuthService
+from ..auth.slider_captcha import SliderCaptchaService
 from ..llm.management import LlmManagementService
 from ..platform.container import PlatformServices
 from ..platform.announcements import AnnouncementService
@@ -40,6 +41,16 @@ def get_auth_service(request: Request) -> AuthService:
     """返回当前应用挂载的鉴权服务。"""
 
     return request.app.state.auth
+
+
+def get_slider_captcha_service(request: Request) -> SliderCaptchaService:
+    """返回滑动拼图验证码服务实例。"""
+
+    service = getattr(request.app.state, "slider_captcha", None)
+    if service is None:
+        service = SliderCaptchaService()
+        request.app.state.slider_captcha = service
+    return service
 
 
 def get_platform_services(request: Request) -> PlatformServices:

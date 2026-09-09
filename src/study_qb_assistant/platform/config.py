@@ -18,6 +18,9 @@ SYSTEM_CONFIG_KEYS = {
     "image_generation_retention_days",
     "answer_retry_times",
     "registration_enabled",
+    "registration_captcha_enabled",
+    "login_captcha_enabled",
+    "login_failure_threshold",
     "registration_email_mode",
     "email_verification_enabled",
     "smtp_host",
@@ -39,6 +42,8 @@ SYSTEM_CONFIG_KEYS = {
 SYSTEM_CONFIG_BOOLEAN_KEYS = {
     "smart_proto_enabled",
     "registration_enabled",
+    "registration_captcha_enabled",
+    "login_captcha_enabled",
     "email_verification_enabled",
 }
 
@@ -85,6 +90,9 @@ SYSTEM_CONFIG_DEFAULTS = {
     "image_generation_retention_days": "30",
     "answer_retry_times": "3",
     "registration_enabled": "true",
+    "registration_captcha_enabled": "false",
+    "login_captcha_enabled": "true",
+    "login_failure_threshold": "2",
     "registration_email_mode": "optional",
     "email_verification_enabled": "false",
     "smtp_host": "",

@@ -39,6 +39,12 @@ const routes: RouteRecordRaw[] = [
     meta: { public: true, title: '分享配置' },
   },
   {
+    path: '/share/redeem',
+    name: 'share-redeem',
+    component: () => import('@/views/RedeemShareView.vue'),
+    meta: { public: true, title: '兑换码兑换' },
+  },
+  {
     path: '/',
     component: () => import('@/layouts/AppLayout.vue'),
     children: [

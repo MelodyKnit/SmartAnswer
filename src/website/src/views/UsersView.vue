@@ -258,9 +258,9 @@ onMounted(async () => {
         <el-form-item v-if="grant.kind === 'points'" label="积分数量">
           <el-input-number v-model="grant.points" :min="1" class="w-full" />
         </el-form-item>
-        <el-form-item v-else label="有效天数">
+        <el-form-item v-else label="无限使用天数 (天)">
           <el-input-number v-model="grant.days" :min="1" class="w-full" />
-          <div class="mt-1 text-xs text-ink-muted">增加的天数将自动在用户当前会员到期时间或当前时间上顺延。</div>
+          <div class="mt-1 text-xs text-ink-muted">增加的天数将自动在用户当前无限使用到期时间或当前时间上顺延。</div>
         </el-form-item>
       </el-form>
       <template #footer>

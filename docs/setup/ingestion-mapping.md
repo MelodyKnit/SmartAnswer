@@ -28,7 +28,7 @@
 
 样本源：
 
-- [anatomy.csv](../data/raw/cmmlu-upstream/data/dev/anatomy.csv)
+- `data/raw/cmmlu-upstream/data/dev/anatomy.csv`（本地可选源数据，不随仓库提交）
 
 观察到的源数据列：
 
@@ -64,7 +64,7 @@
 
 样本源：
 
-- [Advanced Mathematics-Natural Sciences-College.jsonl](../data/raw/m3ke-upstream/data/dev/Advanced%20Mathematics-Natural%20Sciences-College.jsonl)
+- `data/raw/m3ke-upstream/data/dev/Advanced Mathematics-Natural Sciences-College.jsonl`（本地可选源数据，不随仓库提交）
 
 观察到的源数据字段：
 
@@ -101,7 +101,7 @@
 
 样本源：
 
-- [gaokao-physics.jsonl](../data/raw/agieval-upstream/data/v1_1/gaokao-physics.jsonl)
+- `data/raw/agieval-upstream/data/v1_1/gaokao-physics.jsonl`（本地可选源数据，不随仓库提交）
 
 观察到的源数据字段：
 

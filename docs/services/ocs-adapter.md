@@ -23,7 +23,7 @@ http://127.0.0.1:8765/ocs/query
 
 本地配置文件：
 
-- [configs/ocs-local-study-bank.json](../configs/ocs-local-study-bank.json)
+- [configs/ocs-local-study-bank.json](../../configs/ocs-local-study-bank.json)
 
 本地服务运行时，相同的源配置也会在以下地址提供：
 
@@ -34,7 +34,7 @@ http://127.0.0.1:8765/api/v1/configs/ocs-local-study-bank.json
 为自定义主机或端口生成配置：
 
 ```powershell
-手动修改 [configs/ocs-local-study-bank.json](../configs/ocs-local-study-bank.json) 中的 base URL
+手动修改 [configs/ocs-local-study-bank.json](../../configs/ocs-local-study-bank.json) 中的 base URL
 ```
 
 配置内容：

@@ -61,6 +61,9 @@ const form = reactive({
   image_generation_retention_days: 30,
   answer_retry_times: 3,
   registration_enabled: 'true',
+  registration_captcha_enabled: 'false',
+  login_captcha_enabled: 'true',
+  login_failure_threshold: 2,
   registration_email_mode: 'optional',
   smtp_host: '',
   smtp_port: 465,
@@ -260,6 +263,9 @@ async function load() {
     form.image_generation_retention_days = Number(res.config.image_generation_retention_days || 30)
     form.answer_retry_times = Number(res.config.answer_retry_times || 3)
     form.registration_enabled = (res.config.registration_enabled as string) || 'true'
+    form.registration_captcha_enabled = (res.config.registration_captcha_enabled as string) || 'false'
+    form.login_captcha_enabled = (res.config.login_captcha_enabled as string) || 'true'
+    form.login_failure_threshold = Number(res.config.login_failure_threshold || 2)
     form.registration_email_mode = res.config.registration_email_mode || 'optional'
     form.smtp_host = (res.config.smtp_host as string) || ''
     form.smtp_port = Number(res.config.smtp_port || 465)
@@ -318,6 +324,9 @@ async function save() {
       image_generation_retention_days: String(form.image_generation_retention_days),
       answer_retry_times: String(form.answer_retry_times),
       registration_enabled: form.registration_enabled,
+      registration_captcha_enabled: form.registration_captcha_enabled,
+      login_captcha_enabled: form.login_captcha_enabled,
+      login_failure_threshold: String(form.login_failure_threshold),
       registration_email_mode: form.registration_email_mode,
       smtp_host: form.smtp_host,
       smtp_port: String(form.smtp_port),
@@ -525,6 +534,46 @@ onMounted(load)
                     <el-radio-button value="verified">邮箱必填并验证</el-radio-button>
                   </el-radio-group>
                 </el-form-item>
+                <div class="rounded-lg border border-line bg-card-soft p-4 md:col-span-2">
+                  <div class="flex flex-wrap items-start justify-between gap-4">
+                    <div>
+                      <p class="text-sm font-semibold text-ink">滑块验证码</p>
+                      <p class="mt-1 text-xs text-ink-muted">登录验证在达到失败次数后触发，注册验证可按需单独开启。</p>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-4">
+                      <div class="flex items-center gap-2 text-sm text-ink">
+                        <span>注册时验证</span>
+                        <el-switch
+                          v-model="form.registration_captcha_enabled"
+                          active-value="true"
+                          inactive-value="false"
+                        />
+                      </div>
+                      <div class="flex items-center gap-2 text-sm text-ink">
+                        <span>登录失败后验证</span>
+                        <el-switch
+                          v-model="form.login_captcha_enabled"
+                          active-value="true"
+                          inactive-value="false"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  <div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,220px)_1fr] sm:items-center">
+                    <el-form-item label="登录失败触发次数" class="mb-0">
+                      <el-input-number
+                        v-model="form.login_failure_threshold"
+                        :min="1"
+                        :max="4"
+                        :disabled="form.login_captcha_enabled !== 'true'"
+                        class="w-full"
+                      />
+                    </el-form-item>
+                    <p class="text-xs leading-5 text-ink-muted">
+                      连续失败达到此次数后，下一次登录需完成滑块验证；系统仍会在连续 5 次密码失败后执行原有临时锁定。
+                    </p>
+                  </div>
+                </div>
                 <div class="rounded-lg border border-line bg-card-soft p-4 md:col-span-2">
                   <div class="flex flex-wrap items-start justify-between gap-3">
                     <div>

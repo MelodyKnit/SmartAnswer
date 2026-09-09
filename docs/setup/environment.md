@@ -16,7 +16,7 @@
 
 主要文件：
 
-- [environment.yml](../environment.yml)
+- [environment.yml](../../environment.yml)
 
 ## 3. 引导命令
 
@@ -52,11 +52,7 @@ pre-commit install
 pre-commit run --all-files
 ```
 
-当前验证的环境：
-
-- Conda 环境：`ai-study-qb`
-- 最终验证是在 `ai-study-qb` 环境中运行的
-- 最新结果：`100` 个单元测试通过，后端 `ruff` / `mypy` 通过，前端 `npm run build` 通过
+当前验证环境为 `ai-study-qb`。实际通过数量和构建结果以每次发布前执行的测试输出为准，不在文档中固化易过期的统计数字。
 
 ## 5. 运行时依赖
 

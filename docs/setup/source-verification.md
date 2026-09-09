@@ -11,7 +11,7 @@
 ### 2.1 C-Eval
 
 - 仓库：<https://github.com/hkust-nlp/ceval>
-- 本地路径：[data/raw/ceval-upstream](../data/raw/ceval-upstream)
+- 本地路径：`data/raw/ceval-upstream`（本地可选源数据，不随仓库提交）
 - 权威证据：
   - GitHub 仓库元数据报告的代码许可证为 `MIT`
   - 本地仓库包含 `LICENSE-DATA`
@@ -31,12 +31,12 @@
 ### 2.2 CMMLU
 
 - 仓库：<https://github.com/haonan-li/CMMLU>
-- 本地路径：[data/raw/cmmlu-upstream](../data/raw/cmmlu-upstream)
+- 本地路径：`data/raw/cmmlu-upstream`（本地可选源数据，不随仓库提交）
 - 权威证据：
   - 本地 `README_EN.md` 说明 CMMLU 涵盖 `67` 个主题
   - 本地仓库包含一个带有 CSV 文件的 `data/` 目录
   - 本地 `README_EN.md` 的许可证章节指向 `Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License`（知识共享 署名-非商业性使用-相同方式共享 4.0 国际许可证）
-  - 本地样本文件：[anatomy.csv](../data/raw/cmmlu-upstream/data/dev/anatomy.csv)
+  - 本地样本文件：`data/raw/cmmlu-upstream/data/dev/anatomy.csv`
 - 重要许可证说明：
   - 本地 `README_EN.md` 声明该数据集基于 `CC BY-NC-SA 4.0` 授权
 - 当前本地状态：
@@ -49,12 +49,12 @@
 ### 2.3 M3KE
 
 - 仓库：<https://github.com/tjunlp-lab/M3KE>
-- 本地路径：[data/raw/m3ke-upstream](../data/raw/m3ke-upstream)
+- 本地路径：`data/raw/m3ke-upstream`（本地可选源数据，不随仓库提交）
 - 权威证据：
   - 本地 `README.md` 说明 M3KE 包含来自 `71` 个任务的 `20,477` 道题目
   - 本地 `README.md` 说明所有题目均为包含四个选项的单项选择题
   - 本地仓库包含一个带有 JSONL 文件和 `M3KE.zip` 的 `data/` 目录
-  - 本地样本文件：[Advanced Mathematics-Natural Sciences-College.jsonl](../data/raw/m3ke-upstream/data/dev/Advanced%20Mathematics-Natural%20Sciences-College.jsonl)
+  - 本地样本文件：`data/raw/m3ke-upstream/data/dev/Advanced Mathematics-Natural Sciences-College.jsonl`
 - 重要许可证说明：
   - 本地 `README.md` 中未发现明确的数据集许可证章节
   - GitHub 仓库元数据未公开许可证信息
@@ -69,13 +69,13 @@
 ### 2.4 AGIEval
 
 - 仓库：<https://github.com/ruixiangcui/AGIEval>
-- 本地路径：[data/raw/agieval-upstream](../data/raw/agieval-upstream)
+- 本地路径：`data/raw/agieval-upstream`（本地可选源数据，不随仓库提交）
 - 权威证据：
   - GitHub 仓库元数据报告的代码许可证为 `MIT`
   - 本地 `README.md` 说明 AGIEval v1.1 包含 `20` 个任务
   - 本地 `README.md` 说明 AGIEval v1.1 包含 `18` 个多选题（MCQ）任务和两个填空题任务
   - 本地仓库包含带有 JSONL 任务文件和 few-shot 提示词的 `data/` 目录
-  - 本地样本文件：[gaokao-physics.jsonl](../data/raw/agieval-upstream/data/v1_1/gaokao-physics.jsonl)
+  - 本地样本文件：`data/raw/agieval-upstream/data/v1_1/gaokao-physics.jsonl`
 - 重要许可证说明：
   - 本地 `README.md` 说明数据的使用应遵循原始数据集的许可证
   - 视为混合许可证，在重新分发前需按任务进行审查

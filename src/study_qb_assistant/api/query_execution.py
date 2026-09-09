@@ -31,7 +31,7 @@ def check_query_eligibility(
     request: Request,
     estimated_cost: int = 0,
 ) -> AuthError | None:
-    """校验当前请求方是否有发起查题的资格（会员或积分余额足够）。"""
+    """校验当前请求方是否有发起查题的资格（无限使用时长有效或积分余额足够）。"""
     user = current_user(request)
     bearer = authorization_bearer(request)
     client_id = extract_client_fingerprint(request)

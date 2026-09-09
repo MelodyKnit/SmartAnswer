@@ -166,14 +166,10 @@ CREATE TABLE query_audit_logs (
 ### 1. API 接口规范
 *   **注册 (`POST /auth/register`)** $\rightarrow$ 输入邀请码注册。
 *   **登录 (`POST /auth/login`)** $\rightarrow$ 获取 JWT 会话 Token。
-*   **创建邀请码 (`POST /auth/invitations/generate`)** $\rightarrow$ 仅管理员权限可操作。
+*   **生成个人邀请码 (`POST /users/me/invite-code`)** $\rightarrow$ 当前用户为历史空邀请码补齐可分享的邀请码。
 
 ### 2. 扁平化简约视觉风格 (Flat, Modern Minimalist Design)
 控制台采用 **“极致扁平，现代简约（Flat Minimalist）”** 的设计风格。剔除华而不实的霓虹渐变、高光与繁杂毛玻璃，利用高对比度非对称版面、大面积极简留白、纤细明晰的边界线条与低纯度点缀色，带来极其利落、高级且具备工业美感的学术交互体验。
-
-以下是为系统重新设计的扁平简约版控制台界面视觉原型：
-
-![题库控制台界面扁平设计图](minimalist_dashboard.png)
 
 #### A. 核心设计令牌 (Design Tokens)
 
