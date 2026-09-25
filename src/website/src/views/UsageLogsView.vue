@@ -259,10 +259,10 @@ onUnmounted(revokeImagePreviewUrls)
 </script>
 
 <template>
-  <div>
+  <div class="flex h-full flex-col min-h-0">
     <PageHeader title="使用记录" description="查看答题调用流水、命中方式与积分消耗。" />
 
-    <div class="app-card mb-4 flex flex-wrap items-center gap-3 p-4">
+    <div class="app-card mb-3 shrink-0 flex flex-wrap items-center gap-3 p-4">
       <el-input
         v-if="canViewAllUsage"
         v-model="filters.username"
@@ -314,71 +314,77 @@ onUnmounted(revokeImagePreviewUrls)
       <el-button type="primary" :icon="'Search'" @click="search">查询</el-button>
     </div>
 
-    <div class="app-card p-1">
-      <el-table v-loading="loading" :data="logs" style="width: 100%">
-        <el-table-column label="题目" min-width="240" show-overflow-tooltip>
-          <template #default="{ row }">
-            <span class="text-ink">{{ row.title || '—' }}</span>
+    <div class="app-card min-h-0 flex-1 flex flex-col p-1">
+      <div class="min-h-0 flex-1">
+        <el-table v-loading="loading" :data="logs" height="100%" style="width: 100%">
+          <el-table-column label="题目" min-width="240" show-overflow-tooltip>
+            <template #default="{ row }">
+            <span class="text-ink truncate block">{{ row.title || '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column v-if="canViewAllUsage" label="用户" width="120" prop="username" align="center" />
-        <el-table-column label="令牌" width="150" show-overflow-tooltip align="center">
+        <el-table-column v-if="canViewAllUsage" label="用户" width="140" show-overflow-tooltip align="center">
           <template #default="{ row }">
-            <span class="text-ink-soft" :title="tokenTooltip(row)">
-              {{ tokenLabel(row) }}
-            </span>
+            <span class="truncate block text-ink-soft">{{ row.username || '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="题型" width="90" align="center">
-          <template #default="{ row }">
-            <el-tag size="small" effect="plain">{{ questionTypeLabel(row.question_type) }}</el-tag>
+          <el-table-column label="令牌" width="150" show-overflow-tooltip align="center">
+            <template #default="{ row }">
+              <span class="text-ink-soft" :title="tokenTooltip(row)">
+                {{ tokenLabel(row) }}
+              </span>
+            </template>
+          </el-table-column>
+          <el-table-column label="题型" width="90" align="center">
+            <template #default="{ row }">
+              <el-tag size="small" effect="plain">{{ questionTypeLabel(row.question_type) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="命中方式" width="110" align="center">
+            <template #default="{ row }">
+              <el-tag size="small" type="success" effect="light">
+                {{ resolutionLabel(row.resolution_mode) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="答案" width="110" show-overflow-tooltip align="center">
+            <template #default="{ row }">
+              <span class="font-medium text-success">{{ row.answer || '—' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="请求 IP" width="130" show-overflow-tooltip align="center">
+            <template #default="{ row }">
+              <span class="text-ink-soft">{{ row.client_ip || '—' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="置信度" width="90" align="center">
+            <template #default="{ row }">{{ (row.confidence * 100).toFixed(0) }}%</template>
+          </el-table-column>
+          <el-table-column label="积分" width="70" prop="points_cost" align="center" />
+          <el-table-column label="时间" width="170" align="center">
+            <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="130" align="right">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="openDetail(row)">明细</el-button>
+              <el-button link type="primary" @click="openFeedback(row)">反馈</el-button>
+            </template>
+          </el-table-column>
+          <template #empty>
+            <el-empty description="暂无使用记录" />
           </template>
-        </el-table-column>
-        <el-table-column label="命中方式" width="110" align="center">
-          <template #default="{ row }">
-            <el-tag size="small" type="success" effect="light">
-              {{ resolutionLabel(row.resolution_mode) }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="答案" width="110" show-overflow-tooltip align="center">
-          <template #default="{ row }">
-            <span class="font-medium text-success">{{ row.answer || '—' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="请求 IP" width="130" show-overflow-tooltip align="center">
-          <template #default="{ row }">
-            <span class="text-ink-soft">{{ row.client_ip || '—' }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="置信度" width="90" align="center">
-          <template #default="{ row }">{{ (row.confidence * 100).toFixed(0) }}%</template>
-        </el-table-column>
-        <el-table-column label="积分" width="70" prop="points_cost" align="center" />
-        <el-table-column label="时间" width="170" align="center">
-          <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
-        </el-table-column>
-        <el-table-column label="操作" width="130" align="right">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="openDetail(row)">明细</el-button>
-            <el-button link type="primary" @click="openFeedback(row)">反馈</el-button>
-          </template>
-        </el-table-column>
-        <template #empty>
-          <el-empty description="暂无使用记录" />
-        </template>
-      </el-table>
-    </div>
+        </el-table>
+      </div>
 
-    <div v-if="total > 0" class="mt-4 flex justify-end">
-      <el-pagination
-        layout="total, prev, pager, next, jumper"
-        :total="total"
-        :current-page="page"
-        :page-size="filters.limit"
-        background
-        @current-change="onPageChange"
-      />
+      <div v-if="total > 0" class="shrink-0 flex justify-end border-t border-line px-4 py-3">
+        <el-pagination
+          layout="total, prev, pager, next, jumper"
+          :total="total"
+          :current-page="page"
+          :page-size="filters.limit"
+          background
+          @current-change="onPageChange"
+        />
+      </div>
     </div>
 
     <!-- 明细抽屉 -->

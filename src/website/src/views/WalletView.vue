@@ -109,7 +109,16 @@ onMounted(load)
         </div>
       </div>
       <div class="app-card p-5">
-        <div class="mb-2 text-sm text-ink-soft">兑换码核销</div>
+        <div class="mb-2 flex items-center justify-between text-sm">
+          <span class="text-ink-soft">兑换码核销</span>
+          <router-link
+            to="/help?article=redeem-guide"
+            class="text-xs text-brand-600 hover:underline inline-flex items-center gap-0.5 dark:text-brand-400"
+          >
+            <el-icon :size="12"><QuestionFilled /></el-icon>
+            使用指南
+          </router-link>
+        </div>
         <div class="flex gap-2">
           <el-input v-model="redeem.code" placeholder="输入积分或天数兑换码" @keyup.enter="submitRedeem" />
           <el-button type="primary" :loading="redeem.loading" @click="submitRedeem">兑换</el-button>

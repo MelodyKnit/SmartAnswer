@@ -412,6 +412,21 @@ export const siteConfigApi = {
   get: () => api.get<{ ok: true } & SiteConfig>('/site-config'),
 }
 
+/* ---------------- 帮助文档 ---------------- */
+export interface HelpDocItem {
+  id: string
+  title: string
+  category: string
+  icon?: string
+  order?: number
+  description?: string
+  content: string
+}
+
+export const helpApi = {
+  list: () => api.get<{ docs: HelpDocItem[] }>('/help/docs'),
+}
+
 /* ---------------- 钱包 / 兑换码 ---------------- */
 export const walletApi = {
   me: () => api.get<{ ok: true; wallet: WalletSummary }>('/wallet/me'),

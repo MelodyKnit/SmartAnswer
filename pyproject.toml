@@ -1,9 +1,9 @@
 [project]
 name = "study-question-bank-assistant"
-version = "0.11.0"
+version = "0.12.0"
 description = "Study-oriented question-bank ingestion and retrieval foundation."
 license = { text = "CC-BY-NC-SA-4.0" }
-requires-python = ">=3.13"
+requires-python = ">=3.13,<4.0.0"
 dependencies = [
   "fastapi",
   "httpx",

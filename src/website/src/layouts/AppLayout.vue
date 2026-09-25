@@ -192,6 +192,13 @@ async function handleLogout() {
 
           <NotificationCenterPopover />
 
+          <!-- 帮助中心快捷入口 -->
+          <el-tooltip content="帮助文档" placement="bottom">
+            <el-button circle text @click="router.push('/help')">
+              <el-icon :size="18"><QuestionFilled /></el-icon>
+            </el-button>
+          </el-tooltip>
+
           <!-- 用户菜单 -->
           <el-dropdown trigger="click">
             <div class="flex cursor-pointer items-center gap-2">

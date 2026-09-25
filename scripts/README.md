@@ -7,6 +7,8 @@
 - `run.ps1`：Windows PowerShell 启动入口。
 - `run.sh`：Linux/macOS 启动入口。
 - `--dev` 或 `-Dev`：启用 Uvicorn 热重载；开发模式仅监听 `src/study_qb_assistant`，避免运行数据和前端文件触发无意义重启。
+- 启动前会校验前端源码、依赖清单和构建配置的内容指纹；静态产物已是最新时跳过构建，检测到变化时自动执行 `npm run build`。
+- 首次构建或 `package.json` / `package-lock.json` 变化时会自动执行 `npm ci`；因此本地运行需要 Node.js/npm，依赖安装失败时不会启动后端。
 - 支持快捷传入监听地址与端口：如 `0.0.0.0:8080`、`0.0.0.0`、`8080`。
 
 示例：

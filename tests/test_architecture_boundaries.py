@@ -15,6 +15,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from study_qb_assistant.api.app import create_app  # noqa: E402
+from study_qb_assistant.api.v1.help.router import read_all_help_docs  # noqa: E402
 from study_qb_assistant.questions.models import (  # noqa: E402
     CanonicalQuestionRecord,
 )
@@ -149,3 +150,16 @@ def test_openapi_exposes_only_versioned_business_routes() -> None:
     assert legacy.status_code == 200
     assert legacy.headers["Deprecation"] == "true"
     assert "/api/v1/healthz" in legacy.headers["Link"]
+
+
+def test_help_docs_are_limited_to_the_public_help_directory() -> None:
+    """帮助中心只读取 docs/help 根目录下的 Markdown 文档。"""
+
+    docs = read_all_help_docs()
+    assert [item["id"] for item in docs] == [
+        "getting-started",
+        "api-key-guide",
+        "redeem-guide",
+        "faq",
+    ]
+    assert all("architecture" not in item["content"] for item in docs)

@@ -45,6 +45,12 @@ const routes: RouteRecordRaw[] = [
     meta: { public: true, title: '兑换码兑换' },
   },
   {
+    path: '/help',
+    name: 'help',
+    component: () => import('@/views/HelpView.vue'),
+    meta: { public: true, title: '帮助中心' },
+  },
+  {
     path: '/',
     component: () => import('@/layouts/AppLayout.vue'),
     children: [

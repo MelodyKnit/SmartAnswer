@@ -58,6 +58,7 @@ COPY configs ./configs
 COPY client-scripts ./client-scripts
 COPY scripts ./scripts
 COPY src ./src
+COPY docs/help ./docs/help
 COPY --from=web-builder /app/src/study_qb_assistant/api/static/site ./src/study_qb_assistant/api/static/site
 COPY README.md pyproject.toml ./
 

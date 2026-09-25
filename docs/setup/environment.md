@@ -52,6 +52,10 @@ pre-commit install
 pre-commit run --all-files
 ```
 
+其中 Ruff 使用 pre-commit 自己管理的隔离环境；mypy、pytest 和前端构建继续使用
+项目的 Conda/Node.js 环境。pre-commit.ci 只运行可在托管环境中自给自足的 Ruff，
+其余完整检查由发布 workflow 执行，避免把本机路径或 Conda 依赖带入托管 CI。
+
 当前验证环境为 `ai-study-qb`。实际通过数量和构建结果以每次发布前执行的测试输出为准，不在文档中固化易过期的统计数字。
 
 ## 5. 运行时依赖

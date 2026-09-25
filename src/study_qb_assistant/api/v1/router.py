@@ -10,6 +10,7 @@ from .announcements import build_announcement_router
 from .auth import build_auth_router
 from .dashboard import build_dashboard_router
 from .feedback import build_feedback_router
+from .help import build_help_router
 from .import_scripts import build_import_script_router
 from .image_generation import build_image_generation_router
 from .llm import build_llm_router
@@ -32,6 +33,7 @@ ROUTER_FACTORIES: tuple[RouterFactory, ...] = (
     build_query_router,
     build_user_router,
     build_token_router,
+    build_help_router,
     build_announcement_router,
     build_feedback_router,
     build_wallet_router,

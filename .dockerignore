@@ -18,4 +18,7 @@ study-qb-deploy.tgz
 src/website/node_modules
 src/website/dist
 tests
-docs
+# 生产镜像只需要公开帮助中心文档，内部架构、部署和研究文档不随镜像发布。
+docs/*
+!docs/help/
+!docs/help/**

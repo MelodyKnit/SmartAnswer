@@ -105,12 +105,19 @@ async function submit() {
       </el-button>
     </el-form>
     <template #footer>
-      <span v-if="registrationEnabled">
-        还没有账号？
-        <router-link to="/register" class="font-medium text-brand-600 hover:underline">
-          立即注册
+      <div class="flex items-center justify-between text-sm">
+        <span v-if="registrationEnabled">
+          还没有账号？
+          <router-link to="/register" class="font-medium text-brand-600 hover:underline">
+            立即注册
+          </router-link>
+        </span>
+        <span v-else></span>
+        <router-link to="/help" class="text-xs text-ink-muted hover:text-brand-600 hover:underline inline-flex items-center gap-1">
+          <el-icon :size="12"><QuestionFilled /></el-icon>
+          帮助文档
         </router-link>
-      </span>
+      </div>
     </template>
   </AuthShell>
 </template>
