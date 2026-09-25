@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict
 class FeedbackPayload(BaseModel):
     model_config = ConfigDict(extra="ignore")
     usage_log_id: str | None = None
+    usage_log_ids: list[str] | tuple[str, ...] = ()
     title: str = ""
     content: str = ""
     image_urls: list[str] | tuple[str, ...] = ()

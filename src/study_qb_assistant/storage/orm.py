@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import Float, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Float, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -187,6 +187,33 @@ class FeedbackEntity(Base):
     source_id: Mapped[str] = mapped_column(String(128), default="")
     source_url: Mapped[str] = mapped_column(Text, default="")
     context_json: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class FeedbackUsageEntity(Base):
+    """反馈关联的答题记录快照。"""
+
+    __tablename__ = "feedback_usage_links"
+    __table_args__ = (
+        UniqueConstraint("feedback_id", "usage_log_id", name="uq_feedback_usage_link"),
+        Index("ix_feedback_usage_links_feedback_position", "feedback_id", "position"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    feedback_id: Mapped[str] = mapped_column(String(64), index=True)
+    usage_log_id: Mapped[str] = mapped_column(String(64), index=True)
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    question_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    question_title: Mapped[str] = mapped_column(Text, default="")
+    question_type: Mapped[str] = mapped_column(String(64), default="")
+    answer_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    resolution_mode: Mapped[str] = mapped_column(String(64), default="")
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    request_id: Mapped[str] = mapped_column(String(64), default="")
+    source_name: Mapped[str] = mapped_column(String(255), default="")
+    source_type: Mapped[str] = mapped_column(String(64), default="")
+    source_id: Mapped[str] = mapped_column(String(128), default="")
+    source_url: Mapped[str] = mapped_column(Text, default="")
+    usage_created_at: Mapped[float] = mapped_column(Float, default=0.0)
 
 
 class RedeemCodeEntity(Base):

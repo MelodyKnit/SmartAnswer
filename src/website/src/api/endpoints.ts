@@ -14,6 +14,8 @@ import type {
   DashboardSummary,
   ProjectUpdateStatus,
   Feedback,
+  FeedbackAnswerRecord,
+  FeedbackAnswerRecordGroup,
   ImportScript,
   ImageGenerationCapabilities,
   ImageGenerationInputAsset,
@@ -247,6 +249,7 @@ export const usageApi = {
     username?: string
     keyword?: string
     token_id?: string
+    log_id?: string
     page?: number
     limit?: number
   } = {}) =>
@@ -269,11 +272,29 @@ export const feedbackApi = {
     api.get<{ ok: true; feedbacks: Feedback[]; total: number }>('/feedback', params),
   create: (body: {
     usage_log_id?: string | null
+    usage_log_ids?: string[]
     category?: string
     title: string
     content: string
     image_urls?: string[]
   }) => api.post<{ ok: true; feedback: Feedback }>('/feedback', body),
+  answerRecords: (params: {
+    keyword?: string
+    days?: number
+    deduplicate?: boolean
+    question_id?: string
+    page?: number
+    limit?: number
+  } = {}) =>
+    api.get<{
+      ok: true
+      records: FeedbackAnswerRecord[]
+      groups: FeedbackAnswerRecordGroup[]
+      total: number
+      page: number
+      limit: number
+      deduplicated: boolean
+    }>('/feedback/answer-records', params),
   resolve: (
     feedbackId: string,
     body: {

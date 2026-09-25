@@ -6,6 +6,7 @@ from fastapi import APIRouter, Request
 from starlette.responses import JSONResponse
 
 from ....auth import AuthError
+from ....platform.feedback.errors import FeedbackOperationError
 from ...dependencies import get_feedback_service, get_notification_service
 from ...security import (
     auth_error_response,
@@ -29,16 +30,60 @@ def build_feedback_router() -> APIRouter:
         if user is None:
             return unauthorized_response("请先登录")
         feedback_service = get_feedback_service(request)
-        feedback = feedback_service.create_feedback(
-            user_id=str(user["user_id"]),
-            username=str(user["username"]),
-            usage_log_id=payload.usage_log_id,
-            title=payload.title,
-            content=payload.content,
-            image_urls=tuple(str(item) for item in payload.image_urls),
-            category=payload.category,
-        )
+        try:
+            feedback = feedback_service.create_feedback(
+                user_id=str(user["user_id"]),
+                username=str(user["username"]),
+                usage_log_id=payload.usage_log_id,
+                usage_log_ids=tuple(str(item) for item in payload.usage_log_ids),
+                title=payload.title,
+                content=payload.content,
+                image_urls=tuple(str(item) for item in payload.image_urls),
+                category=payload.category,
+            )
+        except FeedbackOperationError as exc:
+            return JSONResponse(
+                {"ok": False, "error": {"code": exc.code, "message": exc.message}},
+                status_code=exc.http_status,
+            )
         return JSONResponse({"ok": True, "feedback": feedback})
+
+    @router.get("/feedback/answer-records")
+    def feedback_answer_records(
+        request: Request,
+        keyword: str = "",
+        days: int = 1,
+        deduplicate: bool = False,
+        question_id: str = "",
+        limit: int = 50,
+        page: int = 1,
+    ) -> JSONResponse:
+        denied = require_permissions(request, {"feedback:self"})
+        if denied:
+            return denied
+        user = current_user(request)
+        if user is None:
+            return unauthorized_response("请先登录")
+        page = max(1, int(page))
+        limit = max(1, min(int(limit), 100))
+        try:
+            payload = get_feedback_service(request).answer_record_options(
+                user_id=str(user["user_id"]),
+                keyword=keyword,
+                days=days,
+                deduplicate=deduplicate,
+                question_id=question_id,
+                limit=limit,
+                offset=(page - 1) * limit,
+            )
+        except FeedbackOperationError as exc:
+            return JSONResponse(
+                {"ok": False, "error": {"code": exc.code, "message": exc.message}},
+                status_code=exc.http_status,
+            )
+        payload["page"] = page
+        payload["limit"] = limit
+        return JSONResponse({"ok": True, **payload})
 
     @router.get("/feedback")
     def feedback_list(
@@ -101,7 +146,9 @@ def build_feedback_router() -> APIRouter:
                     "open": "待处理",
                 }
                 status_text = status_label_map.get(normalized_status, normalized_status)
-                feedback_title = str(feedback.get("title") or "题目反馈").strip()
+                feedback_title = str(
+                    feedback.get("question_title") or feedback.get("title") or "题目反馈"
+                ).strip()
                 content_parts = [
                     f"您提交的反馈【{feedback_title}】状态已更新为：{status_text}。"
                 ]

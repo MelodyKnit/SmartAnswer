@@ -73,6 +73,7 @@ class UsageService(PlatformDomainService):
         *,
         username: str | None = None,
         token_id: str = "",
+        log_id: str = "",
         keyword: str = "",
         limit: int = 100,
         offset: int = 0,
@@ -86,6 +87,7 @@ class UsageService(PlatformDomainService):
                 for item in self.repository.list_usage_logs(
                     username=username,
                     token_id=token_id,
+                    log_id=log_id,
                     keyword=keyword,
                     limit=limit,
                     offset=offset,
@@ -99,6 +101,7 @@ class UsageService(PlatformDomainService):
         *,
         username: str | None = None,
         token_id: str = "",
+        log_id: str = "",
         keyword: str = "",
         start_time: float | None = None,
         end_time: float | None = None,
@@ -108,6 +111,7 @@ class UsageService(PlatformDomainService):
             return self.repository.count_usage_logs(
                 username=username,
                 token_id=token_id,
+                log_id=log_id,
                 keyword=keyword,
                 start_time=start_time,
                 end_time=end_time,

@@ -1844,6 +1844,13 @@ class FastAPILocalServerTests(unittest.TestCase):
             self.assertTrue(
                 any("反馈处理结果通知" in item["title"] for item in feedback_notice_center["items"])
             )
+            self.assertTrue(
+                any(
+                    "示例题" in item["content"]
+                    for item in feedback_notice_center["items"]
+                    if item["title"] == "反馈处理结果通知"
+                )
+            )
             feedback_resolve_repeat = client.patch(
                 f"/feedback/{feedback_id}",
                 json={
@@ -2095,6 +2102,82 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(plain_register.json()["user"]["points"], 150)
         self.assertEqual(invited_register.json()["user"]["points"], 180)
 
+    def test_feedback_hydrates_legacy_usage_context_and_exact_usage_lookup(self) -> None:
+        """旧反馈缺少快照时，应从同用户使用记录恢复题目定位信息。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformServices(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
+                )
+            )
+            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            login = client.post(
+                "/auth/login", json={"username": "owner", "password": "password123"}
+            )
+            headers = {"Authorization": f"Bearer {login.json()['token']}"}
+            token = client.post("/tokens", json={"description": "legacy feedback"}, headers=headers)
+            query = client.get(
+                "/ocs/query",
+                params={"title": "示例题", "type": "single"},
+                headers={"Authorization": f"Bearer {token.json()['token']}"},
+            )
+            usage = client.get("/usage-logs", headers=headers).json()["logs"][0]
+            created = client.post(
+                "/feedback",
+                json={
+                    "usage_log_id": usage["log_id"],
+                    "category": "wrong_answer",
+                    "title": "题目反馈",
+                    "content": "反馈快照缺失时仍应可定位题目",
+                },
+                headers=headers,
+            )
+            feedback_id = created.json()["feedback"]["feedback_id"]
+            legacy_context = json.dumps(
+                {
+                    "usage_log_id": usage["log_id"],
+                    "submitted_title": "题目反馈",
+                    "submitted_content": "反馈快照缺失时仍应可定位题目",
+                },
+                ensure_ascii=False,
+            )
+            with platform.feedback.repository.session_factory() as session:
+                session.execute(
+                    text(
+                        """
+                        UPDATE feedbacks
+                        SET question_id = NULL, question_title = '', question_type = '',
+                            answer_snapshot = NULL, resolution_mode = '', confidence = 0,
+                            request_id = '', source_name = '', source_type = '', source_id = '',
+                            source_url = '', context_json = :context_json
+                        WHERE feedback_id = :feedback_id
+                        """
+                    ),
+                    {"context_json": legacy_context, "feedback_id": feedback_id},
+                )
+                session.commit()
+
+            feedback_list = client.get("/feedback", headers=headers)
+            exact_usage = client.get(
+                "/usage-logs", params={"log_id": usage["log_id"]}, headers=headers
+            )
+
+        self.assertEqual(query.status_code, 200)
+        self.assertEqual(feedback_list.status_code, 200)
+        hydrated = feedback_list.json()["feedbacks"][0]
+        self.assertEqual(hydrated["question_id"], "unit:sample:1")
+        self.assertEqual(hydrated["question_title"], "示例题")
+        self.assertEqual(hydrated["question_type"], "single")
+        self.assertEqual(hydrated["answer_snapshot"], "A")
+        self.assertEqual(hydrated["context"]["request_id"], usage["request_id"])
+        self.assertEqual(exact_usage.status_code, 200)
+        self.assertEqual(exact_usage.json()["total"], 1)
+        self.assertEqual(exact_usage.json()["logs"][0]["log_id"], usage["log_id"])
+
     def test_feedback_without_usage_log_keeps_legacy_payload_compatible(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
@@ -2128,6 +2211,225 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(feedback.json()["feedback"]["question_title"], "")
         self.assertEqual(feedback.json()["feedback"]["context"]["submitted_title"], "普通反馈")
         self.assertEqual(feedback_list.json()["total"], 1)
+
+    def test_feedback_answer_records_are_isolated_and_support_multi_link_selection(self) -> None:
+        """答题问题选择器只返回本人记录，并能保存多条精确作答关联。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformServices(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
+                )
+            )
+
+            owner_register = client.post(
+                "/auth/register", json={"username": "owner", "password": "password123"}
+            )
+            other_register = client.post(
+                "/auth/register", json={"username": "other", "password": "password123"}
+            )
+            owner_login = client.post(
+                "/auth/login", json={"username": "owner", "password": "password123"}
+            )
+            owner_headers = {"Authorization": f"Bearer {owner_login.json()['token']}"}
+            owner_id = owner_register.json()["user"]["user_id"]
+            other_id = other_register.json()["user"]["user_id"]
+
+            first = platform.usage.record_usage(
+                user_id=owner_id,
+                username="owner",
+                token_id=None,
+                title="同一道题：第一次",
+                question_type="single",
+                resolution_mode="local_hit",
+                answer="A",
+                confidence=0.9,
+                provider="local",
+                points_cost=0,
+                question_id="question:shared",
+                source_name="UnitTest",
+            )
+            second = platform.usage.record_usage(
+                user_id=owner_id,
+                username="owner",
+                token_id=None,
+                title="同一道题：第二次",
+                question_type="single",
+                resolution_mode="model_fallback",
+                answer="B",
+                confidence=0.8,
+                provider="model",
+                points_cost=0,
+                question_id="question:shared",
+                source_name="UnitTest",
+            )
+            unlinked = platform.usage.record_usage(
+                user_id=owner_id,
+                username="owner",
+                token_id=None,
+                title="没有题库 ID 的题目",
+                question_type="unknown",
+                resolution_mode="model_error",
+                answer=None,
+                confidence=0.0,
+                provider="model",
+                points_cost=0,
+            )
+            other_log = platform.usage.record_usage(
+                user_id=other_id,
+                username="other",
+                token_id=None,
+                title="其他用户题目",
+                question_type="single",
+                resolution_mode="local_hit",
+                answer="C",
+                confidence=0.9,
+                provider="local",
+                points_cost=0,
+                question_id="question:other",
+            )
+
+            own_records = client.get("/feedback/answer-records", headers=owner_headers)
+            grouped = client.get(
+                "/feedback/answer-records",
+                params={"days": 0, "deduplicate": "true", "limit": 20},
+                headers=owner_headers,
+            )
+            expanded = client.get(
+                "/feedback/answer-records",
+                params={"days": 0, "question_id": "question:shared", "limit": 20},
+                headers=owner_headers,
+            )
+            created = client.post(
+                "/feedback",
+                json={
+                    "category": "wrong_answer",
+                    "title": "两次作答都需要核对",
+                    "content": "请同时检查两条答题记录。",
+                    "usage_log_ids": [first["log_id"], second["log_id"]],
+                },
+                headers=owner_headers,
+            )
+            feedback_list = client.get("/feedback", headers=owner_headers)
+            forbidden = client.post(
+                "/feedback",
+                json={
+                    "category": "wrong_answer",
+                    "title": "越权关联",
+                    "content": "不能混入其他用户记录。",
+                    "usage_log_ids": [first["log_id"], other_log["log_id"]],
+                },
+                headers=owner_headers,
+            )
+            legacy_single = client.post(
+                "/feedback",
+                json={
+                    "category": "wrong_answer",
+                    "title": "单数兼容",
+                    "content": "旧调用方仍然只传一个 ID。",
+                    "usage_log_id": unlinked["log_id"],
+                },
+                headers=owner_headers,
+            )
+
+        self.assertEqual(own_records.status_code, 200)
+        own_record_ids = {item["log_id"] for item in own_records.json()["records"]}
+        self.assertEqual(own_record_ids, {first["log_id"], second["log_id"], unlinked["log_id"]})
+        self.assertNotIn(other_log["log_id"], own_record_ids)
+        self.assertEqual(grouped.status_code, 200)
+        self.assertEqual(grouped.json()["total"], 2)
+        shared_group = next(
+            item for item in grouped.json()["groups"] if item["question_id"] == "question:shared"
+        )
+        self.assertEqual(shared_group["attempt_count"], 2)
+        self.assertEqual(expanded.status_code, 200)
+        self.assertEqual(expanded.json()["total"], 2)
+        self.assertEqual(
+            {item["log_id"] for item in expanded.json()["records"]},
+            {first["log_id"], second["log_id"]},
+        )
+        self.assertEqual(created.status_code, 200, created.text)
+        created_feedback = created.json()["feedback"]
+        self.assertEqual(created_feedback["usage_log_id"], first["log_id"])
+        self.assertEqual(
+            [item["usage_log_id"] for item in created_feedback["related_questions"]],
+            [first["log_id"], second["log_id"]],
+        )
+        self.assertEqual(feedback_list.json()["feedbacks"][0]["related_questions"], created_feedback["related_questions"])
+        self.assertEqual(forbidden.status_code, 403)
+        self.assertEqual(forbidden.json()["error"]["code"], "FEEDBACK_USAGE_FORBIDDEN")
+        self.assertEqual(legacy_single.status_code, 200, legacy_single.text)
+        self.assertEqual(
+            legacy_single.json()["feedback"]["related_questions"][0]["usage_log_id"],
+            unlinked["log_id"],
+        )
+
+    def test_feedback_categories_require_records_only_for_answer_problems(self) -> None:
+        """新三类反馈保持统一契约，只有答题问题必须关联作答记录。"""
+
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            platform = PlatformServices(database_path)
+            client = TestClient(
+                create_app(
+                    _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
+                )
+            )
+            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            login = client.post(
+                "/auth/login", json={"username": "owner", "password": "password123"}
+            )
+            headers = {"Authorization": f"Bearer {login.json()['token']}"}
+
+            wrong_without_record = client.post(
+                "/feedback",
+                json={
+                    "category": "wrong_answer",
+                    "title": "缺少记录",
+                    "content": "答题问题必须能追踪到作答记录。",
+                },
+                headers=headers,
+            )
+            suggestion = client.post(
+                "/feedback",
+                json={
+                    "category": "suggestion",
+                    "title": "功能建议",
+                    "content": "建议增加批量导出。",
+                },
+                headers=headers,
+            )
+            other = client.post(
+                "/feedback",
+                json={
+                    "category": "other",
+                    "title": "其它问题",
+                    "content": "页面文字需要调整。",
+                },
+                headers=headers,
+            )
+            invalid = client.post(
+                "/feedback",
+                json={
+                    "category": "unknown_category",
+                    "title": "非法类别",
+                    "content": "不应保存。",
+                },
+                headers=headers,
+            )
+
+        self.assertEqual(wrong_without_record.status_code, 400)
+        self.assertEqual(wrong_without_record.json()["error"]["code"], "FEEDBACK_USAGE_REQUIRED")
+        self.assertEqual(suggestion.status_code, 200, suggestion.text)
+        self.assertEqual(suggestion.json()["feedback"]["category"], "suggestion")
+        self.assertEqual(other.status_code, 200, other.text)
+        self.assertEqual(other.json()["feedback"]["category"], "other")
+        self.assertEqual(invalid.status_code, 400)
+        self.assertEqual(invalid.json()["error"]["code"], "INVALID_FEEDBACK_CATEGORY")
 
     def test_admin_can_manage_users_but_regular_user_cannot_patch_billing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -141,6 +141,46 @@ export interface Feedback {
   source_id?: string
   source_url?: string
   context?: Record<string, unknown>
+  related_questions?: FeedbackRelatedQuestion[]
+}
+
+export interface FeedbackRelatedQuestion {
+  usage_log_id: string
+  question_id?: string | null
+  question_title: string
+  question_type: string
+  answer_snapshot?: string | null
+  resolution_mode?: string
+  confidence?: number
+  request_id?: string
+  source_name?: string
+  source_type?: string
+  source_id?: string
+  source_url?: string
+  created_at?: number
+}
+
+export interface FeedbackAnswerRecord {
+  log_id: string
+  question_id?: string | null
+  title: string
+  question_type: string
+  answer: string | null
+  resolution_mode: string
+  confidence: number
+  created_at: number
+  points_cost: number
+  provider: string
+  source_name: string
+}
+
+export interface FeedbackAnswerRecordGroup {
+  group_key: string
+  question_id?: string | null
+  title: string
+  question_type: string
+  attempt_count: number
+  latest: FeedbackAnswerRecord
 }
 
 export interface WalletOrder {

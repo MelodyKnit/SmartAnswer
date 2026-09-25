@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 import time
 
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, func, select
 
 from ...auth import AuthError
 from ...platform.usage.records import UsageLogRecord
@@ -173,8 +174,11 @@ class UsageRepository(SqlAlchemyRepository):
     def list_usage_logs(
         self,
         *,
+        user_id: str | None = None,
         username: str | None = None,
         token_id: str = "",
+        log_id: str = "",
+        question_id: str = "",
         keyword: str = "",
         limit: int = 100,
         offset: int = 0,
@@ -185,8 +189,11 @@ class UsageRepository(SqlAlchemyRepository):
             stmt = select(UsageLogEntity).order_by(UsageLogEntity.created_at.desc())
             stmt = self._apply_usage_log_filters(
                 stmt,
+                user_id=user_id,
                 username=username,
                 token_id=token_id,
+                log_id=log_id,
+                question_id=question_id,
                 keyword=keyword,
                 start_time=start_time,
                 end_time=end_time,
@@ -213,11 +220,42 @@ class UsageRepository(SqlAlchemyRepository):
             ).first()
             return self._usage_log_record(row[0], row[1]) if row else None
 
+    def get_usage_logs_by_ids(
+        self,
+        log_ids: Iterable[str],
+        *,
+        user_id: str | None = None,
+    ) -> dict[str, UsageLogRecord]:
+        """按日志 ID 批量读取使用记录，供反馈等关联展示避免 N+1 查询。"""
+
+        normalized_ids = tuple(
+            dict.fromkeys(str(log_id).strip() for log_id in log_ids if str(log_id).strip())
+        )
+        if not normalized_ids:
+            return {}
+        with self.session_factory() as session:
+            stmt = (
+                select(UsageLogEntity, ApiTokenEntity)
+                .outerjoin(ApiTokenEntity, UsageLogEntity.token_id == ApiTokenEntity.token_id)
+                .where(UsageLogEntity.log_id.in_(normalized_ids))
+            )
+            if user_id:
+                stmt = stmt.where(UsageLogEntity.user_id == user_id)
+            rows = session.execute(stmt).all()
+            records = [
+                self._usage_log_record(log_entity, token_entity)
+                for log_entity, token_entity in rows
+            ]
+        return {record.log_id: record for record in records}
+
     def count_usage_logs(
         self,
         *,
+        user_id: str | None = None,
         username: str | None = None,
         token_id: str = "",
+        log_id: str = "",
+        question_id: str = "",
         keyword: str = "",
         start_time: float | None = None,
         end_time: float | None = None,
@@ -226,8 +264,11 @@ class UsageRepository(SqlAlchemyRepository):
             stmt = select(func.count(UsageLogEntity.id))
             stmt = self._apply_usage_log_filters(
                 stmt,
+                user_id=user_id,
                 username=username,
                 token_id=token_id,
+                log_id=log_id,
+                question_id=question_id,
                 keyword=keyword,
                 start_time=start_time,
                 end_time=end_time,
@@ -321,16 +362,25 @@ class UsageRepository(SqlAlchemyRepository):
         self,
         stmt,
         *,
+        user_id: str | None = None,
         username: str | None = None,
         token_id: str = "",
+        log_id: str = "",
+        question_id: str = "",
         keyword: str = "",
         start_time: float | None = None,
         end_time: float | None = None,
     ):
+        if user_id:
+            stmt = stmt.where(UsageLogEntity.user_id == user_id)
         if username:
             stmt = stmt.where(UsageLogEntity.username == username)
         if token_id:
             stmt = stmt.where(UsageLogEntity.token_id == token_id)
+        if log_id:
+            stmt = stmt.where(UsageLogEntity.log_id == log_id)
+        if question_id:
+            stmt = stmt.where(UsageLogEntity.question_id == question_id)
         if keyword:
             stmt = stmt.where(UsageLogEntity.title.contains(keyword))
         if start_time is not None:
@@ -338,6 +388,139 @@ class UsageRepository(SqlAlchemyRepository):
         if end_time is not None:
             stmt = stmt.where(UsageLogEntity.created_at < end_time)
         return stmt
+
+    def list_question_groups(
+        self,
+        *,
+        user_id: str,
+        keyword: str = "",
+        start_time: float | None = None,
+        end_time: float | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict]:
+        """按题库 ID 分组读取用户答题记录，未关联题库的记录保持独立。"""
+
+        with self.session_factory() as session:
+            has_question_id = and_(
+                UsageLogEntity.question_id.is_not(None),
+                func.trim(UsageLogEntity.question_id) != "",
+            )
+            group_key = case(
+                (has_question_id, UsageLogEntity.question_id),
+                else_=UsageLogEntity.log_id,
+            ).label("group_key")
+            stmt = select(
+                group_key,
+                UsageLogEntity.question_id,
+                func.count(UsageLogEntity.id).label("attempt_count"),
+                func.max(UsageLogEntity.created_at).label("latest_created_at"),
+            )
+            stmt = self._apply_usage_log_filters(
+                stmt,
+                user_id=user_id,
+                keyword=keyword,
+                start_time=start_time,
+                end_time=end_time,
+            )
+            rows = session.execute(
+                stmt.group_by(group_key, UsageLogEntity.question_id)
+                .order_by(func.max(UsageLogEntity.created_at).desc(), group_key.asc())
+                .offset(max(0, int(offset)))
+                .limit(max(1, min(int(limit), 100)))
+            ).all()
+        return [
+            {
+                "group_key": str(group_key),
+                "question_id": str(question_id) if question_id else None,
+                "attempt_count": int(attempt_count or 0),
+                "latest_created_at": float(latest_created_at or 0.0),
+            }
+            for group_key, question_id, attempt_count, latest_created_at in rows
+        ]
+
+    def count_question_groups(
+        self,
+        *,
+        user_id: str,
+        keyword: str = "",
+        start_time: float | None = None,
+        end_time: float | None = None,
+    ) -> int:
+        """统计用户去重后的题目分组数量。"""
+
+        with self.session_factory() as session:
+            has_question_id = and_(
+                UsageLogEntity.question_id.is_not(None),
+                func.trim(UsageLogEntity.question_id) != "",
+            )
+            group_key = case(
+                (has_question_id, UsageLogEntity.question_id),
+                else_=UsageLogEntity.log_id,
+            )
+            stmt = select(func.count(func.distinct(group_key))).select_from(UsageLogEntity)
+            stmt = self._apply_usage_log_filters(
+                stmt,
+                user_id=user_id,
+                keyword=keyword,
+                start_time=start_time,
+                end_time=end_time,
+            )
+            return int(session.scalar(stmt) or 0)
+
+    def latest_usage_logs_for_question_ids(
+        self,
+        *,
+        user_id: str,
+        question_ids: Iterable[str],
+        keyword: str = "",
+        start_time: float | None = None,
+        end_time: float | None = None,
+    ) -> dict[str, UsageLogRecord]:
+        """批量读取每道题最近一次答题记录，避免分组列表产生 N+1 查询。"""
+
+        normalized_ids = tuple(dict.fromkeys(str(item).strip() for item in question_ids if str(item).strip()))
+        if not normalized_ids:
+            return {}
+        with self.session_factory() as session:
+            filters = self._apply_usage_log_filters(
+                select(UsageLogEntity.question_id),
+                user_id=user_id,
+                keyword=keyword,
+                start_time=start_time,
+                end_time=end_time,
+            )
+            latest = (
+                filters.where(UsageLogEntity.question_id.in_(normalized_ids))
+                .add_columns(func.max(UsageLogEntity.created_at).label("latest_created_at"))
+                .group_by(UsageLogEntity.question_id)
+                .subquery()
+            )
+            stmt = select(UsageLogEntity, ApiTokenEntity)
+            stmt = self._apply_usage_log_filters(
+                stmt,
+                user_id=user_id,
+                keyword=keyword,
+                start_time=start_time,
+                end_time=end_time,
+            )
+            stmt = (
+                stmt.outerjoin(ApiTokenEntity, UsageLogEntity.token_id == ApiTokenEntity.token_id)
+                .join(
+                    latest,
+                    and_(
+                        UsageLogEntity.question_id == latest.c.question_id,
+                        UsageLogEntity.created_at == latest.c.latest_created_at,
+                    ),
+                )
+                .order_by(UsageLogEntity.created_at.desc(), UsageLogEntity.id.desc())
+            )
+            rows = session.execute(stmt).all()
+            result: dict[str, UsageLogRecord] = {}
+            for entity, token_entity in rows:
+                record = self._usage_log_record(entity, token_entity)
+                result.setdefault(str(record.question_id), record)
+            return result
 
     def _usage_log_record(
         self,

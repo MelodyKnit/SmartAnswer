@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(slots=True)
@@ -38,6 +38,7 @@ class FeedbackRecord:
     source_id: str = ""
     source_url: str = ""
     context_json: str = "{}"
+    related_questions: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         try:
@@ -72,6 +73,7 @@ class FeedbackRecord:
             "source_id": self.source_id,
             "source_url": self.source_url,
             "context": context,
+            "related_questions": [dict(item) for item in self.related_questions],
         }
 
     @classmethod
@@ -106,6 +108,11 @@ class FeedbackRecord:
             source_id=str(payload.get("source_id") or ""),
             source_url=str(payload.get("source_url") or ""),
             context_json=str(payload.get("context_json") or "{}"),
+            related_questions=[
+                dict(item)
+                for item in payload.get("related_questions") or ()
+                if isinstance(item, dict)
+            ],
         )
 
 

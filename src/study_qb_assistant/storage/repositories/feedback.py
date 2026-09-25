@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from ...platform.feedback.errors import FeedbackOperationError
 from ...platform.feedback.records import FeedbackRecord
-from ..orm import FeedbackEntity, UserEntity, WalletOrderEntity
+from ..orm import FeedbackEntity, FeedbackUsageEntity, UserEntity, WalletOrderEntity
 from .base import SqlAlchemyRepository
 
 
@@ -47,6 +47,34 @@ class FeedbackRepository(SqlAlchemyRepository):
                 context_json=record.context_json,
             )
             session.add(entity)
+            for position, related in enumerate(record.related_questions):
+                session.add(
+                    FeedbackUsageEntity(
+                        feedback_id=record.feedback_id,
+                        usage_log_id=str(related.get("usage_log_id") or ""),
+                        position=position,
+                        question_id=(
+                            str(related["question_id"])
+                            if related.get("question_id")
+                            else None
+                        ),
+                        question_title=str(related.get("question_title") or ""),
+                        question_type=str(related.get("question_type") or ""),
+                        answer_snapshot=(
+                            str(related["answer_snapshot"])
+                            if related.get("answer_snapshot") is not None
+                            else None
+                        ),
+                        resolution_mode=str(related.get("resolution_mode") or ""),
+                        confidence=float(related.get("confidence") or 0.0),
+                        request_id=str(related.get("request_id") or ""),
+                        source_name=str(related.get("source_name") or ""),
+                        source_type=str(related.get("source_type") or ""),
+                        source_id=str(related.get("source_id") or ""),
+                        source_url=str(related.get("source_url") or ""),
+                        usage_created_at=float(related.get("created_at") or 0.0),
+                    )
+                )
             session.commit()
 
     def list_feedbacks(
@@ -57,7 +85,11 @@ class FeedbackRepository(SqlAlchemyRepository):
             if username:
                 stmt = stmt.where(FeedbackEntity.username == username)
             entities = session.scalars(stmt.limit(max(1, min(limit, 500)))).all()
-            return [self._feedback_record(entity) for entity in entities]
+            related = self._related_questions(session, [entity.feedback_id for entity in entities])
+            return [
+                self._feedback_record(entity, related.get(entity.feedback_id, []))
+                for entity in entities
+            ]
 
     def get_feedback(self, feedback_id: str) -> FeedbackRecord | None:
         """读取单条反馈记录。"""
@@ -65,7 +97,10 @@ class FeedbackRepository(SqlAlchemyRepository):
             entity = session.scalar(
                 select(FeedbackEntity).where(FeedbackEntity.feedback_id == feedback_id)
             )
-            return self._feedback_record(entity) if entity else None
+            if entity is None:
+                return None
+            related = self._related_questions(session, [entity.feedback_id])
+            return self._feedback_record(entity, related.get(entity.feedback_id, []))
 
     def update_feedback_status(self, feedback_id: str, status: str) -> FeedbackRecord | None:
         """更新反馈处理状态。"""
@@ -158,7 +193,8 @@ class FeedbackRepository(SqlAlchemyRepository):
             except Exception:
                 session.rollback()
                 raise
-            record = self._feedback_record(entity)
+            related = self._related_questions(session, [entity.feedback_id])
+            record = self._feedback_record(entity, related.get(entity.feedback_id, []))
             current_values = {
                 "status": record.status,
                 "admin_note": record.admin_note,
@@ -172,7 +208,11 @@ class FeedbackRepository(SqlAlchemyRepository):
             )
             return record, granted_points, changed_fields
 
-    def _feedback_record(self, entity: FeedbackEntity) -> FeedbackRecord:
+    def _feedback_record(
+        self,
+        entity: FeedbackEntity,
+        related_questions: list[dict] | None = None,
+    ) -> FeedbackRecord:
         image_urls = tuple(json.loads(entity.image_urls or "[]"))
         return FeedbackRecord(
             feedback_id=entity.feedback_id,
@@ -210,4 +250,35 @@ class FeedbackRepository(SqlAlchemyRepository):
             source_id=str(getattr(entity, "source_id", "") or ""),
             source_url=str(getattr(entity, "source_url", "") or ""),
             context_json=str(getattr(entity, "context_json", "{}") or "{}"),
+            related_questions=list(related_questions or []),
         )
+
+    @staticmethod
+    def _related_questions(session, feedback_ids: list[str]) -> dict[str, list[dict]]:
+        if not feedback_ids:
+            return {}
+        rows = session.scalars(
+            select(FeedbackUsageEntity)
+            .where(FeedbackUsageEntity.feedback_id.in_(feedback_ids))
+            .order_by(FeedbackUsageEntity.feedback_id, FeedbackUsageEntity.position)
+        ).all()
+        result: dict[str, list[dict]] = {feedback_id: [] for feedback_id in feedback_ids}
+        for row in rows:
+            result.setdefault(row.feedback_id, []).append(
+                {
+                    "usage_log_id": row.usage_log_id,
+                    "question_id": row.question_id,
+                    "question_title": row.question_title,
+                    "question_type": row.question_type,
+                    "answer_snapshot": row.answer_snapshot,
+                    "resolution_mode": row.resolution_mode,
+                    "confidence": float(row.confidence or 0.0),
+                    "request_id": row.request_id,
+                    "source_name": row.source_name,
+                    "source_type": row.source_type,
+                    "source_id": row.source_id,
+                    "source_url": row.source_url,
+                    "created_at": float(row.usage_created_at or 0.0),
+                }
+            )
+        return result

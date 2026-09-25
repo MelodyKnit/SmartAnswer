@@ -799,6 +799,7 @@ POST /auth/captcha/slider/verify
 
 - `username`：拥有 `dashboard:all` 的角色可用
 - `keyword`
+- `log_id`：按使用记录 ID 精确定位；提供该参数时忽略页面默认日期范围
 - `limit`
 
 说明：
@@ -807,6 +808,7 @@ POST /auth/captcha/slider/verify
 - 拥有 `dashboard:all` 的角色可查看所有用户日志
 - 每条日志包含 `elapsed_ms`，表示服务端查题链路耗时（毫秒），旧历史记录可能为 `0.0`
 - 本地题库命中时，每条日志会尽量包含 `question_id`、`source_name`、`source_type`、`source_id`、`source_url`，用于反馈中心定位题库记录。旧历史记录或纯联网来源可能为空。
+- 从反馈中心按 `usage_log_id` 定位时，客户端应使用 `log_id` 查询，不应使用题干关键字替代精确 ID；该查询不受默认“今天”日期范围影响。
 
 #### `GET /media/proxy?url=...`
 
@@ -820,18 +822,38 @@ POST /auth/captcha/slider/verify
 
 ```json
 {
-  "usage_log_id": "log_001",
+  "category": "wrong_answer",
+  "usage_log_ids": ["log_001", "log_002"],
   "title": "答错了",
-  "content": "这题答案不对",
+  "content": "这两次作答的答案都不对",
   "image_urls": ["https://example.com/a.png"]
 }
 ```
 
 说明：
 
-- `usage_log_id` 可选；从使用记录提交反馈时应传入该字段。
-- 当 `usage_log_id` 属于当前用户时，后端会自动快照题干、题型、当时答案、命中方式、置信度、请求 ID 和题库来源信息。
-- 不带 `usage_log_id` 的旧式普通反馈仍然兼容，只是没有题库定位上下文。
+- 新提交的 `category` 只有三类：`wrong_answer`（答题问题）、`suggestion`（功能建议）和 `other`（其它）。
+- `wrong_answer` 必须提供至少一个 `usage_log_ids`，每条记录都必须属于当前登录用户；任何一条不存在或越权时整次提交失败，不会写入部分关联。
+- `usage_log_ids` 按用户选择顺序保存题干、题目 ID、答案、命中方式、置信度、请求 ID 和题库来源快照，并在响应的 `related_questions` 中返回。
+- `usage_log_id` 继续兼容旧调用方；服务端会把它与 `usage_log_ids` 合并去重，并将首条记录写入旧的单数关联字段。
+- 对早期只保存了 `usage_log_id`、但快照字段为空的历史反馈，读取反馈时会从同一用户的使用记录只读回填定位信息，不修改原有数据库记录。
+- `suggestion` 和 `other` 不要求关联答题记录；旧的 `answer`、`answer_problem`、`feature_suggestion`、`system` 类别仍可读取，其中 `answer_problem` 映射为答题问题，后两者分别映射为功能建议和其它。
+
+#### `GET /feedback/answer-records`
+
+返回当前登录用户可关联的答题记录，供反馈表单的搜索、多选和去重选择器使用。
+
+查询参数：
+
+- `keyword`：按题干搜索。
+- `days`：默认 `1`，表示当天；可使用 `7`、`30`、`90`，传 `0` 表示全部历史。
+- `deduplicate`：默认 `false`；为 `true` 时按非空 `question_id` 分组，没有题库 ID 的记录保持单条分组。
+- `question_id`：展开某个题库题目后，返回该题的具体作答记录。
+- `page` / `limit`：服务端分页，最多每页 `100` 条。
+
+去重响应中的 `groups[].latest` 只是分组代表；前端展开分组后应使用 `question_id` 再查询并让用户选择具体的 `log_id`，服务端不会隐式关联整组。
+
+所有查询始终按当前登录用户过滤，不返回其他用户的使用记录，也不把完整请求上下文作为选择器数据暴露。
 
 #### `GET /feedback`
 
@@ -839,8 +861,8 @@ POST /auth/captcha/slider/verify
 
 - 未拥有 `feedback:manage` 的用户只能查看自己的反馈。
 - 拥有 `feedback:manage` 的角色可查看所有反馈。
-- 返回会包含可选定位字段：`question_id`、`question_title`、`question_type`、`answer_snapshot`、`resolution_mode`、`confidence`、`request_id`、`source_name`、`source_type`、`source_id`、`source_url`、`context`。
-- 管理端优先使用 `question_id` 跳转题库编辑；字段为空时只能按题干关键字降级检索。
+- 返回会包含兼容的首条定位字段以及 `related_questions` 数组；数组逐条包含 `usage_log_id`、`question_id`、题干快照、题型、答案、命中方式、置信度、请求 ID 和题库来源信息。
+- 管理端仅使用 `question_id` 精确跳转题库编辑；没有题库 ID 的记录明确显示“未关联题库”，不按题干执行模糊定位，但仍可通过 `usage_log_id` 精确查看对应使用记录。
 
 ### 4.9 用户看板
 

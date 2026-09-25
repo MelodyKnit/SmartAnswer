@@ -55,17 +55,23 @@ export function questionTypeLabel(value?: string | null): string {
 }
 
 export const FEEDBACK_CATEGORIES = [
-  { value: 'wrong_answer', label: '题目答错' },
-  { value: 'answer', label: '答题问题' },
-  { value: 'system', label: '系统问题' },
+  { value: 'wrong_answer', label: '答题问题' },
   { value: 'suggestion', label: '功能建议' },
-  { value: 'other', label: '其他' },
+  { value: 'other', label: '其它' },
 ]
 
-const FEEDBACK_CATEGORY_LABELS = Object.fromEntries(FEEDBACK_CATEGORIES.map((item) => [item.value, item.label]))
+const FEEDBACK_CATEGORY_LABELS: Record<string, string> = {
+  wrong_answer: '答题问题',
+  answer_problem: '答题问题',
+  answer: '答题问题',
+  system: '其它',
+  suggestion: '功能建议',
+  feature_suggestion: '功能建议',
+  other: '其它',
+}
 
 export function feedbackCategoryLabel(value?: string | null): string {
-  return (value && FEEDBACK_CATEGORY_LABELS[value]) || value || '其他'
+  return (value && FEEDBACK_CATEGORY_LABELS[value]) || value || '其它'
 }
 
 export const FEEDBACK_STATUS_META: Record<string, { label: string; type: 'warning' | 'primary' | 'success' | 'info' }> = {

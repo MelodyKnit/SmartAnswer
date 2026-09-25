@@ -6,7 +6,7 @@ import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { ApiException } from '@/api/http'
 import { feedbackApi } from '@/api/endpoints'
-import type { Feedback } from '@/api/types'
+import type { Feedback, FeedbackRelatedQuestion } from '@/api/types'
 import {
   FEEDBACK_CATEGORIES,
   FEEDBACK_STATUS_META,
@@ -16,13 +16,13 @@ import {
   questionTypeLabel,
 } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
+import FeedbackSubmitDialog from '@/components/FeedbackSubmitDialog.vue'
 import { DEFAULT_PAGE_SIZE } from '@/config/constants'
 
 const auth = useAuthStore()
 const router = useRouter()
 const canManageFeedback = computed(() => auth.hasPermission('feedback:manage'))
 const loading = ref(false)
-const submitting = ref(false)
 const list = ref<Feedback[]>([])
 const filters = reactive({
   status: '',
@@ -41,16 +41,9 @@ const STATUS_OPTIONS = [
   { value: 'rejected', label: '已驳回' },
 ]
 
-const submitForm = reactive({
-  category: 'wrong_answer',
-  title: '',
-  content: '',
-  image_urls_text: '',
-})
 const submitVisible = ref(false)
 
 function openSubmit() {
-  resetSubmitForm()
   submitVisible.value = true
 }
 
@@ -76,49 +69,76 @@ function statusType(status: string): string {
   return FEEDBACK_STATUS_META[status]?.type || 'info'
 }
 
+function feedbackRelations(row: Feedback): FeedbackRelatedQuestion[] {
+  if (row.related_questions?.length) return row.related_questions
+  if (!row.usage_log_id) return []
+  return [
+    {
+      usage_log_id: row.usage_log_id,
+      question_id: row.question_id,
+      question_title: row.question_title || '',
+      question_type: row.question_type || '',
+      answer_snapshot: row.answer_snapshot,
+      resolution_mode: row.resolution_mode,
+      confidence: row.confidence,
+      request_id: row.request_id,
+      source_name: row.source_name,
+      source_type: row.source_type,
+      source_id: row.source_id,
+      source_url: row.source_url,
+    },
+  ]
+}
+
 function feedbackQuestionTitle(row: Feedback): string {
-  return row.question_title || row.title || '（未关联题目）'
+  const relation = feedbackRelations(row)[0]
+  if (relation?.question_title?.trim()) return relation.question_title
+  if (feedbackRelations(row).length) return '已关联使用记录，但未读取到题干'
+  return row.title || '（未关联题目）'
 }
 
 function feedbackAnswer(row: Feedback): string {
-  return row.answer_snapshot || row.corrected_answer || '—'
+  return feedbackRelations(row)[0]?.answer_snapshot || row.corrected_answer || '—'
 }
 
 function relationLabel(row: Feedback): string {
-  if (row.question_id) return '已关联题库'
-  if (row.usage_log_id) return '仅关联记录'
+  const relations = feedbackRelations(row)
+  if (relations.length > 1) return `已关联 ${relations.length} 条记录`
+  if (relations[0]?.question_id) return '已关联题库'
+  if (relations.length) return '仅关联记录'
   return '普通反馈'
 }
 
-function locateQuestion(row: Feedback) {
-  if (row.question_id) {
-    router.push({
-      path: '/questions',
-      query: {
-        question_id: row.question_id,
-        keyword: row.question_title || row.title,
-        open: 'edit',
-      },
-    })
+function locateQuestion(row: Feedback, relation = feedbackRelations(row)[0]) {
+  if (!relation?.question_id) {
+    ElMessage.info('该答题记录未关联题库，只能定位对应的使用记录')
     return
   }
-  const keyword = row.question_title || row.title
-  if (!keyword) {
-    ElMessage.warning('该反馈没有可用于定位的题目信息')
-    return
-  }
-  ElMessage.warning('未直接关联题库记录，已按题干关键字检索')
-  router.push({ path: '/questions', query: { keyword } })
+  router.push({
+    path: '/questions',
+    query: {
+      question_id: relation.question_id,
+      keyword: relation.question_title || row.title,
+      open: 'edit',
+    },
+  })
 }
 
-function locateUsage(row: Feedback) {
-  const keyword = row.question_title || row.title
+function locateUsage(row: Feedback, relation = feedbackRelations(row)[0]) {
+  if (relation?.usage_log_id) {
+    router.push({ path: '/usage-logs', query: { log_id: relation.usage_log_id } })
+    return
+  }
+  const keyword = relation?.question_title?.trim()
   router.push({ path: '/usage-logs', query: keyword ? { keyword } : {} })
 }
 
-async function copyQuestionTitle(row: Feedback) {
-  const text = row.question_title || row.title
-  if (!text) return
+async function copyQuestionTitle(row: Feedback, relation = feedbackRelations(row)[0]) {
+  const text = relation?.question_title?.trim()
+  if (!text) {
+    ElMessage.warning('当前反馈没有可复制的题干')
+    return
+  }
   try {
     await navigator.clipboard.writeText(text)
     ElMessage.success('题干已复制')
@@ -164,40 +184,6 @@ async function load() {
   }
 }
 
-function resetSubmitForm() {
-  submitForm.category = 'wrong_answer'
-  submitForm.title = ''
-  submitForm.content = ''
-  submitForm.image_urls_text = ''
-}
-
-async function submitFeedback() {
-  if (!submitForm.title.trim() || !submitForm.content.trim()) {
-    ElMessage.warning('请填写反馈标题与内容')
-    return
-  }
-  submitting.value = true
-  try {
-    await feedbackApi.create({
-      category: submitForm.category,
-      title: submitForm.title.trim(),
-      content: submitForm.content.trim(),
-      image_urls: submitForm.image_urls_text
-        .split(/\r?\n/)
-        .map((item) => item.trim())
-        .filter(Boolean),
-    })
-    ElMessage.success('反馈已提交')
-    resetSubmitForm()
-    submitVisible.value = false
-    await refresh()
-  } catch (error) {
-    ElMessage.error(error instanceof ApiException ? error.message : '提交反馈失败')
-  } finally {
-    submitting.value = false
-  }
-}
-
 function openFeedbackDetail(row: Feedback) {
   current.value = row
   if (canManageFeedback.value) {
@@ -207,6 +193,10 @@ function openFeedbackDetail(row: Feedback) {
     resolveForm.reward_points = row.reward_points
   }
   resolveVisible.value = true
+}
+
+async function onFeedbackSubmitted() {
+  await refresh()
 }
 
 async function submitResolve() {
@@ -402,57 +392,10 @@ onMounted(() => {
       />
     </div>
 
-    <el-dialog
+    <FeedbackSubmitDialog
       v-model="submitVisible"
-      title="提交反馈"
-      width="560px"
-      :close-on-click-modal="false"
-    >
-      <el-form label-position="top">
-        <div class="grid grid-cols-1 gap-x-5 md:grid-cols-2">
-          <el-form-item label="反馈类型">
-            <el-select v-model="submitForm.category" class="w-full">
-              <el-option
-                v-for="item in FEEDBACK_CATEGORIES"
-                :key="item.value"
-                :value="item.value"
-                :label="item.label"
-              />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="反馈标题">
-            <el-input
-              v-model="submitForm.title"
-              maxlength="60"
-              placeholder="例如：某题答案有误 / 页面显示异常"
-            />
-          </el-form-item>
-        </div>
-        <el-form-item label="反馈内容">
-          <el-input
-            v-model="submitForm.content"
-            type="textarea"
-            :rows="5"
-            placeholder="请尽量描述清楚问题现象、题目内容或期望结果。"
-          />
-        </el-form-item>
-        <el-form-item label="图片链接（可选，每行一条）">
-          <el-input
-            v-model="submitForm.image_urls_text"
-            type="textarea"
-            :rows="2"
-            placeholder="https://example.com/screenshot-1.png"
-          />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="submitVisible = false">取消</el-button>
-        <el-button @click="resetSubmitForm">重置</el-button>
-        <el-button type="primary" :loading="submitting" @click="submitFeedback">
-          提交
-        </el-button>
-      </template>
-    </el-dialog>
+      @submitted="onFeedbackSubmitted"
+    />
 
     <el-dialog
       v-model="resolveVisible"
@@ -461,33 +404,51 @@ onMounted(() => {
     >
       <div v-if="current" class="space-y-4">
         <div
-          v-if="current.question_title || current.usage_log_id"
-          class="rounded-lg border border-line bg-card-soft p-3"
+          v-if="feedbackRelations(current).length"
+          class="space-y-3 rounded-lg border border-line bg-card-soft p-3"
         >
-          <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <div class="flex flex-wrap items-center gap-2">
-              <el-tag size="small" effect="plain">{{ relationLabel(current) }}</el-tag>
-              <span class="text-sm font-semibold text-ink">答题上下文</span>
-            </div>
-            <div class="flex flex-wrap gap-2">
-              <el-button size="small" plain @click="copyQuestionTitle(current)">复制题干</el-button>
-              <el-button size="small" plain @click="locateUsage(current)">查看使用记录</el-button>
-              <el-button size="small" type="primary" @click="locateQuestion(current)">
-                定位题库
-              </el-button>
-            </div>
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-sm font-semibold text-ink">答题上下文</span>
+            <el-tag size="small" effect="plain">{{ relationLabel(current) }}</el-tag>
           </div>
-          <p class="whitespace-pre-wrap text-sm text-ink">
-            {{ current.question_title || current.title }}
-          </p>
-          <dl class="mt-3 grid grid-cols-1 gap-2 text-xs text-ink-soft sm:grid-cols-2">
-            <div>题库 ID：{{ current.question_id || '—' }}</div>
-            <div>使用记录：{{ current.usage_log_id || '—' }}</div>
-            <div>题型：{{ current.question_type ? questionTypeLabel(current.question_type) : '—' }}</div>
-            <div>命中方式：{{ current.resolution_mode || '—' }}</div>
-            <div>当时答案：{{ current.answer_snapshot || '—' }}</div>
-            <div>置信度：{{ current.confidence ? `${Math.round(current.confidence * 100)}%` : '—' }}</div>
-          </dl>
+          <div
+            v-for="(relation, index) in feedbackRelations(current)"
+            :key="relation.usage_log_id"
+            class="rounded border border-line/60 bg-canvas/30 p-3"
+          >
+            <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <span class="text-xs font-semibold text-ink-soft">关联记录 {{ index + 1 }}</span>
+              <div class="flex flex-wrap gap-2">
+                <el-button
+                  size="small"
+                  plain
+                  :disabled="!relation.question_title?.trim()"
+                  @click="copyQuestionTitle(current, relation)"
+                >复制题干</el-button>
+                <el-button size="small" plain @click="locateUsage(current, relation)">查看记录</el-button>
+                <el-button
+                  size="small"
+                  type="primary"
+                  :disabled="!relation.question_id"
+                  :title="relation.question_id ? '定位题库记录' : '该记录未关联题库'"
+                  @click="locateQuestion(current, relation)"
+                >
+                  定位题库
+                </el-button>
+              </div>
+            </div>
+            <p class="whitespace-pre-wrap text-sm text-ink">
+              {{ relation.question_title || '未保存题干' }}
+            </p>
+            <dl class="mt-3 grid grid-cols-1 gap-2 text-xs text-ink-soft sm:grid-cols-2">
+              <div>题库 ID：{{ relation.question_id || '未关联题库' }}</div>
+              <div>使用记录：{{ relation.usage_log_id }}</div>
+              <div>题型：{{ relation.question_type ? questionTypeLabel(relation.question_type) : '—' }}</div>
+              <div>命中方式：{{ relation.resolution_mode || '—' }}</div>
+              <div>当时答案：{{ relation.answer_snapshot || '—' }}</div>
+              <div>置信度：{{ relation.confidence ? `${Math.round(relation.confidence * 100)}%` : '—' }}</div>
+            </dl>
+          </div>
         </div>
 
         <div class="rounded-lg bg-card-soft p-3">

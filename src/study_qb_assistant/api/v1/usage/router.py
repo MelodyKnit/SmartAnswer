@@ -21,6 +21,7 @@ def build_usage_router() -> APIRouter:
         username: str | None = None,
         token_id: str = "",
         api_key_id: str = "",
+        log_id: str = "",
         keyword: str = "",
         start_date: str = "",
         end_date: str = "",
@@ -54,9 +55,14 @@ def build_usage_router() -> APIRouter:
         limit = max(1, min(int(limit), 500))
         offset = (page - 1) * limit
         selected_token_id = (token_id or api_key_id).strip()
+        selected_log_id = log_id.strip()
+        if selected_log_id:
+            # 精确定位不应被使用记录页面默认的日期筛选再次过滤。
+            start_time = end_time = None
         logs = usage.list_usage_logs(
             username=username,
             token_id=selected_token_id,
+            log_id=selected_log_id,
             keyword=keyword,
             limit=limit,
             offset=offset,
@@ -66,6 +72,7 @@ def build_usage_router() -> APIRouter:
         total = usage.count_usage_logs(
             username=username,
             token_id=selected_token_id,
+            log_id=selected_log_id,
             keyword=keyword,
             start_time=start_time,
             end_time=end_time,
