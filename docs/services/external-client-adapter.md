@@ -8,10 +8,10 @@
 
 ## 2. 本地端点
 
-默认端点：
+规范端点：
 
 ```text
-http://127.0.0.1:8765/query
+http://127.0.0.1:8765/api/v1/query
 ```
 
 兼容性端点：
@@ -37,13 +37,13 @@ http://127.0.0.1:8765/ocs/query
 ## 4. GET 示例
 
 ```text
-http://127.0.0.1:8765/query?title=壁胸膜的分部不包括&type=single
+http://127.0.0.1:8765/api/v1/query?title=壁胸膜的分部不包括&type=single
 ```
 
 带选项：
 
 ```text
-http://127.0.0.1:8765/query?title=...&options=A.xxx#B.xxx#C.xxx#D.xxx&type=single
+http://127.0.0.1:8765/api/v1/query?title=...&options=A.xxx#B.xxx#C.xxx#D.xxx&type=single
 ```
 
 ## 5. POST 示例
@@ -58,17 +58,7 @@ http://127.0.0.1:8765/query?title=...&options=A.xxx#B.xxx#C.xxx#D.xxx&type=singl
 
 ## 6. 响应处理
 
-外部客户端应使用：
-
-- `ok`
-- `result.candidate_answer`
-- `result.answer_text`
-- `result.explanation`
-- `result.confidence`
-- `result.review_required`
-- `sources`
-
-当 `review_required` 为 true 时，客户端应将答案显示为候选答案以供人工审核。
+标准查询的请求、响应、错误和字段契约见[查询与诊断 API](../architecture/apis/query.md)。客户端应保留答案、解析、置信度、审核标记和来源信息；当 `review_required` 为 `true` 时，应将结果作为候选答案交由人工审核。
 
 ## 7. OCS 风格源配置结构
 

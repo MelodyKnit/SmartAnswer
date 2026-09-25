@@ -68,7 +68,7 @@ npm run build
 
 - [环境与依赖](docs/setup/environment.md)
 - [系统架构](docs/architecture/architecture.md)
-- [API 契约](docs/architecture/api-contract.md)
+- [API 文档](docs/architecture/apis/README.md)
 - [模型与联网服务](docs/services/model-provider.md)
 - [OCS 适配](docs/services/ocs-adapter.md)
 - [图片生成服务](docs/services/image-generation.md)

@@ -61,7 +61,7 @@ description: 掌握 API Key 的作用、创建步骤及外部脚本（OCS/油猴
 
 ### 方式二：手动配置到通用接口
 若使用的脚本支持通用自定义题库接口，配置参数一般如下：
-- **接口地址 (URL)**：`https://你的站点域名/api/v1/query`
+- **接口地址 (URL)**：`https://你的站点域名/api/v1/query`，具体请求和响应契约见[查询接口文档](../architecture/apis/query.md)
 - **请求方法 (Method)**：`POST`
 - **请求头 (Headers)**：
   ```http

@@ -4,7 +4,7 @@
 
 ## 1. 目的
 
-本文档将已验证的上游源数据格式映射为 [api-contract.md](../architecture/api-contract.md) 和 [architecture.md](../architecture/architecture.md) 中描述的规范化内部题目模式（schema）。
+本文档将已验证的上游源数据格式映射为 [系统架构](../architecture/architecture.md) 中描述的规范化内部题目模式（schema）。HTTP 接口契约统一维护于 [API 文档索引](../architecture/apis/README.md)。
 
 ## 2. 规范化内部字段
 

@@ -83,19 +83,9 @@
 - `infer_gemini_output(prompt, available_ratios, available_sizes)` - Gemini模型输出推断
 - `explain_size_choice(prompt, aspect_ratio, size)` - 生成推荐理由
 
-#### 2. API端点
-**文件**：`src/study_qb_assistant/api/v1/image_generation/router.py`
+#### 2. API 入口
 
-新增端点：
-```python
-POST /api/v1/image-generation-infer-size
-请求体：{ "prompt": "用户描述" }
-响应：{
-  "ok": true,
-  "output": { "aspect_ratio": "16:9", "image_size": "2K" },
-  "explanation": "检测到横屏/宽屏关键词 · 内容复杂度较高，推荐高分辨率"
-}
-```
+接口路径、请求参数和响应契约统一维护于[生图与图片编辑 API](../architecture/apis/image-generation.md)。本历史记录仅保留本次优化的实现范围，不维护独立接口定义。
 
 ### 前端新增
 

@@ -161,12 +161,10 @@ CREATE TABLE query_audit_logs (
 
 ---
 
-## 五("API 接口契约规范") 与 六("界面视觉配色与布局设计说明") 合并规范
+## 五("API 文档约定") 与 六("界面视觉配色与布局设计说明") 合并规范
 
-### 1. API 接口规范
-*   **注册 (`POST /auth/register`)** $\rightarrow$ 输入邀请码注册。
-*   **登录 (`POST /auth/login`)** $\rightarrow$ 获取 JWT 会话 Token。
-*   **生成个人邀请码 (`POST /users/me/invite-code`)** $\rightarrow$ 当前用户为历史空邀请码补齐可分享的邀请码。
+### 1. API 文档约定
+HTTP 接口的路径、请求、响应、权限和错误契约统一维护于 [API 文档索引](apis/README.md)。本文只记录系统架构、数据模型和设计决策，不维护独立的接口清单或请求/响应定义。
 
 ### 2. 扁平化简约视觉风格 (Flat, Modern Minimalist Design)
 控制台采用 **“极致扁平，现代简约（Flat Minimalist）”** 的设计风格。剔除华而不实的霓虹渐变、高光与繁杂毛玻璃，利用高对比度非对称版面、大面积极简留白、纤细明晰的边界线条与低纯度点缀色，带来极其利落、高级且具备工业美感的学术交互体验。

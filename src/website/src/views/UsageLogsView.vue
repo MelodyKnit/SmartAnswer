@@ -2,16 +2,18 @@
 /** API 使用记录。 */
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { mediaApi, tokenApi, usageApi } from '@/api/endpoints'
+import { ElMessage } from 'element-plus'
+import { feedbackApi, mediaApi, tokenApi, usageApi } from '@/api/endpoints'
 import type { ApiToken, UsageLog } from '@/api/types'
+import { ApiException } from '@/api/http'
 import {
+  FEEDBACK_CATEGORIES,
   formatDateTime,
   questionTypeLabel,
   resolutionLabel,
 } from '@/utils/format'
 import { Picture } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
-import FeedbackSubmitDialog from '@/components/FeedbackSubmitDialog.vue'
 import { DEFAULT_PAGE_SIZE } from '@/config/constants'
 import { useAuthStore } from '@/stores/auth'
 
@@ -48,8 +50,6 @@ async function load() {
       limit: filters.limit,
       page: page.value,
     }
-    const routeLogId = String(route.query.log_id || '').trim()
-    if (routeLogId) params.log_id = routeLogId
     if (canViewAllUsage.value && filters.username.trim()) params.username = filters.username.trim()
     if (filters.token_id) params.token_id = filters.token_id
     if (filters.dateRange && filters.dateRange.length === 2) {
@@ -176,15 +176,44 @@ watch(detailVisible, (visible) => {
 
 /* 反馈 */
 const fbVisible = ref(false)
+const fbSubmitting = ref(false)
 const fbContext = ref<UsageLog | null>(null)
+const fbForm = reactive({
+  usage_log_id: '' as string | null,
+  category: 'wrong_answer',
+  title: '',
+  content: '',
+})
 
 function openFeedback(log: UsageLog) {
   fbContext.value = log
+  fbForm.usage_log_id = log.log_id
+  fbForm.category = 'wrong_answer'
+  fbForm.title = '题目反馈'
+  fbForm.content = ''
   fbVisible.value = true
 }
 
-function canSubmitFeedback(log?: UsageLog | null): boolean {
-  return Boolean(log && auth.user?.user_id && log.user_id === auth.user.user_id)
+async function submitFeedback() {
+  if (!fbForm.content.trim()) {
+    ElMessage.warning('请填写反馈内容')
+    return
+  }
+  fbSubmitting.value = true
+  try {
+    await feedbackApi.create({
+      usage_log_id: fbForm.usage_log_id,
+      category: fbForm.category,
+      title: fbForm.title,
+      content: fbForm.content,
+    })
+    ElMessage.success('反馈已提交')
+    fbVisible.value = false
+  } catch (err) {
+    ElMessage.error(err instanceof ApiException ? err.message : '提交失败')
+  } finally {
+    fbSubmitting.value = false
+  }
 }
 
 function resetFilters() {
@@ -219,13 +248,8 @@ function tokenTooltip(log: UsageLog) {
 }
 
 onMounted(() => {
-  const logId = String(route.query.log_id || '').trim()
-  if (logId) {
-    // 精确定位历史记录时不能沿用页面默认的“今天”筛选。
-    filters.dateRange = null
-  }
   const keyword = String(route.query.keyword || '').trim()
-  if (keyword && !logId) {
+  if (keyword) {
     filters.keyword = keyword
   }
   load()
@@ -342,13 +366,7 @@ onUnmounted(revokeImagePreviewUrls)
           <el-table-column label="操作" width="130" align="right">
             <template #default="{ row }">
               <el-button link type="primary" @click="openDetail(row)">明细</el-button>
-              <el-button
-                link
-                type="primary"
-                :disabled="!canSubmitFeedback(row)"
-                :title="canSubmitFeedback(row) ? '提交反馈' : '只能关联自己的答题记录'"
-                @click="openFeedback(row)"
-              >反馈</el-button>
+              <el-button link type="primary" @click="openFeedback(row)">反馈</el-button>
             </template>
           </el-table-column>
           <template #empty>
@@ -501,18 +519,51 @@ onUnmounted(revokeImagePreviewUrls)
             <dd class="text-ink">{{ formatDateTime(detail.created_at) }}</dd>
           </div>
         </dl>
-        <el-button
-          type="primary"
-          class="w-full"
-          :disabled="!canSubmitFeedback(detail)"
-          @click="openFeedback(detail)"
-        >
-          {{ canSubmitFeedback(detail) ? '就此题提交反馈' : '仅可反馈自己的答题记录' }}
-        </el-button>
+        <el-button type="primary" class="w-full" @click="openFeedback(detail)">就此题提交反馈</el-button>
       </div>
     </el-drawer>
 
-    <FeedbackSubmitDialog v-model="fbVisible" :initial-record="fbContext" />
+    <el-dialog v-model="fbVisible" title="提交反馈" width="480px">
+      <el-form label-position="top">
+        <div v-if="fbContext" class="mb-4 rounded-lg border border-line bg-card-soft p-3">
+          <div class="mb-2 flex items-center justify-between gap-3">
+            <span class="text-sm font-semibold text-ink">关联题目</span>
+            <el-tag size="small" effect="plain">
+              {{ fbContext.question_id ? '已关联题库' : '未关联题库' }}
+            </el-tag>
+          </div>
+          <p class="line-clamp-3 text-sm text-ink">{{ fbContext.title }}</p>
+          <div class="mt-3 grid grid-cols-1 gap-2 text-xs text-ink-soft sm:grid-cols-2">
+            <span>题型：{{ questionTypeLabel(fbContext.question_type) }}</span>
+            <span>命中：{{ resolutionLabel(fbContext.resolution_mode) }}</span>
+            <span>答案：{{ fbContext.answer || '—' }}</span>
+            <span>题库 ID：{{ fbContext.question_id || '—' }}</span>
+          </div>
+        </div>
+        <el-form-item label="反馈类型">
+          <el-select v-model="fbForm.category" class="w-full">
+            <el-option
+              v-for="c in FEEDBACK_CATEGORIES"
+              :key="c.value"
+              :value="c.value"
+              :label="c.label"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="反馈内容">
+          <el-input
+            v-model="fbForm.content"
+            type="textarea"
+            :rows="4"
+            placeholder="请描述问题，例如：该题答案不正确，正确答案应为……"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="fbVisible = false">取消</el-button>
+        <el-button type="primary" :loading="fbSubmitting" @click="submitFeedback">提交</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
