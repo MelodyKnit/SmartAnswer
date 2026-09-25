@@ -33,6 +33,7 @@ ENV/
 env/
 .conda/
 conda-meta/
+poetry.lock
 node_modules/
 npm-debug.log*
 yarn-debug.log*
