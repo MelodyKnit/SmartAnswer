@@ -12,7 +12,7 @@
 
 - `python -m pytest tests -q`
 - 运行中的 `/api/v1/healthz`
-- 运行中的 `/status`
+- 运行中的 `/api/v1/status`
 - 运行中的 `/ocs/query`
 
 ## 3. 当前验证覆盖

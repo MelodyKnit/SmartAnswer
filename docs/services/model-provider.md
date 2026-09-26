@@ -104,7 +104,7 @@ ClassBot/New API 风格的网关是通过兼容 OpenAI 的聊天补全（Chat Co
 设置完环境变量后验证所配置的模型提供商：
 
 ```powershell
-Invoke-RestMethod -Uri "http://127.0.0.1:8765/status"
+Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/v1/status"
 ```
 
 状态接口不会打印 API 密钥。

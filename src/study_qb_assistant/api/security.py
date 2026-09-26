@@ -17,10 +17,15 @@ from .dependencies import (
     get_token_service,
 )
 from .http import extract_client_fingerprint
-from .legacy import unversioned_api_path
 
 SESSION_COOKIE = "stqb_session"
-PROTECTED_PATHS = {"/query", "/ocs/query", "/status", "/debug/recent", "/debug/usage-audit"}
+PROTECTED_PATHS = {
+    "/api/v1/query",
+    "/ocs/query",
+    "/api/v1/status",
+    "/api/v1/debug/recent",
+    "/api/v1/debug/usage-audit",
+}
 
 
 def is_auth_required(request: Request) -> bool:
@@ -113,10 +118,10 @@ def require_access(
 def guard_protected_request(request: Request) -> JSONResponse | None:
     """对受保护的数据接口执行统一鉴权。"""
 
-    logical_path = unversioned_api_path(request.url.path)
-    if not is_auth_required(request) or logical_path not in PROTECTED_PATHS:
+    request_path = request.url.path
+    if not is_auth_required(request) or request_path not in PROTECTED_PATHS:
         return None
-    if logical_path == "/ocs/query":
+    if request_path == "/ocs/query":
         token = authorization_bearer(request)
         if token and token in ocs_api_keys():
             return None

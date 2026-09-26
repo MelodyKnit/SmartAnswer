@@ -111,7 +111,3 @@ OCS 路由不使用 `/api/v1` 前缀，响应转换为 OCS 兼容的 `code/data`
 ```
 
 失败时 `code` 非零，`data.answer` 可为空；鉴权失败、积分不足和低置信度拒答仍使用 HTTP 错误状态或 OCS 兼容错误数据。
-
-## 4. 兼容路径
-
-`/query`、`/healthz`、`/version`、`/status`、`/debug/*` 和 `/configs/ocs-local-study-bank.json` 的无前缀版本由同一 v1 router 提供，均为隐藏旧别名。新客户端使用对应的 `/api/v1/...` 路径。

@@ -9,14 +9,7 @@
 OCS 兼容：{base_url}/ocs/query
 ```
 
-规范业务路由统一使用 `/api/v1`。应用同时挂载一组无前缀旧路径；该组路径不进入 OpenAPI，响应包含：
-
-```http
-Deprecation: true
-Link: </api/v1/{same-path}>; rel="successor-version"
-```
-
-旧路径仅用于兼容，新的客户端不得依赖该路径。
+规范业务路由统一使用 `/api/v1`；`/ocs/query` 是独立的 OCS 公共适配入口。
 
 ## 2. 请求约定
 

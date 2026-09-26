@@ -28,7 +28,7 @@ def process_and_save_brand_logo(
     3. logo_md.png: 64x64 像素
     4. logo_sm.png: 32x32 像素
 
-    返回各文件相对于根路径的路径映射，如 {'original': '/media/brand/logo_original.png', ...}
+    返回各文件相对于根路径的路径映射，如 {'original': '/api/v1/media/brand/logo_original.png', ...}
     """
     target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -80,6 +80,6 @@ def process_and_save_brand_logo(
 
         # 保存为 PNG
         resized_img.save(file_path, "PNG")
-        result_paths[key] = f"/media/brand/{filename}"
+        result_paths[key] = f"/api/v1/media/brand/{filename}"
 
     return result_paths

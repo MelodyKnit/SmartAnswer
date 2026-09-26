@@ -15,7 +15,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from study_qb_assistant.api.app import create_app  # noqa: E402
-from study_qb_assistant.api.v1.help.router import read_all_help_docs  # noqa: E402
+from study_qb_assistant.api.v1.help.router import DOCS_DIR, read_all_help_docs  # noqa: E402
 from study_qb_assistant.questions.models import (  # noqa: E402
     CanonicalQuestionRecord,
 )
@@ -135,7 +135,7 @@ def test_api_v1_contains_real_domain_routers() -> None:
 
 
 def test_openapi_exposes_only_versioned_business_routes() -> None:
-    """规范文档只暴露 v1 业务路径，旧路径仅保留隐藏兼容。"""
+    """规范文档只暴露版本化业务路径和 OCS 公共入口。"""
 
     client = TestClient(create_app(sample_index(), require_auth=False))
     openapi_paths = client.get("/api/v1/openapi.json").json()["paths"]
@@ -145,11 +145,6 @@ def test_openapi_exposes_only_versioned_business_routes() -> None:
         path == "/ocs/query" or path.startswith("/api/v1/")
         for path in openapi_paths
     )
-
-    legacy = client.get("/healthz")
-    assert legacy.status_code == 200
-    assert legacy.headers["Deprecation"] == "true"
-    assert "/api/v1/healthz" in legacy.headers["Link"]
 
 
 def test_help_docs_are_limited_to_the_public_help_directory() -> None:
@@ -162,4 +157,4 @@ def test_help_docs_are_limited_to_the_public_help_directory() -> None:
         "redeem-guide",
         "faq",
     ]
-    assert all("architecture" not in item["content"] for item in docs)
+    assert DOCS_DIR == PROJECT_ROOT / "docs" / "help"

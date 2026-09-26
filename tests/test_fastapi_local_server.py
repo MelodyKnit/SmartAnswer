@@ -159,10 +159,10 @@ class FastAPILocalServerTests(unittest.TestCase):
     def _register_owner_and_create_token(client: TestClient) -> tuple[dict[str, str], str]:
         """注册首个管理员用户，并返回后台会话头与原始 API Key。"""
 
-        client.post("/auth/register", json={"username": "owner", "password": "password123"})
-        session = client.post("/auth/login", json={"username": "owner", "password": "password123"})
+        client.post("/api/v1/auth/register", json={"username": "owner", "password": "password123"})
+        session = client.post("/api/v1/auth/login", json={"username": "owner", "password": "password123"})
         headers = {"Authorization": f"Bearer {session.json()['token']}"}
-        token_create = client.post("/tokens", json={"description": "trace"}, headers=headers)
+        token_create = client.post("/api/v1/tokens", json={"description": "trace"}, headers=headers)
         return headers, token_create.json()["token"]
 
     def test_announcement_management_and_active_visibility(self) -> None:
@@ -182,18 +182,18 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
             owner_headers, _token = self._register_owner_and_create_token(client)
             client.post(
-                "/auth/register",
+                "/api/v1/auth/register",
                 json={"username": "student", "password": "password123"},
             )
             student_login = client.post(
-                "/auth/login",
+                "/api/v1/auth/login",
                 json={"username": "student", "password": "password123"},
             )
             student_headers = {"Authorization": f"Bearer {student_login.json()['token']}"}
             now = time.time()
 
             visible = client.post(
-                "/announcements",
+                "/api/v1/announcements",
                 json={
                     "title": "用户公告",
                     "content": "这条公告应展示给普通用户。",
@@ -206,7 +206,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 headers=owner_headers,
             )
             client.post(
-                "/announcements",
+                "/api/v1/announcements",
                 json={
                     "title": "草稿公告",
                     "content": "草稿不展示。",
@@ -216,7 +216,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 headers=owner_headers,
             )
             client.post(
-                "/announcements",
+                "/api/v1/announcements",
                 json={
                     "title": "过期公告",
                     "content": "过期不展示。",
@@ -227,7 +227,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 headers=owner_headers,
             )
             client.post(
-                "/announcements",
+                "/api/v1/announcements",
                 json={
                     "title": "管理员公告",
                     "content": "普通用户不展示。",
@@ -238,18 +238,18 @@ class FastAPILocalServerTests(unittest.TestCase):
                 headers=owner_headers,
             )
 
-            active = client.get("/announcements/active", headers=student_headers)
+            active = client.get("/api/v1/announcements/active", headers=student_headers)
             managed = client.get(
-                "/announcements",
+                "/api/v1/announcements",
                 params={"status": "published", "limit": 10},
                 headers=owner_headers,
             )
-            forbidden = client.get("/announcements", headers=student_headers)
+            forbidden = client.get("/api/v1/announcements", headers=student_headers)
             archived = client.delete(
-                f"/announcements/{visible.json()['announcement']['announcement_id']}",
+                f"/api/v1/announcements/{visible.json()['announcement']['announcement_id']}",
                 headers=owner_headers,
             )
-            active_after_archive = client.get("/announcements/active", headers=student_headers)
+            active_after_archive = client.get("/api/v1/announcements/active", headers=student_headers)
 
         self.assertEqual(visible.status_code, 200)
         self.assertEqual(active.status_code, 200)
@@ -276,11 +276,11 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
             owner_headers, _token = self._register_owner_and_create_token(client)
             client.post(
-                "/auth/register",
+                "/api/v1/auth/register",
                 json={"username": "student", "password": "password123"},
             )
             student_login = client.post(
-                "/auth/login",
+                "/api/v1/auth/login",
                 json={"username": "student", "password": "password123"},
             )
             student_user = student_login.json()["user"]
@@ -288,7 +288,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             now = time.time()
 
             user_announcement = client.post(
-                "/announcements",
+                "/api/v1/announcements",
                 json={
                     "title": "用户公告",
                     "content": "普通用户可见。",
@@ -301,7 +301,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 headers=owner_headers,
             ).json()["announcement"]
             client.post(
-                "/announcements",
+                "/api/v1/announcements",
                 json={
                     "title": "管理员公告",
                     "content": "普通用户不可见。",
@@ -313,7 +313,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 headers=owner_headers,
             )
             client.post(
-                "/announcements",
+                "/api/v1/announcements",
                 json={
                     "title": "过期公告",
                     "content": "过期不展示。",
@@ -338,34 +338,34 @@ class FastAPILocalServerTests(unittest.TestCase):
                 content="仅当前用户可见。",
             )
 
-            first_center = client.get("/notification-center", headers=student_headers)
+            first_center = client.get("/api/v1/notification-center", headers=student_headers)
             announcement_read = client.post(
-                f"/notification-center/announcement/{user_announcement['announcement_id']}/read",
+                f"/api/v1/notification-center/announcement/{user_announcement['announcement_id']}/read",
                 headers=student_headers,
             )
             after_announcement_read = client.get(
-                "/notification-center", params={"status": "unread"}, headers=student_headers
+                "/api/v1/notification-center", params={"status": "unread"}, headers=student_headers
             )
             client.patch(
-                f"/announcements/{user_announcement['announcement_id']}",
+                f"/api/v1/announcements/{user_announcement['announcement_id']}",
                 json={"content": "公告内容更新后应重新未读。"},
                 headers=owner_headers,
             )
             after_announcement_update = client.get(
-                "/notification-center", params={"status": "unread"}, headers=student_headers
+                "/api/v1/notification-center", params={"status": "unread"}, headers=student_headers
             )
             global_read_by_student = client.post(
-                f"/notification-center/notification/{global_notice['notification_id']}/read",
+                f"/api/v1/notification-center/notification/{global_notice['notification_id']}/read",
                 headers=student_headers,
             )
             owner_notification_center = client.get(
-                "/notification-center",
+                "/api/v1/notification-center",
                 params={"source": "notification"},
                 headers=owner_headers,
             )
-            read_all = client.post("/notification-center/read-all", headers=student_headers)
+            read_all = client.post("/api/v1/notification-center/read-all", headers=student_headers)
             after_read_all = client.get(
-                "/notification-center", params={"status": "unread"}, headers=student_headers
+                "/api/v1/notification-center", params={"status": "unread"}, headers=student_headers
             )
 
         self.assertEqual(first_center.status_code, 200)
@@ -412,10 +412,10 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
 
             owner_register = client.post(
-                "/auth/register", json={"username": "owner", "password": "password123"}
+                "/api/v1/auth/register", json={"username": "owner", "password": "password123"}
             )
             owner_login = client.post(
-                "/auth/login", json={"username": "owner", "password": "password123"}
+                "/api/v1/auth/login", json={"username": "owner", "password": "password123"}
             )
             owner_headers = {"Authorization": f"Bearer {owner_login.json()['token']}"}
 
@@ -425,7 +425,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 side_effect=RuntimeError("notification store unavailable"),
             ):
                 invited_register = client.post(
-                    "/auth/register",
+                    "/api/v1/auth/register",
                     json={
                         "username": "guest",
                         "password": "password123",
@@ -433,35 +433,35 @@ class FastAPILocalServerTests(unittest.TestCase):
                     },
                 )
                 password_change = client.post(
-                    "/users/me/password",
+                    "/api/v1/users/me/password",
                     json={"old_password": "password123", "new_password": "password456"},
                     headers=owner_headers,
                 )
                 owner_relogin = client.post(
-                    "/auth/login", json={"username": "owner", "password": "password456"}
+                    "/api/v1/auth/login", json={"username": "owner", "password": "password456"}
                 )
                 owner_headers = {"Authorization": f"Bearer {owner_relogin.json()['token']}"}
                 guest_login = client.post(
-                    "/auth/login", json={"username": "guest", "password": "password123"}
+                    "/api/v1/auth/login", json={"username": "guest", "password": "password123"}
                 )
                 guest_headers = {"Authorization": f"Bearer {guest_login.json()['token']}"}
                 wallet_grant = client.post(
-                    "/wallet/grants",
+                    "/api/v1/wallet/grants",
                     json={"username": "guest", "kind": "points", "points": 5},
                     headers=owner_headers,
                 )
                 user_update = client.patch(
-                    "/users/guest",
+                    "/api/v1/users/guest",
                     json={"points": -5},
                     headers=owner_headers,
                 )
                 feedback = client.post(
-                    "/feedback",
+                    "/api/v1/feedback",
                     json={"title": "反馈", "content": "请检查答案"},
                     headers=guest_headers,
                 )
                 feedback_resolve = client.patch(
-                    f"/feedback/{feedback.json()['feedback']['feedback_id']}",
+                    f"/api/v1/feedback/{feedback.json()['feedback']['feedback_id']}",
                     json={"status": "resolved", "reward_points": 7},
                     headers=owner_headers,
                 )
@@ -473,7 +473,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             self.assertEqual(user_update.status_code, 200)
             self.assertEqual(feedback.status_code, 200)
             self.assertEqual(feedback_resolve.status_code, 200)
-            guest_after = client.get("/users/me", headers=guest_headers)
+            guest_after = client.get("/api/v1/users/me", headers=guest_headers)
             self.assertEqual(guest_after.status_code, 200)
             self.assertEqual(guest_after.json()["user"]["points"], 7)
 
@@ -482,11 +482,8 @@ class FastAPILocalServerTests(unittest.TestCase):
 
         client = TestClient(create_app(_sample_index(), require_auth=False))
 
-        self.assertEqual(client.get("/version").status_code, 200)
+        self.assertEqual(client.get("/api/v1/version").status_code, 200)
         self.assertEqual(client.get("/api/v1/project-update/status").status_code, 401)
-        legacy = client.get("/project-update/status")
-        self.assertEqual(legacy.status_code, 401)
-        self.assertEqual(legacy.headers["Deprecation"], "true")
 
     def test_query_and_ocs_routes_keep_existing_wire_shape(self) -> None:
         import os
@@ -534,7 +531,6 @@ class FastAPILocalServerTests(unittest.TestCase):
                 "/api/v1/healthz",
                 headers={"Accept": "text/html"},
             )
-            legacy_health = client.get("/healthz")
             openapi = client.get("/api/v1/openapi.json")
         finally:
             os.environ.pop("STQB_OCS_API_KEYS", None)
@@ -542,8 +538,6 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(health.json(), {"ok": True})
         self.assertEqual(browser_health.json(), {"ok": True})
         self.assertEqual(openapi.json()["info"]["version"], __version__)
-        self.assertEqual(legacy_health.headers["Deprecation"], "true")
-        self.assertIn("/api/v1/healthz", legacy_health.headers["Link"])
         self.assertTrue(
             all(
                 path == "/ocs/query" or path.startswith("/api/v1/")
@@ -580,13 +574,13 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
 
             # 注册并登录用户以获得合法 Authorization 头，使 record_usage 正确保存
-            client.post("/auth/register", json={"username": "jack", "password": "password123"})
-            login_res = client.post("/auth/login", json={"username": "jack", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "jack", "password": "password123"})
+            login_res = client.post("/api/v1/auth/login", json={"username": "jack", "password": "password123"})
             headers = {"Authorization": f"Bearer {login_res.json()['token']}"}
 
             # 模拟带代理头部搜题
             res = client.post(
-                "/query",
+                "/api/v1/query",
                 json={"title": "单选题(1分)中国道路。", "options": ["A", "B"]},
                 headers={
                     "Authorization": headers["Authorization"],
@@ -605,7 +599,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             # 直连公网请求不能借由转发头伪造使用记录中的来源地址。
             direct_client = TestClient(client.app, client=("8.8.8.8", 50001))
             direct_response = direct_client.post(
-                "/query",
+                "/api/v1/query",
                 json={"title": "单选题(1分)中国道路。", "options": ["A", "B"]},
                 headers={
                     "Authorization": headers["Authorization"],
@@ -638,7 +632,7 @@ class FastAPILocalServerTests(unittest.TestCase):
         future_page = client.get("/future-admin-page", headers={"Accept": "text/html"})
         future_api = client.get("/future-api", headers={"Accept": "application/json"})
         missing_asset = client.get("/assets/missing.js", headers={"Accept": "*/*"})
-        missing_api = client.get("/auth/missing", headers={"Accept": "application/json"})
+        missing_api = client.get("/api/v1/auth/missing", headers={"Accept": "application/json"})
 
         self.assertEqual(page.status_code, 200)
         self.assertIn("text/html", page.headers["content-type"])
@@ -665,14 +659,14 @@ class FastAPILocalServerTests(unittest.TestCase):
                 )
             )
 
-            client.post("/auth/register", json={"username": "tester", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "tester", "password": "password123"})
             login = client.post(
-                "/auth/login",
+                "/api/v1/auth/login",
                 json={"username": "tester", "password": "password123"},
             )
             token = login.json()["token"]
             response = client.get(
-                "/tokens",
+                "/api/v1/tokens",
                 headers={
                     "Authorization": f"Bearer {token}",
                     "Accept": "*/*",
@@ -690,18 +684,18 @@ class FastAPILocalServerTests(unittest.TestCase):
             auth = AuthService(self._runtime_database_path(directory))
             client = TestClient(create_app(_sample_index(), auth_service=auth, require_auth=True))
 
-            blocked = client.get("/status")
+            blocked = client.get("/api/v1/status")
             registered = client.post(
-                "/auth/register",
+                "/api/v1/auth/register",
                 json={"username": "tester", "password": "password123"},
             )
             login = client.post(
-                "/auth/login",
+                "/api/v1/auth/login",
                 json={"username": "tester", "password": "password123"},
             )
             token = login.json()["token"]
-            session = client.get("/auth/session", headers={"Authorization": f"Bearer {token}"})
-            status = client.get("/status", headers={"Authorization": f"Bearer {token}"})
+            session = client.get("/api/v1/auth/session", headers={"Authorization": f"Bearer {token}"})
+            status = client.get("/api/v1/status", headers={"Authorization": f"Bearer {token}"})
 
         self.assertEqual(blocked.status_code, 401)
         self.assertTrue(registered.json()["ok"])
@@ -715,7 +709,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             client = TestClient(create_app(_sample_index(), auth_service=auth, require_auth=True))
 
             registered = client.post(
-                "/auth/register",
+                "/api/v1/auth/register",
                 json={
                     "username": "tester",
                     "password": "password123",
@@ -723,11 +717,11 @@ class FastAPILocalServerTests(unittest.TestCase):
                 },
             )
             login = client.post(
-                "/auth/login",
+                "/api/v1/auth/login",
                 json={"username": "Tester@Example.com", "password": "password123"},
             )
             token = login.json()["token"]
-            session = client.get("/auth/session", headers={"Authorization": f"Bearer {token}"})
+            session = client.get("/api/v1/auth/session", headers={"Authorization": f"Bearer {token}"})
 
         self.assertTrue(registered.json()["ok"])
         self.assertTrue(login.json()["ok"])
@@ -740,7 +734,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             client = TestClient(create_app(_sample_index(), auth_service=auth, require_auth=True))
 
             first = client.post(
-                "/auth/register",
+                "/api/v1/auth/register",
                 json={
                     "username": "tester",
                     "password": "password123",
@@ -748,7 +742,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 },
             )
             second = client.post(
-                "/auth/register",
+                "/api/v1/auth/register",
                 json={
                     "username": "tester2",
                     "password": "password123",
@@ -766,12 +760,12 @@ class FastAPILocalServerTests(unittest.TestCase):
             client = TestClient(create_app(_sample_index(), auth_service=auth, require_auth=True))
 
             owner = client.post(
-                "/auth/register",
+                "/api/v1/auth/register",
                 json={"username": "owner", "password": "password123"},
             )
             invite_code = owner.json()["user"]["invite_code"]
             invited = client.post(
-                "/auth/register",
+                "/api/v1/auth/register",
                 json={
                     "username": "alice",
                     "password": "password123",
@@ -779,11 +773,11 @@ class FastAPILocalServerTests(unittest.TestCase):
                 },
             )
             login = client.post(
-                "/auth/login",
+                "/api/v1/auth/login",
                 json={"username": "owner", "password": "password123"},
             )
             users = client.get(
-                "/users",
+                "/api/v1/users",
                 headers={"Authorization": f"Bearer {login.json()['token']}"},
             )
 
@@ -967,7 +961,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             client = TestClient(create_app(_sample_index(), auth_service=auth, require_auth=True))
 
             response = client.post(
-                "/auth/register",
+                "/api/v1/auth/register",
                 json={
                     "username": "alice",
                     "password": "password123",
@@ -984,7 +978,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             client = TestClient(create_app(_sample_index(), auth_service=auth, require_auth=True))
 
             register = client.post(
-                "/auth/register",
+                "/api/v1/auth/register",
                 json={"username": "legacy", "password": "password123"},
             )
             user = auth.repository.get_user("legacy")
@@ -993,11 +987,11 @@ class FastAPILocalServerTests(unittest.TestCase):
             auth.repository.save_user(user)
 
             login = client.post(
-                "/auth/login",
+                "/api/v1/auth/login",
                 json={"username": "legacy", "password": "password123"},
             )
             session = client.get(
-                "/auth/session",
+                "/api/v1/auth/session",
                 headers={"Authorization": f"Bearer {login.json()['token']}"},
             )
             refreshed = auth.repository.get_user("legacy")
@@ -1016,9 +1010,9 @@ class FastAPILocalServerTests(unittest.TestCase):
             auth = AuthService(self._runtime_database_path(directory))
             client = TestClient(create_app(_sample_index(), auth_service=auth, require_auth=True))
 
-            client.post("/auth/register", json={"username": "legacy", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "legacy", "password": "password123"})
             login = client.post(
-                "/auth/login",
+                "/api/v1/auth/login",
                 json={"username": "legacy", "password": "password123"},
             )
             user = auth.repository.get_user("legacy")
@@ -1027,7 +1021,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             auth.repository.save_user(user)
 
             generated = client.post(
-                "/users/me/invite-code",
+                "/api/v1/users/me/invite-code",
                 headers={"Authorization": f"Bearer {login.json()['token']}"},
             )
             refreshed = auth.repository.get_user("legacy")
@@ -1049,22 +1043,22 @@ class FastAPILocalServerTests(unittest.TestCase):
                 )
             )
 
-            first_status = client.get("/auth/register-status")
+            first_status = client.get("/api/v1/auth/register-status")
             first = client.post(
-                "/auth/register", json={"username": "owner", "password": "password123"}
+                "/api/v1/auth/register", json={"username": "owner", "password": "password123"}
             )
             login = client.post(
-                "/auth/login", json={"username": "owner", "password": "password123"}
+                "/api/v1/auth/login", json={"username": "owner", "password": "password123"}
             )
             headers = {"Authorization": f"Bearer {login.json()['token']}"}
             config = client.patch(
-                "/system-config",
+                "/api/v1/system-config",
                 json={"registration_enabled": "false"},
                 headers=headers,
             )
-            disabled_status = client.get("/auth/register-status")
+            disabled_status = client.get("/api/v1/auth/register-status")
             blocked = client.post(
-                "/auth/register",
+                "/api/v1/auth/register",
                 json={"username": "blocked", "password": "password123"},
             )
 
@@ -1095,14 +1089,14 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
 
             owner_register = client.post(
-                "/auth/register", json={"username": "owner", "password": "password123"}
+                "/api/v1/auth/register", json={"username": "owner", "password": "password123"}
             )
             owner_login = client.post(
-                "/auth/login", json={"username": "owner", "password": "password123"}
+                "/api/v1/auth/login", json={"username": "owner", "password": "password123"}
             )
             headers = {"Authorization": f"Bearer {owner_login.json()['token']}"}
             configured = client.patch(
-                "/system-config",
+                "/api/v1/system-config",
                 json={
                     "registration_captcha_enabled": "true",
                     "login_captcha_enabled": "true",
@@ -1111,25 +1105,25 @@ class FastAPILocalServerTests(unittest.TestCase):
                 headers=headers,
             )
             invalid_threshold = client.patch(
-                "/system-config",
+                "/api/v1/system-config",
                 json={"login_failure_threshold": "5"},
                 headers=headers,
             )
 
             registration_missing = client.post(
-                "/auth/register", json={"username": "learner", "password": "password123"}
+                "/api/v1/auth/register", json={"username": "learner", "password": "password123"}
             )
-            registration_challenge = client.get("/auth/captcha/slider")
+            registration_challenge = client.get("/api/v1/auth/captcha/slider")
             registration_service = client.app.state.slider_captcha
             registration_challenge_id = registration_challenge.json()["challenge_id"]
             registration_x = registration_service._challenges[registration_challenge_id]["x"]
             registration_verify = client.post(
-                "/auth/captcha/slider/verify",
+                "/api/v1/auth/captcha/slider/verify",
                 json={"challenge_id": registration_challenge_id, "x": registration_x},
             )
             registration_token = registration_verify.json()["captcha_token"]
             registration_success = client.post(
-                "/auth/register",
+                "/api/v1/auth/register",
                 json={
                     "username": "learner",
                     "password": "password123",
@@ -1137,7 +1131,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 },
             )
             registration_replay = client.post(
-                "/auth/register",
+                "/api/v1/auth/register",
                 json={
                     "username": "otherlearner",
                     "password": "password123",
@@ -1146,30 +1140,30 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
 
             wrong_one = client.post(
-                "/auth/login", json={"username": "owner", "password": "not-the-password"}
+                "/api/v1/auth/login", json={"username": "owner", "password": "not-the-password"}
             )
             wrong_two = client.post(
-                "/auth/login", json={"username": "owner", "password": "not-the-password"}
+                "/api/v1/auth/login", json={"username": "owner", "password": "not-the-password"}
             )
             captcha_required = client.post(
-                "/auth/login", json={"username": "owner", "password": "password123"}
+                "/api/v1/auth/login", json={"username": "owner", "password": "password123"}
             )
-            login_challenge = client.get("/auth/captcha/slider")
+            login_challenge = client.get("/api/v1/auth/captcha/slider")
             login_challenge_id = login_challenge.json()["challenge_id"]
             login_x = registration_service._challenges[login_challenge_id]["x"]
             login_verify = client.post(
-                "/auth/captcha/slider/verify",
+                "/api/v1/auth/captcha/slider/verify",
                 json={"challenge_id": login_challenge_id, "x": login_x},
             )
             recovered_login = client.post(
-                "/auth/login",
+                "/api/v1/auth/login",
                 json={
                     "username": "owner",
                     "password": "password123",
                     "captcha_token": login_verify.json()["captcha_token"],
                 },
             )
-            status = client.get("/auth/register-status")
+            status = client.get("/api/v1/auth/register-status")
 
         self.assertEqual(owner_register.status_code, 200)
         self.assertEqual(configured.status_code, 200)
@@ -1210,9 +1204,9 @@ class FastAPILocalServerTests(unittest.TestCase):
                     require_auth=True,
                 )
             )
-            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "owner", "password": "password123"})
             login = client.post(
-                "/auth/login", json={"username": "owner", "password": "password123"}
+                "/api/v1/auth/login", json={"username": "owner", "password": "password123"}
             )
             headers = {"Authorization": f"Bearer {login.json()['token']}"}
             user = auth.get_user("owner")
@@ -1235,8 +1229,8 @@ class FastAPILocalServerTests(unittest.TestCase):
                     for index in range(501)
                 ]
             )
-            wallet_orders = client.get("/wallet/orders", params={"limit": 10}, headers=headers)
-            wallet_changes = client.get("/wallet/changes", params={"limit": 10}, headers=headers)
+            wallet_orders = client.get("/api/v1/wallet/orders", params={"limit": 10}, headers=headers)
+            wallet_changes = client.get("/api/v1/wallet/changes", params={"limit": 10}, headers=headers)
 
         self.assertEqual(wallet_orders.status_code, 200)
         self.assertEqual(wallet_orders.json()["total"], 501)
@@ -1256,24 +1250,24 @@ class FastAPILocalServerTests(unittest.TestCase):
                 )
             )
 
-            public_before = client.get("/site-config")
-            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            public_before = client.get("/api/v1/site-config")
+            client.post("/api/v1/auth/register", json={"username": "owner", "password": "password123"})
             login = client.post(
-                "/auth/login", json={"username": "owner", "password": "password123"}
+                "/api/v1/auth/login", json={"username": "owner", "password": "password123"}
             )
             headers = {"Authorization": f"Bearer {login.json()['token']}"}
             updated = client.patch(
-                "/system-config",
+                "/api/v1/system-config",
                 json={"site_title": "校园题库", "site_logo_url": "/brand/logo.png"},
                 headers=headers,
             )
-            public_after = client.get("/site-config")
+            public_after = client.get("/api/v1/site-config")
             empty_title = client.patch(
-                "/system-config",
+                "/api/v1/system-config",
                 json={"site_title": "", "site_logo_url": ""},
                 headers=headers,
             )
-            public_after_empty = client.get("/site-config")
+            public_after_empty = client.get("/api/v1/site-config")
 
         self.assertEqual(public_before.status_code, 200)
         self.assertEqual(public_before.json()["site_title"], "AI题库")
@@ -1298,13 +1292,13 @@ class FastAPILocalServerTests(unittest.TestCase):
                 )
             )
 
-            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "owner", "password": "password123"})
             login = client.post(
-                "/auth/login", json={"username": "owner", "password": "password123"}
+                "/api/v1/auth/login", json={"username": "owner", "password": "password123"}
             )
             headers = {"Authorization": f"Bearer {login.json()['token']}"}
             rejected = client.patch(
-                "/system-config",
+                "/api/v1/system-config",
                 json={"site_logo_url": "javascript:alert(1)"},
                 headers=headers,
             )
@@ -1324,13 +1318,13 @@ class FastAPILocalServerTests(unittest.TestCase):
                 )
             )
 
-            status_before = client.get("/auth/register-status")
+            status_before = client.get("/api/v1/auth/register-status")
             first = client.post(
-                "/auth/register", json={"username": "owner", "password": "password123"}
+                "/api/v1/auth/register", json={"username": "owner", "password": "password123"}
             )
-            status_after = client.get("/auth/register-status")
+            status_after = client.get("/api/v1/auth/register-status")
             second = client.post(
-                "/auth/register",
+                "/api/v1/auth/register",
                 json={"username": "second", "password": "password123"},
             )
 
@@ -1354,18 +1348,18 @@ class FastAPILocalServerTests(unittest.TestCase):
                 )
             )
 
-            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "owner", "password": "password123"})
             login = client.post(
-                "/auth/login", json={"username": "owner", "password": "password123"}
+                "/api/v1/auth/login", json={"username": "owner", "password": "password123"}
             )
             headers = {"Authorization": f"Bearer {login.json()['token']}"}
             rejected = client.patch(
-                "/system-config",
+                "/api/v1/system-config",
                 json={"email_verification_enabled": "true"},
                 headers=headers,
             )
             accepted = client.patch(
-                "/system-config",
+                "/api/v1/system-config",
                 json={
                     "email_verification_enabled": "true",
                     "smtp_host": "smtp.example.com",
@@ -1378,9 +1372,9 @@ class FastAPILocalServerTests(unittest.TestCase):
                 },
                 headers=headers,
             )
-            masked = client.get("/system-config", headers=headers)
+            masked = client.get("/api/v1/system-config", headers=headers)
             keep_password = client.patch(
-                "/system-config",
+                "/api/v1/system-config",
                 json={"smtp_password": "", "smtp_from_name": "AI题库运营"},
                 headers=headers,
             )
@@ -1409,28 +1403,28 @@ class FastAPILocalServerTests(unittest.TestCase):
                     _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
-            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "owner", "password": "password123"})
             login = client.post(
-                "/auth/login", json={"username": "owner", "password": "password123"}
+                "/api/v1/auth/login", json={"username": "owner", "password": "password123"}
             )
             headers = {"Authorization": f"Bearer {login.json()['token']}"}
 
-            optional_status = client.get("/auth/register-status")
+            optional_status = client.get("/api/v1/auth/register-status")
             disabled_code = client.post(
-                "/auth/email-verification-codes",
+                "/api/v1/auth/email-verification-codes",
                 json={"email": "student@example.com", "purpose": "register"},
             )
             required_update = client.patch(
-                "/system-config",
+                "/api/v1/system-config",
                 json={"registration_email_mode": "required"},
                 headers=headers,
             )
-            required_status = client.get("/auth/register-status")
+            required_status = client.get("/api/v1/auth/register-status")
             missing_email = client.post(
-                "/auth/register", json={"username": "missing", "password": "password123"}
+                "/api/v1/auth/register", json={"username": "missing", "password": "password123"}
             )
             without_code = client.post(
-                "/auth/register",
+                "/api/v1/auth/register",
                 json={
                     "username": "required_user",
                     "password": "password123",
@@ -1438,7 +1432,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 },
             )
             unconfigured_verified = client.patch(
-                "/system-config",
+                "/api/v1/system-config",
                 json={"registration_email_mode": "verified"},
                 headers=headers,
             )
@@ -1482,20 +1476,20 @@ class FastAPILocalServerTests(unittest.TestCase):
             sender = FakeEmailSender()
             client.app.state.email_sender = sender
 
-            status = client.get("/auth/register-status")
+            status = client.get("/api/v1/auth/register-status")
             forbidden_domain = client.post(
-                "/auth/email-verification-codes",
+                "/api/v1/auth/email-verification-codes",
                 json={"email": "alice@example.invalid", "purpose": "register"},
             )
             sent = client.post(
-                "/auth/email-verification-codes",
+                "/api/v1/auth/email-verification-codes",
                 json={"email": "Alice@qq.com", "purpose": "register"},
             )
             stored = auth.repository.latest_email_verification_code(
                 email="alice@qq.com", purpose="register"
             )
             missing_code = client.post(
-                "/auth/register",
+                "/api/v1/auth/register",
                 json={
                     "username": "alice",
                     "password": "password123",
@@ -1503,7 +1497,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 },
             )
             wrong = client.post(
-                "/auth/register",
+                "/api/v1/auth/register",
                 json={
                     "username": "alice",
                     "password": "password123",
@@ -1513,7 +1507,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
             code = str(sender.sent[-1]["code"])
             created = client.post(
-                "/auth/register",
+                "/api/v1/auth/register",
                 json={
                     "username": "alice",
                     "password": "password123",
@@ -1522,7 +1516,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 },
             )
             reused = client.post(
-                "/auth/register",
+                "/api/v1/auth/register",
                 json={
                     "username": "bob",
                     "password": "password123",
@@ -1578,12 +1572,12 @@ class FastAPILocalServerTests(unittest.TestCase):
             auth.register("taken", "password123", "taken@qq.com")
 
             sent = client.post(
-                "/auth/email-verification-codes",
+                "/api/v1/auth/email-verification-codes",
                 json={"email": "fresh@qq.com", "purpose": "register"},
             )
             code = str(sender.sent[-1]["code"])
             conflict = client.post(
-                "/auth/register",
+                "/api/v1/auth/register",
                 json={
                     "username": "taken",
                     "password": "password123",
@@ -1592,7 +1586,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 },
             )
             retry = client.post(
-                "/auth/register",
+                "/api/v1/auth/register",
                 json={
                     "username": "fresh",
                     "password": "password123",
@@ -1634,15 +1628,15 @@ class FastAPILocalServerTests(unittest.TestCase):
             client.app.state.email_sender = FakeEmailSender()
 
             first = client.post(
-                "/auth/email-verification-codes",
+                "/api/v1/auth/email-verification-codes",
                 json={"email": "rate@qq.com", "purpose": "register"},
             )
             cooldown = client.post(
-                "/auth/email-verification-codes",
+                "/api/v1/auth/email-verification-codes",
                 json={"email": "rate@qq.com", "purpose": "register"},
             )
             ip_limited = client.post(
-                "/auth/email-verification-codes",
+                "/api/v1/auth/email-verification-codes",
                 json={"email": "other@qq.com", "purpose": "register"},
             )
 
@@ -1679,11 +1673,11 @@ class FastAPILocalServerTests(unittest.TestCase):
             client.app.state.email_sender = FailingEmailSender()
 
             first = client.post(
-                "/auth/email-verification-codes",
+                "/api/v1/auth/email-verification-codes",
                 json={"email": "smtpdown@qq.com", "purpose": "register"},
             )
             second = client.post(
-                "/auth/email-verification-codes",
+                "/api/v1/auth/email-verification-codes",
                 json={"email": "smtpdown@qq.com", "purpose": "register"},
             )
             latest_usable_code = auth.repository.latest_email_verification_code(
@@ -1722,7 +1716,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             client.app.state.email_sender = FakeEmailSender()
 
             first = client.post(
-                "/auth/email-verification-codes",
+                "/api/v1/auth/email-verification-codes",
                 json={"email": "cooldown@qq.com", "purpose": "register"},
             )
             latest = auth.repository.latest_email_verification_code(
@@ -1731,7 +1725,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             self.assertIsNotNone(latest)
             auth.repository.consume_email_verification_code(latest.code_id, time.time())
             cooldown = client.post(
-                "/auth/email-verification-codes",
+                "/api/v1/auth/email-verification-codes",
                 json={"email": "cooldown@qq.com", "purpose": "register"},
             )
 
@@ -1770,47 +1764,47 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
 
             register = client.post(
-                "/auth/register", json={"username": "owner", "password": "password123"}
+                "/api/v1/auth/register", json={"username": "owner", "password": "password123"}
             )
             login = client.post(
-                "/auth/login", json={"username": "owner", "password": "password123"}
+                "/api/v1/auth/login", json={"username": "owner", "password": "password123"}
             )
             token = login.json()["token"]
             headers = {"Authorization": f"Bearer {token}"}
 
-            me = client.get("/users/me", headers=headers)
-            token_create = client.post("/tokens", json={"description": "我的 OCS"}, headers=headers)
-            token_list = client.get("/tokens", headers=headers)
-            usage_before = client.get("/usage-logs", headers=headers)
+            me = client.get("/api/v1/users/me", headers=headers)
+            token_create = client.post("/api/v1/tokens", json={"description": "我的 OCS"}, headers=headers)
+            token_list = client.get("/api/v1/tokens", headers=headers)
+            usage_before = client.get("/api/v1/usage-logs", headers=headers)
 
             raw_api_token = token_create.json()["token"]
             ocs_headers = {"Authorization": f"Bearer {raw_api_token}"}
             query = client.get(
                 "/ocs/query", params={"title": "示例题", "type": "single"}, headers=ocs_headers
             )
-            usage_after = client.get("/usage-logs", headers=headers)
-            workbench_after_query = client.get("/dashboard/workbench", headers=headers)
+            usage_after = client.get("/api/v1/usage-logs", headers=headers)
+            workbench_after_query = client.get("/api/v1/dashboard/workbench", headers=headers)
             unused_token_create = client.post(
-                "/tokens", json={"description": "未使用 OCS"}, headers=headers
+                "/api/v1/tokens", json={"description": "未使用 OCS"}, headers=headers
             )
             usage_by_token = client.get(
-                "/usage-logs",
+                "/api/v1/usage-logs",
                 params={"token_id": token_create.json()["token_info"]["token_id"]},
                 headers=headers,
             )
             usage_by_legacy_api_key_id = client.get(
-                "/usage-logs",
+                "/api/v1/usage-logs",
                 params={"api_key_id": token_create.json()["token_info"]["token_id"]},
                 headers=headers,
             )
             usage_by_unused_token = client.get(
-                "/usage-logs",
+                "/api/v1/usage-logs",
                 params={"token_id": unused_token_create.json()["token_info"]["token_id"]},
                 headers=headers,
             )
 
             feedback = client.post(
-                "/feedback",
+                "/api/v1/feedback",
                 json={
                     "usage_log_id": usage_after.json()["logs"][0]["log_id"],
                     "category": "wrong_answer",
@@ -1820,16 +1814,16 @@ class FastAPILocalServerTests(unittest.TestCase):
                 },
                 headers=headers,
             )
-            feedback_list = client.get("/feedback", headers=headers)
+            feedback_list = client.get("/api/v1/feedback", headers=headers)
             question_lookup = client.get(
-                "/questions",
+                "/api/v1/questions",
                 params={"question_id": usage_after.json()["logs"][0]["question_id"]},
                 headers=headers,
             )
             feedback_id = feedback.json()["feedback"]["feedback_id"]
-            points_before_feedback_resolve = client.get("/users/me", headers=headers)
+            points_before_feedback_resolve = client.get("/api/v1/users/me", headers=headers)
             feedback_resolve = client.patch(
-                f"/feedback/{feedback_id}",
+                f"/api/v1/feedback/{feedback_id}",
                 json={
                     "status": "resolved",
                     "admin_note": "已修正题库",
@@ -1838,9 +1832,9 @@ class FastAPILocalServerTests(unittest.TestCase):
                 },
                 headers=headers,
             )
-            feedback_list_after_resolve = client.get("/feedback", headers=headers)
-            points_after_feedback_resolve = client.get("/users/me", headers=headers)
-            feedback_notice_center = client.get("/notification-center", headers=headers).json()
+            feedback_list_after_resolve = client.get("/api/v1/feedback", headers=headers)
+            points_after_feedback_resolve = client.get("/api/v1/users/me", headers=headers)
+            feedback_notice_center = client.get("/api/v1/notification-center", headers=headers).json()
             self.assertTrue(
                 any("反馈处理结果通知" in item["title"] for item in feedback_notice_center["items"])
             )
@@ -1852,7 +1846,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 )
             )
             feedback_resolve_repeat = client.patch(
-                f"/feedback/{feedback_id}",
+                f"/api/v1/feedback/{feedback_id}",
                 json={
                     "status": " RESOLVED ",
                     "admin_note": "重复保存",
@@ -1861,12 +1855,12 @@ class FastAPILocalServerTests(unittest.TestCase):
                 },
                 headers=headers,
             )
-            points_after_feedback_repeat = client.get("/users/me", headers=headers)
+            points_after_feedback_repeat = client.get("/api/v1/users/me", headers=headers)
             feedback_notice_after_change = client.get(
-                "/notification-center", headers=headers
+                "/api/v1/notification-center", headers=headers
             ).json()
             feedback_exact_repeat = client.patch(
-                f"/feedback/{feedback_id}",
+                f"/api/v1/feedback/{feedback_id}",
                 json={
                     "status": "resolved",
                     "admin_note": "重复保存",
@@ -1876,35 +1870,35 @@ class FastAPILocalServerTests(unittest.TestCase):
                 headers=headers,
             )
             feedback_notice_after_exact_repeat = client.get(
-                "/notification-center", headers=headers
+                "/api/v1/notification-center", headers=headers
             ).json()
-            billing_get = client.get("/billing", headers=headers)
-            billing_patch = client.patch("/billing", json={"llm_fallback": 9}, headers=headers)
-            wallet_me = client.get("/wallet/me", headers=headers)
-            wallet_orders_after_feedback = client.get("/wallet/orders", headers=headers)
+            billing_get = client.get("/api/v1/billing", headers=headers)
+            billing_patch = client.patch("/api/v1/billing", json={"llm_fallback": 9}, headers=headers)
+            wallet_me = client.get("/api/v1/wallet/me", headers=headers)
+            wallet_orders_after_feedback = client.get("/api/v1/wallet/orders", headers=headers)
             redeem_code_create = client.post(
-                "/wallet/redeem-codes",
+                "/api/v1/wallet/redeem-codes",
                 json={"kind": "points", "points": 25, "max_uses": 1},
                 headers=headers,
             )
             subscription_code_rejected = client.post(
-                "/wallet/redeem-codes",
+                "/api/v1/wallet/redeem-codes",
                 json={"kind": "subscription", "subscription_days": 30, "max_uses": 1},
                 headers=headers,
             )
             subscription_grant_rejected = client.post(
-                "/wallet/grants",
+                "/api/v1/wallet/grants",
                 json={"username": "owner", "kind": "subscription", "subscription_days": 30},
                 headers=headers,
             )
             redeem = client.post(
-                "/wallet/redeem",
+                "/api/v1/wallet/redeem",
                 json={"code": redeem_code_create.json()["redeem_code"]["code"]},
                 headers=headers,
             )
-            wallet_orders_after = client.get("/wallet/orders", headers=headers)
+            wallet_orders_after = client.get("/api/v1/wallet/orders", headers=headers)
             system_config_patch = client.patch(
-                "/system-config",
+                "/api/v1/system-config",
                 json={
                     "smart_proto_enabled": "false",
                     "custom_proto_header": "https",
@@ -1917,14 +1911,14 @@ class FastAPILocalServerTests(unittest.TestCase):
                 },
                 headers=headers,
             )
-            system_config_get = client.get("/system-config", headers=headers)
+            system_config_get = client.get("/api/v1/system-config", headers=headers)
             ocs_config_after_proto_change = client.get(
-                "/configs/ocs-local-study-bank.json",
+                "/api/v1/configs/ocs-local-study-bank.json",
                 headers={**headers, "Host": "example.com"},
             )
-            points_policy_get = client.get("/points-policy", headers=headers)
+            points_policy_get = client.get("/api/v1/points-policy", headers=headers)
             llm_model_create = client.post(
-                "/llm-models",
+                "/api/v1/llm-models",
                 json={
                     "name": "主力模型",
                     "base_url": "https://llm.example.com/v1",
@@ -1934,17 +1928,17 @@ class FastAPILocalServerTests(unittest.TestCase):
                 },
                 headers=headers,
             )
-            llm_models = client.get("/llm-models", headers=headers)
+            llm_models = client.get("/api/v1/llm-models", headers=headers)
 
             # 测试模型连通性测试接口（未登录拦截验证）
             model_id_for_test = llm_models.json()["models"][0]["model_id"]
             # 创建一个全新的未授权客户端来检验 401 拦截（因为 client 原有 Cookie 缓存了之前的会话）
             unauth_client = TestClient(client.app)
-            blocked_test = unauth_client.post(f"/llm-models/{model_id_for_test}/test")
+            blocked_test = unauth_client.post(f"/api/v1/llm-models/{model_id_for_test}/test")
             self.assertEqual(blocked_test.status_code, 401)
 
             # 使用超级管理员进行连通性测试调用（因 mock，连接被拦截或失败是预期结果，主要验证逻辑链路畅通）
-            test_response = client.post(f"/llm-models/{model_id_for_test}/test", headers=headers)
+            test_response = client.post(f"/api/v1/llm-models/{model_id_for_test}/test", headers=headers)
             self.assertIn("ok", test_response.json())
 
             platform.llm.save_call_trace(
@@ -1962,13 +1956,13 @@ class FastAPILocalServerTests(unittest.TestCase):
                     ],
                 }
             )
-            llm_traces = client.get("/llm-traces", headers=headers)
+            llm_traces = client.get("/api/v1/llm-traces", headers=headers)
             plain_register = client.post(
-                "/auth/register",
+                "/api/v1/auth/register",
                 json={"username": "plain", "password": "password123"},
             )
             invited_register = client.post(
-                "/auth/register",
+                "/api/v1/auth/register",
                 json={
                     "username": "invited",
                     "password": "password123",
@@ -2114,20 +2108,20 @@ class FastAPILocalServerTests(unittest.TestCase):
                     _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
-            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "owner", "password": "password123"})
             login = client.post(
-                "/auth/login", json={"username": "owner", "password": "password123"}
+                "/api/v1/auth/login", json={"username": "owner", "password": "password123"}
             )
             headers = {"Authorization": f"Bearer {login.json()['token']}"}
-            token = client.post("/tokens", json={"description": "legacy feedback"}, headers=headers)
+            token = client.post("/api/v1/tokens", json={"description": "legacy feedback"}, headers=headers)
             query = client.get(
                 "/ocs/query",
                 params={"title": "示例题", "type": "single"},
                 headers={"Authorization": f"Bearer {token.json()['token']}"},
             )
-            usage = client.get("/usage-logs", headers=headers).json()["logs"][0]
+            usage = client.get("/api/v1/usage-logs", headers=headers).json()["logs"][0]
             created = client.post(
-                "/feedback",
+                "/api/v1/feedback",
                 json={
                     "usage_log_id": usage["log_id"],
                     "category": "wrong_answer",
@@ -2161,9 +2155,9 @@ class FastAPILocalServerTests(unittest.TestCase):
                 )
                 session.commit()
 
-            feedback_list = client.get("/feedback", headers=headers)
+            feedback_list = client.get("/api/v1/feedback", headers=headers)
             exact_usage = client.get(
-                "/usage-logs", params={"log_id": usage["log_id"]}, headers=headers
+                "/api/v1/usage-logs", params={"log_id": usage["log_id"]}, headers=headers
             )
 
         self.assertEqual(query.status_code, 200)
@@ -2189,14 +2183,14 @@ class FastAPILocalServerTests(unittest.TestCase):
                 )
             )
 
-            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "owner", "password": "password123"})
             session = client.post(
-                "/auth/login", json={"username": "owner", "password": "password123"}
+                "/api/v1/auth/login", json={"username": "owner", "password": "password123"}
             )
             headers = {"Authorization": f"Bearer {session.json()['token']}"}
 
             feedback = client.post(
-                "/feedback",
+                "/api/v1/feedback",
                 json={
                     "category": "answer",
                     "title": "普通反馈",
@@ -2204,7 +2198,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 },
                 headers=headers,
             )
-            feedback_list = client.get("/feedback", headers=headers)
+            feedback_list = client.get("/api/v1/feedback", headers=headers)
 
         self.assertTrue(feedback.json()["ok"])
         self.assertIsNone(feedback.json()["feedback"]["question_id"])
@@ -2226,13 +2220,13 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
 
             owner_register = client.post(
-                "/auth/register", json={"username": "owner", "password": "password123"}
+                "/api/v1/auth/register", json={"username": "owner", "password": "password123"}
             )
             other_register = client.post(
-                "/auth/register", json={"username": "other", "password": "password123"}
+                "/api/v1/auth/register", json={"username": "other", "password": "password123"}
             )
             owner_login = client.post(
-                "/auth/login", json={"username": "owner", "password": "password123"}
+                "/api/v1/auth/login", json={"username": "owner", "password": "password123"}
             )
             owner_headers = {"Authorization": f"Bearer {owner_login.json()['token']}"}
             owner_id = owner_register.json()["user"]["user_id"]
@@ -2292,19 +2286,19 @@ class FastAPILocalServerTests(unittest.TestCase):
                 question_id="question:other",
             )
 
-            own_records = client.get("/feedback/answer-records", headers=owner_headers)
+            own_records = client.get("/api/v1/feedback/answer-records", headers=owner_headers)
             grouped = client.get(
-                "/feedback/answer-records",
+                "/api/v1/feedback/answer-records",
                 params={"days": 0, "deduplicate": "true", "limit": 20},
                 headers=owner_headers,
             )
             expanded = client.get(
-                "/feedback/answer-records",
+                "/api/v1/feedback/answer-records",
                 params={"days": 0, "question_id": "question:shared", "limit": 20},
                 headers=owner_headers,
             )
             created = client.post(
-                "/feedback",
+                "/api/v1/feedback",
                 json={
                     "category": "wrong_answer",
                     "title": "两次作答都需要核对",
@@ -2313,9 +2307,9 @@ class FastAPILocalServerTests(unittest.TestCase):
                 },
                 headers=owner_headers,
             )
-            feedback_list = client.get("/feedback", headers=owner_headers)
+            feedback_list = client.get("/api/v1/feedback", headers=owner_headers)
             forbidden = client.post(
-                "/feedback",
+                "/api/v1/feedback",
                 json={
                     "category": "wrong_answer",
                     "title": "越权关联",
@@ -2325,7 +2319,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 headers=owner_headers,
             )
             legacy_single = client.post(
-                "/feedback",
+                "/api/v1/feedback",
                 json={
                     "category": "wrong_answer",
                     "title": "单数兼容",
@@ -2379,14 +2373,14 @@ class FastAPILocalServerTests(unittest.TestCase):
                     _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
-            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "owner", "password": "password123"})
             login = client.post(
-                "/auth/login", json={"username": "owner", "password": "password123"}
+                "/api/v1/auth/login", json={"username": "owner", "password": "password123"}
             )
             headers = {"Authorization": f"Bearer {login.json()['token']}"}
 
             wrong_without_record = client.post(
-                "/feedback",
+                "/api/v1/feedback",
                 json={
                     "category": "wrong_answer",
                     "title": "缺少记录",
@@ -2395,7 +2389,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 headers=headers,
             )
             suggestion = client.post(
-                "/feedback",
+                "/api/v1/feedback",
                 json={
                     "category": "suggestion",
                     "title": "功能建议",
@@ -2404,7 +2398,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 headers=headers,
             )
             other = client.post(
-                "/feedback",
+                "/api/v1/feedback",
                 json={
                     "category": "other",
                     "title": "其它问题",
@@ -2413,7 +2407,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 headers=headers,
             )
             invalid = client.post(
-                "/feedback",
+                "/api/v1/feedback",
                 json={
                     "category": "unknown_category",
                     "title": "非法类别",
@@ -2442,35 +2436,35 @@ class FastAPILocalServerTests(unittest.TestCase):
                 )
             )
 
-            client.post("/auth/register", json={"username": "boss", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "boss", "password": "password123"})
             super_headers = {
-                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
+                "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
             }
-            client.post("/auth/register", json={"username": "alice", "password": "password123"})
-            client.post("/auth/register", json={"username": "bob", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "bob", "password": "password123"})
             promote_admin = client.patch(
-                "/users/alice", json={"role": "admin"}, headers=super_headers
+                "/api/v1/users/alice", json={"role": "admin"}, headers=super_headers
             )
             self.assertEqual(promote_admin.status_code, 200)
             admin_headers = {
-                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'alice', 'password': 'password123'}).json()['token']}"
+                "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'alice', 'password': 'password123'}).json()['token']}"
             }
-            alice_notifications = client.get("/notification-center", headers=admin_headers).json()
+            alice_notifications = client.get("/api/v1/notification-center", headers=admin_headers).json()
             self.assertTrue(
                 any("用户角色变更通知" in item["title"] for item in alice_notifications["items"])
             )
             user_headers = {
-                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'bob', 'password': 'password123'}).json()['token']}"
+                "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'bob', 'password': 'password123'}).json()['token']}"
             }
             negative_points = client.patch(
-                "/users/bob",
+                "/api/v1/users/bob",
                 json={"points": -5},
                 headers=super_headers,
             )
-            bob_notifications = client.get("/notification-center", headers=user_headers).json()
+            bob_notifications = client.get("/api/v1/notification-center", headers=user_headers).json()
             self.assertEqual(negative_points.status_code, 200)
             self.assertEqual(
-                client.get("/users/me", headers=user_headers).json()["user"]["points"],
+                client.get("/api/v1/users/me", headers=user_headers).json()["user"]["points"],
                 0,
             )
             self.assertTrue(
@@ -2506,32 +2500,32 @@ class FastAPILocalServerTests(unittest.TestCase):
             ) as usage_count_query:
                 users = client.get("/api/v1/users", headers=admin_headers)
             patch_points_ok = client.patch(
-                "/users/bob", json={"points": 250}, headers=admin_headers
+                "/api/v1/users/bob", json={"points": 250}, headers=admin_headers
             )
             patch_role_forbidden = client.patch(
-                "/users/bob", json={"role": "admin"}, headers=admin_headers
+                "/api/v1/users/bob", json={"role": "admin"}, headers=admin_headers
             )
-            patch_forbidden = client.patch("/billing", json={"local_hit": 5}, headers=user_headers)
+            patch_forbidden = client.patch("/api/v1/billing", json={"local_hit": 5}, headers=user_headers)
             system_forbidden = client.patch(
-                "/system-config", json={"llm_model": "x"}, headers=admin_headers
+                "/api/v1/system-config", json={"llm_model": "x"}, headers=admin_headers
             )
             redeem_code_create = client.post(
-                "/wallet/redeem-codes",
+                "/api/v1/wallet/redeem-codes",
                 json={"kind": "points", "points": 10, "max_uses": 1},
                 headers=admin_headers,
             )
             wallet_grant_ok = client.post(
-                "/wallet/grants",
+                "/api/v1/wallet/grants",
                 json={"username": "bob", "kind": "points", "points": 5},
                 headers=admin_headers,
             )
             wallet_grant_admin_forbidden = client.post(
-                "/wallet/grants",
+                "/api/v1/wallet/grants",
                 json={"username": "alice", "kind": "points", "points": 5},
                 headers=admin_headers,
             )
             disable_ok = client.patch(
-                "/users/bob", json={"status": "disabled"}, headers=admin_headers
+                "/api/v1/users/bob", json={"status": "disabled"}, headers=admin_headers
             )
 
         self.assertEqual(promote_admin.status_code, 200)
@@ -2567,16 +2561,16 @@ class FastAPILocalServerTests(unittest.TestCase):
                     _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
-            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "owner", "password": "password123"})
             owner_headers = {
-                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'owner', 'password': 'password123'}).json()['token']}"
+                "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'owner', 'password': 'password123'}).json()['token']}"
             }
-            client.post("/auth/register", json={"username": "reader", "password": "password123"})
-            client.post("/auth/register", json={"username": "editor", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "reader", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "editor", "password": "password123"})
 
-            initial_roles = client.get("/roles", headers=owner_headers)
+            initial_roles = client.get("/api/v1/roles", headers=owner_headers)
             create_reader = client.post(
-                "/roles",
+                "/api/v1/roles",
                 json={
                     "role_id": "question_reader",
                     "name": "题库阅览员",
@@ -2586,7 +2580,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 headers=owner_headers,
             )
             create_editor = client.post(
-                "/roles",
+                "/api/v1/roles",
                 json={
                     "role_id": "role_editor",
                     "name": "角色维护员",
@@ -2596,22 +2590,22 @@ class FastAPILocalServerTests(unittest.TestCase):
                 headers=owner_headers,
             )
             assign_reader = client.patch(
-                "/users/reader", json={"role": "question_reader"}, headers=owner_headers
+                "/api/v1/users/reader", json={"role": "question_reader"}, headers=owner_headers
             )
             assign_editor = client.patch(
-                "/users/editor", json={"role": "role_editor"}, headers=owner_headers
+                "/api/v1/users/editor", json={"role": "role_editor"}, headers=owner_headers
             )
             reader_headers = {
-                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'reader', 'password': 'password123'}).json()['token']}"
+                "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'reader', 'password': 'password123'}).json()['token']}"
             }
             editor_headers = {
-                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'editor', 'password': 'password123'}).json()['token']}"
+                "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'editor', 'password': 'password123'}).json()['token']}"
             }
 
-            reader_questions = client.get("/questions", headers=reader_headers)
-            reader_system = client.get("/system-config", headers=reader_headers)
+            reader_questions = client.get("/api/v1/questions", headers=reader_headers)
+            reader_system = client.get("/api/v1/system-config", headers=reader_headers)
             custom_audience = client.post(
-                "/announcements",
+                "/api/v1/announcements",
                 json={
                     "title": "题库阅览员公告",
                     "content": "仅题库阅览员可见",
@@ -2620,10 +2614,10 @@ class FastAPILocalServerTests(unittest.TestCase):
                 },
                 headers=owner_headers,
             )
-            reader_announcements = client.get("/announcements/active", headers=reader_headers)
-            announcement_options = client.get("/announcements", headers=owner_headers)
+            reader_announcements = client.get("/api/v1/announcements/active", headers=reader_headers)
+            announcement_options = client.get("/api/v1/announcements", headers=owner_headers)
             unknown_audience = client.post(
-                "/announcements",
+                "/api/v1/announcements",
                 json={
                     "title": "无效受众",
                     "content": "不应创建",
@@ -2633,28 +2627,28 @@ class FastAPILocalServerTests(unittest.TestCase):
                 headers=owner_headers,
             )
             delegated_update = client.patch(
-                "/roles/question_reader",
+                "/api/v1/roles/question_reader",
                 json={"permissions": ["dashboard:self"]},
                 headers=editor_headers,
             )
             delegated_escalation = client.patch(
-                "/roles/question_reader",
+                "/api/v1/roles/question_reader",
                 json={"permissions": ["dashboard:self", "questions:read"]},
                 headers=editor_headers,
             )
             delegated_system_update = client.patch(
-                "/roles/user",
+                "/api/v1/roles/user",
                 json={"permissions": ["dashboard:self"]},
                 headers=editor_headers,
             )
-            in_use_delete = client.delete("/roles/question_reader", headers=owner_headers)
+            in_use_delete = client.delete("/api/v1/roles/question_reader", headers=owner_headers)
             restore_reader = client.patch(
-                "/users/reader", json={"role": "user"}, headers=owner_headers
+                "/api/v1/users/reader", json={"role": "user"}, headers=owner_headers
             )
-            delete_reader = client.delete("/roles/question_reader", headers=owner_headers)
-            delete_system = client.delete("/roles/user", headers=owner_headers)
+            delete_reader = client.delete("/api/v1/roles/question_reader", headers=owner_headers)
+            delete_system = client.delete("/api/v1/roles/user", headers=owner_headers)
             editor_create = client.post(
-                "/roles",
+                "/api/v1/roles",
                 json={"role_id": "forbidden_role", "name": "不可创建", "permissions": []},
                 headers=editor_headers,
             )
@@ -2708,16 +2702,16 @@ class FastAPILocalServerTests(unittest.TestCase):
                     require_auth=True,
                 )
             )
-            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "owner", "password": "password123"})
             owner_headers = {
                 "Authorization": (
-                    f"Bearer {client.post('/auth/login', json={'username': 'owner', 'password': 'password123'}).json()['token']}"
+                    f"Bearer {client.post('/api/v1/auth/login', json={'username': 'owner', 'password': 'password123'}).json()['token']}"
                 )
             }
 
-            demote = client.patch("/users/owner", json={"role": "admin"}, headers=owner_headers)
+            demote = client.patch("/api/v1/users/owner", json={"role": "admin"}, headers=owner_headers)
             disable = client.patch(
-                "/users/owner", json={"status": "disabled"}, headers=owner_headers
+                "/api/v1/users/owner", json={"status": "disabled"}, headers=owner_headers
             )
 
         self.assertEqual(demote.status_code, 409)
@@ -2755,19 +2749,19 @@ class FastAPILocalServerTests(unittest.TestCase):
                     _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
-            client.post("/auth/register", json={"username": "boss", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "boss", "password": "password123"})
             headers = {
-                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
+                "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
             }
 
             future_expires_at = time.time() + 3600
             permanent = client.post(
-                "/wallet/redeem-codes",
+                "/api/v1/wallet/redeem-codes",
                 json={"kind": "points", "points": 10, "max_uses": 1},
                 headers=headers,
             )
             limited = client.post(
-                "/wallet/redeem-codes",
+                "/api/v1/wallet/redeem-codes",
                 json={
                     "kind": "points",
                     "points": 20,
@@ -2777,7 +2771,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 headers=headers,
             )
             expired_create = client.post(
-                "/wallet/redeem-codes",
+                "/api/v1/wallet/redeem-codes",
                 json={
                     "kind": "points",
                     "points": 20,
@@ -2787,11 +2781,11 @@ class FastAPILocalServerTests(unittest.TestCase):
                 headers=headers,
             )
             negative_create = client.post(
-                "/wallet/redeem-codes",
+                "/api/v1/wallet/redeem-codes",
                 json={"kind": "points", "points": 20, "max_uses": 1, "expires_at": -1},
                 headers=headers,
             )
-            code_list = client.get("/wallet/redeem-codes", headers=headers)
+            code_list = client.get("/api/v1/wallet/redeem-codes", headers=headers)
 
             engine = create_engine(f"sqlite:///{database_path}")
             with engine.begin() as connection:
@@ -2806,31 +2800,31 @@ class FastAPILocalServerTests(unittest.TestCase):
                 )
             engine.dispose()
             expired_redeem = client.post(
-                "/wallet/redeem",
+                "/api/v1/wallet/redeem",
                 json={"code": limited.json()["redeem_code"]["code"]},
                 headers=headers,
             )
             expired_redeem_again = client.post(
-                "/wallet/redeem",
+                "/api/v1/wallet/redeem",
                 json={"code": limited.json()["redeem_code"]["code"]},
                 headers=headers,
             )
             # 删除兑换码与批量删除兑换码验证
             del_res = client.delete(
-                f"/wallet/redeem-codes/{limited.json()['redeem_code']['code_id']}",
+                f"/api/v1/wallet/redeem-codes/{limited.json()['redeem_code']['code_id']}",
                 headers=headers,
             )
             batch_del_res = client.post(
-                "/wallet/redeem-codes/batch-delete",
+                "/api/v1/wallet/redeem-codes/batch-delete",
                 json={"code_ids": [permanent.json()["redeem_code"]["code_id"]]},
                 headers=headers,
             )
             empty_batch_del = client.post(
-                "/wallet/redeem-codes/batch-delete",
+                "/api/v1/wallet/redeem-codes/batch-delete",
                 json={"code_ids": []},
                 headers=headers,
             )
-            codes_after_del = client.get("/wallet/redeem-codes", headers=headers)
+            codes_after_del = client.get("/api/v1/wallet/redeem-codes", headers=headers)
 
         self.assertEqual(permanent.status_code, 200)
         self.assertEqual(permanent.json()["redeem_code"]["expires_at"], 0.0)
@@ -2868,19 +2862,19 @@ class FastAPILocalServerTests(unittest.TestCase):
                     _sample_index(), auth_service=auth, platform_services=platform, require_auth=True
                 )
             )
-            client.post("/auth/register", json={"username": "boss", "password": "password123"})
-            client.post("/auth/register", json={"username": "alice", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "boss", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
 
             boss_headers = {
-                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
+                "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
             }
             alice_headers = {
-                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'alice', 'password': 'password123'}).json()['token']}"
+                "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'alice', 'password': 'password123'}).json()['token']}"
             }
 
             # 1. 创建天数兑换码
             days_code_res = client.post(
-                "/wallet/redeem-codes",
+                "/api/v1/wallet/redeem-codes",
                 json={"kind": "days", "days": 7, "max_uses": 1},
                 headers=boss_headers,
             )
@@ -2890,12 +2884,12 @@ class FastAPILocalServerTests(unittest.TestCase):
             self.assertEqual(days_code_res.json()["redeem_code"]["days"], 7)
 
             # 2. alice 兑换该 7 天兑换码
-            alice_before = client.get("/users/me", headers=alice_headers).json()["user"]
+            alice_before = client.get("/api/v1/users/me", headers=alice_headers).json()["user"]
             self.assertFalse(alice_before.get("is_unlimited", False))
             self.assertEqual(alice_before["points"], 100)
 
             redeem_res = client.post(
-                "/wallet/redeem",
+                "/api/v1/wallet/redeem",
                 json={"code": code},
                 headers=alice_headers,
             )
@@ -2903,10 +2897,10 @@ class FastAPILocalServerTests(unittest.TestCase):
             self.assertEqual(redeem_res.json()["order"]["kind"], "days")
             self.assertEqual(redeem_res.json()["order"]["days_delta"], 7)
             self.assertTrue(redeem_res.json()["wallet"]["is_unlimited"])
-            alice_after = client.get("/users/me", headers=alice_headers).json()["user"]
+            alice_after = client.get("/api/v1/users/me", headers=alice_headers).json()["user"]
             self.assertTrue(alice_after["is_unlimited"])
             self.assertAlmostEqual(alice_after["unlimited_expires_at"], time.time() + 7 * 86400, delta=10)
-            wallet_after = client.get("/wallet/me", headers=alice_headers).json()["wallet"]
+            wallet_after = client.get("/api/v1/wallet/me", headers=alice_headers).json()["wallet"]
             self.assertTrue(wallet_after["is_unlimited"])
             self.assertAlmostEqual(
                 wallet_after["unlimited_expires_at"],
@@ -2916,40 +2910,40 @@ class FastAPILocalServerTests(unittest.TestCase):
 
             # 3. 在无限使用有效期内，搜题调用不扣减积分 (points_cost 结算为 0)
             query_res = client.post(
-                "/query",
+                "/api/v1/query",
                 json={"title": "马克思主义基本原理"},
                 headers=alice_headers,
             )
             self.assertEqual(query_res.status_code, 200)
-            alice_after_query = client.get("/users/me", headers=alice_headers).json()["user"]
+            alice_after_query = client.get("/api/v1/users/me", headers=alice_headers).json()["user"]
             self.assertEqual(alice_after_query["points"], 100)
             usage_logs = platform.usage.list_usage_logs(username="alice")
             self.assertEqual(usage_logs[0]["points_cost"], 0)
 
             # 4. 再次兑换 30 天卡，自动在原有到期时间顺延 (7 + 30 = 37 天)
             days30_code_res = client.post(
-                "/wallet/redeem-codes",
+                "/api/v1/wallet/redeem-codes",
                 json={"kind": "days", "days": 30, "max_uses": 1},
                 headers=boss_headers,
             )
             client.post(
-                "/wallet/redeem",
+                "/api/v1/wallet/redeem",
                 json={"code": days30_code_res.json()["redeem_code"]["code"]},
                 headers=alice_headers,
             )
-            alice_extended = client.get("/users/me", headers=alice_headers).json()["user"]
+            alice_extended = client.get("/api/v1/users/me", headers=alice_headers).json()["user"]
             self.assertAlmostEqual(alice_extended["unlimited_expires_at"], time.time() + 37 * 86400, delta=10)
 
             # 5. 管理员手动发放天数 (再顺延 10 天 -> 47 天)
             grant_res = client.post(
-                "/wallet/grants",
+                "/api/v1/wallet/grants",
                 json={"username": "alice", "kind": "days", "days": 10},
                 headers=boss_headers,
             )
             self.assertEqual(grant_res.status_code, 200)
-            alice_granted = client.get("/users/me", headers=alice_headers).json()["user"]
+            alice_granted = client.get("/api/v1/users/me", headers=alice_headers).json()["user"]
             self.assertAlmostEqual(alice_granted["unlimited_expires_at"], time.time() + 47 * 86400, delta=10)
-            alice_notifications = client.get("/notification-center", headers=alice_headers).json()
+            alice_notifications = client.get("/api/v1/notification-center", headers=alice_headers).json()
             self.assertTrue(
                 any("无限制使用天数发放通知" in item["title"] for item in alice_notifications["items"])
             )
@@ -2962,12 +2956,12 @@ class FastAPILocalServerTests(unittest.TestCase):
 
             # 6. 无效面值不能生成无效兑换码或空权益流水。
             empty_points = client.post(
-                "/wallet/redeem-codes",
+                "/api/v1/wallet/redeem-codes",
                 json={"kind": "points", "points": 0},
                 headers=boss_headers,
             )
             empty_days = client.post(
-                "/wallet/grants",
+                "/api/v1/wallet/grants",
                 json={"username": "alice", "kind": "days", "days": 0},
                 headers=boss_headers,
             )
@@ -2977,13 +2971,13 @@ class FastAPILocalServerTests(unittest.TestCase):
             self.assertEqual(empty_days.json()["error"]["code"], "INVALID_INPUT")
 
             # 7. 积分不足且非会员用户发起查题应被 402 拦截
-            client.post("/auth/register", json={"username": "broke", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "broke", "password": "password123"})
             auth.set_points("broke", 0)
             broke_headers = {
-                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'broke', 'password': 'password123'}).json()['token']}"
+                "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'broke', 'password': 'password123'}).json()['token']}"
             }
             broke_query = client.post(
-                "/query",
+                "/api/v1/query",
                 json={"title": "零积分测试题目"},
                 headers=broke_headers,
             )
@@ -2991,7 +2985,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             self.assertEqual(broke_query.json()["error"]["code"], "INSUFFICIENT_POINTS")
 
             broke_token_res = client.post(
-                "/tokens",
+                "/api/v1/tokens",
                 json={"description": "broke-token"},
                 headers=broke_headers,
             )
@@ -3066,39 +3060,39 @@ class FastAPILocalServerTests(unittest.TestCase):
                 create_app(index, auth_service=auth, platform_services=platform, require_auth=True)
             )
 
-            client.post("/auth/register", json={"username": "boss", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "boss", "password": "password123"})
             super_headers = {
-                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
+                "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
             }
-            client.post("/auth/register", json={"username": "alice", "password": "password123"})
-            client.post("/auth/register", json={"username": "bob", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "bob", "password": "password123"})
 
-            client.patch("/users/alice", json={"role": "admin"}, headers=super_headers)
+            client.patch("/api/v1/users/alice", json={"role": "admin"}, headers=super_headers)
 
             admin_headers = {
-                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'alice', 'password': 'password123'}).json()['token']}"
+                "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'alice', 'password': 'password123'}).json()['token']}"
             }
             user_headers = {
-                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'bob', 'password': 'password123'}).json()['token']}"
+                "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'bob', 'password': 'password123'}).json()['token']}"
             }
 
-            res_user_list = client.get("/questions", headers=user_headers)
+            res_user_list = client.get("/api/v1/questions", headers=user_headers)
             self.assertEqual(res_user_list.status_code, 403)
 
-            res_admin_list = client.get("/questions", headers=admin_headers)
+            res_admin_list = client.get("/api/v1/questions", headers=admin_headers)
             self.assertEqual(res_admin_list.status_code, 200)
             self.assertEqual(res_admin_list.json()["total"], 1)
             self.assertEqual(res_admin_list.json()["questions"][0]["title_raw"], "HTTP题目")
 
             res_user_patch = client.patch(
-                "/questions/http_q_1",
+                "/api/v1/questions/http_q_1",
                 json={"title_raw": "新标题", "answer_raw": "B"},
                 headers=user_headers,
             )
             self.assertEqual(res_user_patch.status_code, 403)
 
             res_admin_patch = client.patch(
-                "/questions/http_q_1",
+                "/api/v1/questions/http_q_1",
                 json={"title_raw": "新标题", "answer_raw": "B"},
                 headers=admin_headers,
             )
@@ -3106,26 +3100,26 @@ class FastAPILocalServerTests(unittest.TestCase):
             self.assertEqual(res_admin_patch.json()["question"]["title_raw"], "新标题")
             self.assertEqual(res_admin_patch.json()["question"]["answer_raw"], "B")
 
-            res_reloaded_list = client.get("/questions", headers=admin_headers)
+            res_reloaded_list = client.get("/api/v1/questions", headers=admin_headers)
             self.assertEqual(res_reloaded_list.json()["questions"][0]["title_raw"], "新标题")
 
-            res_user_delete = client.delete("/questions/http_q_1", headers=user_headers)
+            res_user_delete = client.delete("/api/v1/questions/http_q_1", headers=user_headers)
             self.assertEqual(res_user_delete.status_code, 403)
 
-            res_admin_delete = client.delete("/questions/http_q_1", headers=admin_headers)
+            res_admin_delete = client.delete("/api/v1/questions/http_q_1", headers=admin_headers)
             self.assertEqual(res_admin_delete.status_code, 200)
             self.assertTrue(res_admin_delete.json()["ok"])
             self.assertEqual(res_admin_delete.json()["status"], "deleted")
 
-            res_deleted_list = client.get("/questions", headers=admin_headers)
+            res_deleted_list = client.get("/api/v1/questions", headers=admin_headers)
             self.assertEqual(res_deleted_list.json()["total"], 0)
             self.assertFalse(index.query(QuestionQuery(title="新标题", question_type="single")).ok)
 
-            res_repeat_delete = client.delete("/questions/http_q_1", headers=admin_headers)
+            res_repeat_delete = client.delete("/api/v1/questions/http_q_1", headers=admin_headers)
             self.assertEqual(res_repeat_delete.status_code, 200)
             self.assertEqual(res_repeat_delete.json()["status"], "deleted")
 
-            res_missing_delete = client.delete("/questions/missing", headers=admin_headers)
+            res_missing_delete = client.delete("/api/v1/questions/missing", headers=admin_headers)
             self.assertEqual(res_missing_delete.status_code, 404)
             self.assertEqual(res_missing_delete.json()["error"]["code"], "QUESTION_NOT_FOUND")
 
@@ -3172,9 +3166,9 @@ class FastAPILocalServerTests(unittest.TestCase):
             client = TestClient(
                 create_app(index, auth_service=auth, platform_services=platform, require_auth=True)
             )
-            client.post("/auth/register", json={"username": "boss", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "boss", "password": "password123"})
             headers = {
-                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
+                "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
             }
 
             first_ts = datetime(2026, 7, 1, 12, 0, tzinfo=ZoneInfo("Asia/Shanghai")).timestamp()
@@ -3198,13 +3192,13 @@ class FastAPILocalServerTests(unittest.TestCase):
             engine.dispose()
 
             filtered = client.get(
-                "/questions",
+                "/api/v1/questions",
                 params={"updated_start_date": "2026-07-02", "updated_end_date": "2026-07-02"},
                 headers=headers,
             )
-            unfiltered = client.get("/questions", headers=headers)
+            unfiltered = client.get("/api/v1/questions", headers=headers)
             invalid_date = client.get(
-                "/questions",
+                "/api/v1/questions",
                 params={"updated_start_date": "bad-date", "updated_end_date": "2026-07-02"},
                 headers=headers,
             )
@@ -3295,14 +3289,14 @@ class FastAPILocalServerTests(unittest.TestCase):
                 )
             )
 
-            client.post("/auth/register", json={"username": "boss", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "boss", "password": "password123"})
             headers = {
-                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
+                "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
             }
 
-            initial = client.get("/llm-runtime-config", headers=headers)
+            initial = client.get("/api/v1/llm-runtime-config", headers=headers)
             update = client.patch(
-                "/llm-runtime-config",
+                "/api/v1/llm-runtime-config",
                 json={
                     "llm_cache_enabled": "false",
                     "llm_cache_min_confidence": "0.98",
@@ -3334,9 +3328,9 @@ class FastAPILocalServerTests(unittest.TestCase):
                 )
             )
 
-            client.post("/auth/register", json={"username": "boss", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "boss", "password": "password123"})
             headers = {
-                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
+                "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
             }
             search_configs = [
                 {
@@ -3351,7 +3345,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             ]
 
             update = client.patch(
-                "/llm-runtime-config",
+                "/api/v1/llm-runtime-config",
                 json={"web_search_configs": json.dumps(search_configs, ensure_ascii=False)},
                 headers=headers,
             )
@@ -3372,7 +3366,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 }
             ]
             preserved = client.patch(
-                "/llm-runtime-config",
+                "/api/v1/llm-runtime-config",
                 json={"web_search_configs": json.dumps(edit_without_secret, ensure_ascii=False)},
                 headers=headers,
             )
@@ -3400,13 +3394,13 @@ class FastAPILocalServerTests(unittest.TestCase):
                 )
             )
 
-            client.post("/auth/register", json={"username": "boss", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "boss", "password": "password123"})
             headers = {
-                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
+                "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
             }
 
             token_create = client.post(
-                "/tokens", json={"description": "工作台接入"}, headers=headers
+                "/api/v1/tokens", json={"description": "工作台接入"}, headers=headers
             )
             token_id = token_create.json()["token_info"]["token_id"]
             notify = platform.notifications.create_notification(
@@ -3431,7 +3425,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 headers=headers,
             )
             import_script = client.post(
-                "/import-scripts/generate",
+                "/api/v1/import-scripts/generate",
                 json={
                     "name": "生活活系统导入",
                     "token_id": token_id,
@@ -3446,36 +3440,36 @@ class FastAPILocalServerTests(unittest.TestCase):
                 json={"name": "基础套餐", "kind": "points", "points": 1000},
                 headers=headers,
             )
-            roles_before_update = client.get("/roles", headers=headers)
+            roles_before_update = client.get("/api/v1/roles", headers=headers)
             role_update = client.put(
-                "/roles/admin/permissions",
+                "/api/v1/roles/admin/permissions",
                 json={"permissions": ["dashboard:all", "users:write", "questions:read"]},
                 headers=headers,
             )
             invalid_role_update = client.put(
-                "/roles/admin/permissions",
+                "/api/v1/roles/admin/permissions",
                 json={"permissions": ["integrations:write"]},
                 headers=headers,
             )
 
-            workbench = client.get("/dashboard/workbench", headers=headers)
-            rankings = client.get("/dashboard/rankings", headers=headers)
-            notifications = client.get("/notifications", headers=headers)
+            workbench = client.get("/api/v1/dashboard/workbench", headers=headers)
+            rankings = client.get("/api/v1/dashboard/rankings", headers=headers)
+            notifications = client.get("/api/v1/notifications", headers=headers)
             notification_read = client.post(
-                f"/notifications/{notify['notification_id']}/read", headers=headers
+                f"/api/v1/notifications/{notify['notification_id']}/read", headers=headers
             )
-            scripts = client.get("/import-scripts", headers=headers)
-            script_detail = client.get(f"/import-scripts/{script_id}", headers=headers)
+            scripts = client.get("/api/v1/import-scripts", headers=headers)
+            script_detail = client.get(f"/api/v1/import-scripts/{script_id}", headers=headers)
             default_script_detail = client.get(
-                "/import-scripts/ocs_local_question_bank", headers=headers
+                "/api/v1/import-scripts/ocs_local_question_bank", headers=headers
             )
-            missing_script_detail = client.get("/import-scripts/not-found", headers=headers)
+            missing_script_detail = client.get("/api/v1/import-scripts/not-found", headers=headers)
             default_script_delete = client.delete(
-                "/import-scripts/ocs_local_question_bank", headers=headers
+                "/api/v1/import-scripts/ocs_local_question_bank", headers=headers
             )
             quota_packages = client.get("/quota-packages", headers=headers)
-            roles = client.get("/roles", headers=headers)
-            role_detail = client.get("/roles/admin/permissions", headers=headers)
+            roles = client.get("/api/v1/roles", headers=headers)
+            role_detail = client.get("/api/v1/roles/admin/permissions", headers=headers)
 
         self.assertTrue(workbench.json()["ok"])
         self.assertIn("hero", workbench.json()["workbench"])
@@ -3530,13 +3524,13 @@ class FastAPILocalServerTests(unittest.TestCase):
                 )
             )
 
-            client.post("/auth/register", json={"username": "boss", "password": "password123"})
-            client.post("/auth/register", json={"username": "alice", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "boss", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
             user_headers = {
-                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'alice', 'password': 'password123'}).json()['token']}"
+                "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'alice', 'password': 'password123'}).json()['token']}"
             }
 
-            workbench = client.get("/dashboard/workbench", headers=user_headers)
+            workbench = client.get("/api/v1/dashboard/workbench", headers=user_headers)
 
         self.assertTrue(workbench.json()["ok"])
         actions = {item["key"] for item in workbench.json()["workbench"]["quick_actions"]}
@@ -3557,10 +3551,10 @@ class FastAPILocalServerTests(unittest.TestCase):
                 )
             )
 
-            client.post("/auth/register", json={"username": "boss", "password": "password123"})
-            client.post("/auth/register", json={"username": "alice", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "boss", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
             user_headers = {
-                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'alice', 'password': 'password123'}).json()['token']}"
+                "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'alice', 'password': 'password123'}).json()['token']}"
             }
             alice_user_id = auth.get_user("alice")["user_id"]
             platform.usage.record_usage(
@@ -3590,7 +3584,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 elapsed_ms=3000.0,
             )
 
-            workbench = client.get("/dashboard/workbench", headers=user_headers)
+            workbench = client.get("/api/v1/dashboard/workbench", headers=user_headers)
 
         self.assertTrue(workbench.json()["ok"])
         overview = workbench.json()["workbench"]["overview"]
@@ -3608,9 +3602,9 @@ class FastAPILocalServerTests(unittest.TestCase):
                 )
             )
 
-            client.post("/auth/register", json={"username": "alice", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
             alice_headers = {
-                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'alice', 'password': 'password123'}).json()['token']}"
+                "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'alice', 'password': 'password123'}).json()['token']}"
             }
             user = auth.get_user("alice")
             target_day = "2026-06-27"
@@ -3675,17 +3669,17 @@ class FastAPILocalServerTests(unittest.TestCase):
                 session.commit()
 
             target_response = client.get(
-                "/usage-logs",
+                "/api/v1/usage-logs",
                 params={"start_date": target_day, "end_date": target_day},
                 headers=alice_headers,
             )
             next_day_response = client.get(
-                "/usage-logs",
+                "/api/v1/usage-logs",
                 params={"start_date": next_day, "end_date": next_day},
                 headers=alice_headers,
             )
             invalid_response = client.get(
-                "/usage-logs",
+                "/api/v1/usage-logs",
                 params={"start_date": "2026-06-xx"},
                 headers=alice_headers,
             )
@@ -3710,9 +3704,9 @@ class FastAPILocalServerTests(unittest.TestCase):
                 )
             )
 
-            client.post("/auth/register", json={"username": "alice", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
             token = client.post(
-                "/auth/login", json={"username": "alice", "password": "password123"}
+                "/api/v1/auth/login", json={"username": "alice", "password": "password123"}
             ).json()["token"]
             headers = {"Authorization": f"Bearer {token}"}
             user = auth.get_user("alice")
@@ -3734,7 +3728,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
             platform.tokens.delete_token(user_id=user["user_id"], token_id=token_info["token_id"])
 
-            response = client.get("/usage-logs", headers=headers)
+            response = client.get("/api/v1/usage-logs", headers=headers)
 
         self.assertEqual(response.status_code, 200)
         log = response.json()["logs"][0]
@@ -3764,9 +3758,9 @@ class FastAPILocalServerTests(unittest.TestCase):
                         require_auth=True,
                     )
                 )
-                client.post("/auth/register", json={"username": "owner", "password": "password123"})
+                client.post("/api/v1/auth/register", json={"username": "owner", "password": "password123"})
                 owner_headers = {
-                    "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'owner', 'password': 'password123'}).json()['token']}"
+                    "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'owner', 'password': 'password123'}).json()['token']}"
                 }
 
                 path = log_path()
@@ -3782,12 +3776,12 @@ class FastAPILocalServerTests(unittest.TestCase):
                     )
 
                 valid_response = client.get(
-                    "/debug/recent",
+                    "/api/v1/debug/recent",
                     params={"start_date": "2026-06-27", "end_date": "2026-06-27"},
                     headers=owner_headers,
                 )
                 invalid_response = client.get(
-                    "/debug/recent",
+                    "/api/v1/debug/recent",
                     params={"start_date": "bad-date"},
                     headers=owner_headers,
                 )
@@ -4054,13 +4048,13 @@ class FastAPILocalServerTests(unittest.TestCase):
                 )
             )
 
-            client.post("/auth/register", json={"username": "alice", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
             auth.set_points("alice", 10)
             alice_headers = {
-                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'alice', 'password': 'password123'}).json()['token']}"
+                "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'alice', 'password': 'password123'}).json()['token']}"
             }
             token_res = client.post(
-                "/tokens",
+                "/api/v1/tokens",
                 json={"description": "quota", "quota_limit": 1},
                 headers=alice_headers,
             )
@@ -4186,16 +4180,16 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
 
             # 1. Register superadmin (owner) and create a log
-            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "owner", "password": "password123"})
             owner_login = client.post(
-                "/auth/login", json={"username": "owner", "password": "password123"}
+                "/api/v1/auth/login", json={"username": "owner", "password": "password123"}
             )
             owner_token = owner_login.json()["token"]
             owner_headers = {"Authorization": f"Bearer {owner_token}"}
 
             # Create token and query to generate a log for owner
             token_res = client.post(
-                "/tokens", json={"description": "Owner Token"}, headers=owner_headers
+                "/api/v1/tokens", json={"description": "Owner Token"}, headers=owner_headers
             )
             raw_token = token_res.json()["token"]
             client.get(
@@ -4205,24 +4199,24 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
 
             # 2. Register normal user (alice) who has no usage logs
-            client.post("/auth/register", json={"username": "alice", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
             alice_login = client.post(
-                "/auth/login", json={"username": "alice", "password": "password123"}
+                "/api/v1/auth/login", json={"username": "alice", "password": "password123"}
             )
             alice_token = alice_login.json()["token"]
             alice_headers = {"Authorization": f"Bearer {alice_token}"}
 
             # 3. Query workbench and rankings for owner (superadmin) -> should see the log
-            owner_workbench = client.get("/dashboard/workbench", headers=owner_headers)
-            owner_rankings = client.get("/dashboard/rankings", headers=owner_headers)
+            owner_workbench = client.get("/api/v1/dashboard/workbench", headers=owner_headers)
+            owner_rankings = client.get("/api/v1/dashboard/rankings", headers=owner_headers)
             self.assertTrue(owner_workbench.json()["ok"])
             self.assertTrue(owner_rankings.json()["ok"])
             self.assertGreater(len(owner_workbench.json()["workbench"]["ranking_preview"]), 0)
             self.assertGreater(len(owner_rankings.json()["rankings"]), 0)
 
             # 4. Query workbench and rankings for alice (normal user) -> should be empty
-            alice_workbench = client.get("/dashboard/workbench", headers=alice_headers)
-            alice_rankings = client.get("/dashboard/rankings", headers=alice_headers)
+            alice_workbench = client.get("/api/v1/dashboard/workbench", headers=alice_headers)
+            alice_rankings = client.get("/api/v1/dashboard/rankings", headers=alice_headers)
             self.assertTrue(alice_workbench.json()["ok"])
             self.assertTrue(alice_rankings.json()["ok"])
             self.assertEqual(len(alice_workbench.json()["workbench"]["ranking_preview"]), 0)
@@ -4239,20 +4233,20 @@ class FastAPILocalServerTests(unittest.TestCase):
                 )
             )
 
-            client.post("/auth/register", json={"username": "owner", "password": "password123"})
-            client.post("/auth/register", json={"username": "alice", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "owner", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
             owner_headers = {
-                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'owner', 'password': 'password123'}).json()['token']}"
+                "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'owner', 'password': 'password123'}).json()['token']}"
             }
             alice_headers = {
-                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'alice', 'password': 'password123'}).json()['token']}"
+                "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'alice', 'password': 'password123'}).json()['token']}"
             }
 
             owner_token = client.post(
-                "/tokens", json={"description": "owner"}, headers=owner_headers
+                "/api/v1/tokens", json={"description": "owner"}, headers=owner_headers
             ).json()["token"]
             alice_token = client.post(
-                "/tokens", json={"description": "alice"}, headers=alice_headers
+                "/api/v1/tokens", json={"description": "alice"}, headers=alice_headers
             ).json()["token"]
             client.get(
                 "/ocs/query",
@@ -4265,12 +4259,12 @@ class FastAPILocalServerTests(unittest.TestCase):
                 headers={"Authorization": f"Bearer {alice_token}"},
             )
 
-            owner_default = client.get("/dashboard/workbench", headers=owner_headers)
+            owner_default = client.get("/api/v1/dashboard/workbench", headers=owner_headers)
             owner_self = client.get(
-                "/dashboard/workbench", params={"scope": "self"}, headers=owner_headers
+                "/api/v1/dashboard/workbench", params={"scope": "self"}, headers=owner_headers
             )
             alice_global = client.get(
-                "/dashboard/summary",
+                "/api/v1/dashboard/summary",
                 params={"scope": "global", "days": 1},
                 headers=alice_headers,
             )
@@ -4294,12 +4288,12 @@ class FastAPILocalServerTests(unittest.TestCase):
                 )
             )
 
-            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "owner", "password": "password123"})
             owner_headers = {
-                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'owner', 'password': 'password123'}).json()['token']}"
+                "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'owner', 'password': 'password123'}).json()['token']}"
             }
             raw_token = client.post(
-                "/tokens", json={"description": "owner"}, headers=owner_headers
+                "/api/v1/tokens", json={"description": "owner"}, headers=owner_headers
             ).json()["token"]
             client.get(
                 "/ocs/query",
@@ -4308,7 +4302,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
             date_text = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d")
             audit = client.get(
-                "/debug/usage-audit", params={"date": date_text}, headers=owner_headers
+                "/api/v1/debug/usage-audit", params={"date": date_text}, headers=owner_headers
             )
 
         self.assertEqual(audit.status_code, 200)
@@ -4331,18 +4325,18 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
 
             # 1. Register and login superadmin and a normal user
-            client.post("/auth/register", json={"username": "owner", "password": "password123"})
-            client.post("/auth/register", json={"username": "alice", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "owner", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "alice", "password": "password123"})
             auth.set_points("alice", 100)
             alice_login = client.post(
-                "/auth/login", json={"username": "alice", "password": "password123"}
+                "/api/v1/auth/login", json={"username": "alice", "password": "password123"}
             )
             alice_token = alice_login.json()["token"]
             alice_headers = {"Authorization": f"Bearer {alice_token}"}
 
             # 2. Create token with quota_limit = 2
             token_res = client.post(
-                "/tokens",
+                "/api/v1/tokens",
                 json={"description": "Test Limit Key", "quota_limit": 2},
                 headers=alice_headers,
             )
@@ -4360,7 +4354,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             self.assertEqual(q1.status_code, 200)
 
             # Check token info -> quota_used should be 1
-            tokens_after = client.get("/tokens", headers=alice_headers)
+            tokens_after = client.get("/api/v1/tokens", headers=alice_headers)
             target_token = next(
                 t for t in tokens_after.json()["tokens"] if t["token_id"] == token_id
             )
@@ -4373,7 +4367,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
             self.assertEqual(q2.status_code, 200)
 
-            tokens_after_second = client.get("/tokens", headers=alice_headers)
+            tokens_after_second = client.get("/api/v1/tokens", headers=alice_headers)
             target_token_after_second = next(
                 t for t in tokens_after_second.json()["tokens"] if t["token_id"] == token_id
             )
@@ -4389,7 +4383,7 @@ class FastAPILocalServerTests(unittest.TestCase):
 
             # 6. Update token quota_limit to 5
             update_res = client.post(
-                f"/tokens/{token_id}",
+                f"/api/v1/tokens/{token_id}",
                 json={"description": "Updated Limit Key", "quota_limit": 5},
                 headers=alice_headers,
             )
@@ -4403,11 +4397,11 @@ class FastAPILocalServerTests(unittest.TestCase):
             self.assertEqual(q4.status_code, 200)
 
             # 8. Delete token
-            del_res = client.delete(f"/tokens/{token_id}", headers=alice_headers)
+            del_res = client.delete(f"/api/v1/tokens/{token_id}", headers=alice_headers)
             self.assertTrue(del_res.json()["ok"])
 
             # 9. Listing tokens -> deleted token should be gone
-            tokens_final = client.get("/tokens", headers=alice_headers)
+            tokens_final = client.get("/api/v1/tokens", headers=alice_headers)
             self.assertEqual(len(tokens_final.json()["tokens"]), 0)
 
             # 10. Query OCS using deleted token -> should return 401 (invalid key)
@@ -4427,33 +4421,33 @@ class FastAPILocalServerTests(unittest.TestCase):
                 )
             )
 
-            client.post("/auth/register", json={"username": "boss", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "boss", "password": "password123"})
             headers = {
-                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
+                "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
             }
 
-            no_token = client.get("/tokens/import-script", headers=headers)
-            token_a = client.post("/tokens", json={"description": "A"}, headers=headers)
-            one_token = client.get("/tokens/import-script", headers=headers)
-            token_b = client.post("/tokens", json={"description": "B"}, headers=headers)
-            multiple_tokens = client.get("/tokens/import-script", headers=headers)
+            no_token = client.get("/api/v1/tokens/import-script", headers=headers)
+            token_a = client.post("/api/v1/tokens", json={"description": "A"}, headers=headers)
+            one_token = client.get("/api/v1/tokens/import-script", headers=headers)
+            token_b = client.post("/api/v1/tokens", json={"description": "B"}, headers=headers)
+            multiple_tokens = client.get("/api/v1/tokens/import-script", headers=headers)
             direct = client.get(
-                "/tokens/import-script",
+                "/api/v1/tokens/import-script",
                 params={"token_id": token_b.json()["token_info"]["token_id"]},
                 headers=headers,
             )
             renamed = client.patch(
-                "/system-config",
+                "/api/v1/system-config",
                 json={"site_title": "学习平台"},
                 headers=headers,
             )
             renamed_direct = client.get(
-                "/tokens/import-script",
+                "/api/v1/tokens/import-script",
                 params={"token_id": token_b.json()["token_info"]["token_id"]},
                 headers=headers,
             )
             generic_config = client.get(
-                "/configs/ocs-local-study-bank.json",
+                "/api/v1/configs/ocs-local-study-bank.json",
                 headers={**headers, "Host": "example.com"},
             )
 
@@ -4501,13 +4495,13 @@ class FastAPILocalServerTests(unittest.TestCase):
                 create_app(lookup, auth_service=auth, platform_services=platform, require_auth=True)
             )
 
-            client.post("/auth/register", json={"username": "boss", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "boss", "password": "password123"})
             headers = {
-                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
+                "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
             }
 
             response = client.post(
-                "/query",
+                "/api/v1/query",
                 json={
                     "title": "https://example.com/demo-question.png",
                     "type": "single",
@@ -4517,7 +4511,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 },
                 headers=headers,
             )
-            usage_logs = client.get("/usage-logs?page=1&page_size=5", headers=headers)
+            usage_logs = client.get("/api/v1/usage-logs?page=1&page_size=5", headers=headers)
 
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.json()["ok"])
@@ -4563,7 +4557,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
 
             response = client.get(
-                "/query",
+                "/api/v1/query",
                 params={
                     "title": "单选题(1分)运行时应能加载数据库评审题。",
                     "options": "答案一#答案二",
@@ -4609,7 +4603,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 )
             )
             response = client.get(
-                "/query",
+                "/api/v1/query",
                 params={
                     "title": "单选题(1分)已删除题不应重启复活。",
                     "options": "会复活#不会复活",
@@ -4684,7 +4678,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
 
             response = client.get(
-                "/query",
+                "/api/v1/query",
                 params={
                     "title": "单选题(1分)同题应优先使用评审题库。",
                     "options": "正确项#干扰项",
@@ -4710,13 +4704,13 @@ class FastAPILocalServerTests(unittest.TestCase):
                 create_app(lookup, auth_service=auth, platform_services=platform, require_auth=True)
             )
 
-            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "owner", "password": "password123"})
             session = client.post(
-                "/auth/login", json={"username": "owner", "password": "password123"}
+                "/api/v1/auth/login", json={"username": "owner", "password": "password123"}
             )
             headers = {"Authorization": f"Bearer {session.json()['token']}"}
             token_create = client.post(
-                "/tokens",
+                "/api/v1/tokens",
                 json={
                     "description": "严格拒答",
                     "reject_low_confidence": True,
@@ -4736,7 +4730,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 headers={"Authorization": f"Bearer {raw_api_token}"},
             )
             questions = client.get(
-                "/questions",
+                "/api/v1/questions",
                 params={"keyword": "公私合营", "status": "low_confidence"},
                 headers=headers,
             )
@@ -4950,12 +4944,12 @@ class FastAPILocalServerTests(unittest.TestCase):
                 create_app(lookup, auth_service=auth, platform_services=platform, require_auth=True)
             )
 
-            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "owner", "password": "password123"})
             session = client.post(
-                "/auth/login", json={"username": "owner", "password": "password123"}
+                "/api/v1/auth/login", json={"username": "owner", "password": "password123"}
             )
             headers = {"Authorization": f"Bearer {session.json()['token']}"}
-            token_create = client.post("/tokens", json={"description": "retry"}, headers=headers)
+            token_create = client.post("/api/v1/tokens", json={"description": "retry"}, headers=headers)
             raw_api_token = token_create.json()["token"]
             response = client.get(
                 "/ocs/query",
@@ -5029,13 +5023,13 @@ class FastAPILocalServerTests(unittest.TestCase):
                 create_app(lookup, auth_service=auth, platform_services=platform, require_auth=True)
             )
 
-            client.post("/auth/register", json={"username": "owner", "password": "password123"})
+            client.post("/api/v1/auth/register", json={"username": "owner", "password": "password123"})
             headers = {
-                "Authorization": f"Bearer {client.post('/auth/login', json={'username': 'owner', 'password': 'password123'}).json()['token']}"
+                "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'owner', 'password': 'password123'}).json()['token']}"
             }
 
             patch = client.patch(
-                "/system-config",
+                "/api/v1/system-config",
                 json={"answer_retry_times": "3"},
                 headers=headers,
             )

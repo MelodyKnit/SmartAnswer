@@ -114,10 +114,10 @@ class ServeLocalEnvTests(unittest.TestCase):
                     app = runtime_module.build_runtime_app()
                     client = TestClient(app)
 
-                    health = client.get("/healthz")
-                    status = client.get("/status")
+                    health = client.get("/api/v1/healthz")
+                    status = client.get("/api/v1/status")
                     query = client.get(
-                        "/query",
+                        "/api/v1/query",
                         params={"title": "尚未导入的题目", "type": "single"},
                     )
 

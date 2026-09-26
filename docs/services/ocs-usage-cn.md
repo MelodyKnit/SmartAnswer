@@ -213,7 +213,7 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/v1/healthz"
 确认题库和模型开关状态：
 
 ```powershell
-Invoke-RestMethod -Uri "http://127.0.0.1:8765/status"
+Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/v1/status"
 ```
 
 题库查询：
@@ -231,13 +231,13 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8765/ocs/query?title=壁胸膜的分部
 检查当前已经运行在 `8765` 的真实服务：
 
 ```powershell
-Invoke-RestMethod -Uri "http://127.0.0.1:8765/status"
+Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/v1/status"
 ```
 
 设置模型环境变量后，验证真实模型提供商（Provider）：
 
 ```powershell
-Invoke-RestMethod -Uri "http://127.0.0.1:8765/status"
+Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/v1/status"
 ```
 
 如果题库没有命中但希望继续由大模型回答，启动服务时必须启用模型兜底：

@@ -1,12 +1,10 @@
-"""应用级 CORS、SPA 导航与旧接口弃用中间件。"""
+"""应用级 CORS 与 SPA 导航中间件。"""
 
 from __future__ import annotations
 
 from fastapi import FastAPI, Request, Response
 from starlette.responses import FileResponse
 
-from ..logger import log_event
-from .legacy import successor_path
 from .static import STATIC_DIR, should_serve_spa_shell
 
 
@@ -14,7 +12,7 @@ def install_http_middleware(app: FastAPI) -> None:
     """安装项目统一 HTTP 中间件。"""
 
     @app.middleware("http")
-    async def cors_spa_and_legacy(request: Request, call_next) -> Response:
+    async def cors_and_spa(request: Request, call_next) -> Response:
         if request.method == "OPTIONS":
             return Response(status_code=204, headers=cors_headers(request))
         if request.method == "GET" and should_serve_spa_shell(request, request.url.path):
@@ -25,19 +23,6 @@ def install_http_middleware(app: FastAPI) -> None:
                 return response
 
         response = await call_next(request)
-        if bool(getattr(request.state, "legacy_api", False)):
-            successor = successor_path(request.url.path)
-            response.headers["Deprecation"] = "true"
-            response.headers["Link"] = f'<{successor}>; rel="successor-version"'
-            log_event(
-                "legacy_api_request",
-                {
-                    "method": request.method,
-                    "path": request.url.path,
-                    "successor": successor,
-                    "status_code": response.status_code,
-                },
-            )
         apply_cors_headers(response, request)
         return response
 

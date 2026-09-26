@@ -225,14 +225,14 @@ class SettingsService(PlatformDomainService):
             logo_url = ""
 
         site_logo_urls: dict[str, str] = {}
-        if logo_url.startswith("/media/brand/"):
+        if logo_url.startswith("/api/v1/media/brand/"):
             import re
 
-            match = re.match(r"^/media/brand/logo_([a-z]+)\.png(\?t=\d+)?$", logo_url)
+            match = re.match(r"^/api/v1/media/brand/logo_([a-z]+)\.png(\?t=\d+)?$", logo_url)
             if match:
                 t_suffix = match.group(2) or ""
                 for size_key in ("original", "lg", "md", "sm"):
-                    site_logo_urls[size_key] = f"/media/brand/logo_{size_key}.png{t_suffix}"
+                    site_logo_urls[size_key] = f"/api/v1/media/brand/logo_{size_key}.png{t_suffix}"
 
         if not site_logo_urls:
             for size_key in ("original", "lg", "md", "sm"):

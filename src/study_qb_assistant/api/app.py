@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import Depends, FastAPI
+from fastapi import FastAPI
 
 from .. import __version__
 from ..adapters.ocs import DefaultOcsIntegration, OcsIntegrationPort
@@ -25,7 +25,6 @@ from .exception_handlers import install_exception_handlers
 from .ocs import build_ocs_router
 from .static import build_static_router
 from .v1 import API_V1_PREFIX, build_api_v1_router
-from .legacy import mark_legacy_api_request
 
 
 def create_app(
@@ -91,14 +90,8 @@ def create_app(
     install_exception_handlers(app)
     install_http_middleware(app)
 
-    business_router = build_api_v1_router()
-    app.include_router(business_router, prefix=API_V1_PREFIX)
+    app.include_router(build_api_v1_router(), prefix=API_V1_PREFIX)
     app.include_router(build_ocs_router())
-    app.include_router(
-        business_router,
-        dependencies=[Depends(mark_legacy_api_request)],
-        include_in_schema=False,
-    )
     app.include_router(build_static_router())
 
     return app

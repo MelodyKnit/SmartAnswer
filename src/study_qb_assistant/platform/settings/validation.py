@@ -18,6 +18,8 @@ def normalize_site_logo_url(value: str) -> str:
         raise AuthError("INVALID_INPUT", "Logo 地址不能超过 2048 个字符", http_status=400)
     if text.startswith("/"):
         if text.startswith("/media/brand/"):
+            return f"/api/v1{text}"
+        if text.startswith("/api/v1/media/brand/"):
             return text
         if text.startswith("//") or any(ch.isspace() for ch in text):
             raise AuthError("INVALID_INPUT", "Logo 地址格式不正确", http_status=400)

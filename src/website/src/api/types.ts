@@ -768,7 +768,7 @@ export interface ImageGenerationStats {
   avg_elapsed_ms: number
 }
 
-/** /query 在线搜题的成功结果。 */
+/** 在线搜题的成功结果。 */
 export interface QueryResultPayload {
   ok: true
   request_id: string | null
