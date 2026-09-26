@@ -22,3 +22,10 @@ class TokenUpdatePayload(BaseModel):
     min_answer_confidence: float | None = None
     bind_client: bool | None = None
     reset_bound_client: bool = False
+
+
+class TokenStatusPayload(BaseModel):
+    """API Key 启用状态更新请求。"""
+
+    model_config = ConfigDict(extra="ignore")
+    enabled: bool

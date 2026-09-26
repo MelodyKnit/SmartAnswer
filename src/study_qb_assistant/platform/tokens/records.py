@@ -6,6 +6,13 @@ import time
 from dataclasses import dataclass
 
 
+def normalize_token_status(value: object) -> str:
+    """规范化 API Key 状态，同时保留不可逆的历史吊销状态。"""
+
+    status = str("active" if value is None else value).strip().lower()
+    return status if status in {"active", "disabled", "revoked"} else "disabled"
+
+
 @dataclass(slots=True)
 class ApiTokenRecord:
     """用户 API 令牌的持久化记录。"""
@@ -34,7 +41,7 @@ class ApiTokenRecord:
             "key_hash": self.key_hash,
             "key_mask": self.key_mask,
             "description": self.description,
-            "status": self.status,
+            "status": normalize_token_status(self.status),
             "created_at": self.created_at,
             "last_used_at": self.last_used_at,
             "usage_count": self.usage_count,
@@ -56,7 +63,7 @@ class ApiTokenRecord:
             key_mask=str(payload["key_mask"]),
             token_raw=str(payload.get("token_raw", "") or ""),
             description=str(payload.get("description", "") or ""),
-            status=str(payload.get("status", "active")),
+            status=normalize_token_status(payload.get("status", "active")),
             created_at=float(payload.get("created_at") or time.time()),
             last_used_at=float(payload.get("last_used_at", 0.0) or 0.0),
             usage_count=int(payload.get("usage_count", 0) or 0),

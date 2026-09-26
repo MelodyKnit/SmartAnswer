@@ -6,7 +6,7 @@
 
 - `catalog.py` 定义后端实际支持的权限目录。新增可授权能力时，先在这里声明稳定的权限 ID、分组、名称和说明，再在对应路由执行该权限校验。
 - `roles` 表存储系统角色和自定义角色的权限集合。前端通过 `GET /roles` 消费同一份目录，不维护第二份权限清单。
-- `superadmin`、`admin`、`user` 在应用启动时由 `PermissionService.ensure_system_roles()` 幂等初始化。旧 `role_permissions` 设置仅用于首次迁移，之后以 `roles` 表为准。
+- `superadmin`、`admin`、`user` 在应用启动时由 `PermissionService.ensure_system_roles()` 幂等初始化。旧 `role_permissions` 设置仅用于首次迁移，之后以 `roles` 表为准；已有运行库的系统角色权限由一次性迁移补齐。
 
 ## 安全边界
 

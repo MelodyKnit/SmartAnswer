@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 
-from .records import ApiTokenRecord
+from .records import ApiTokenRecord, normalize_token_status
 
 
 def hash_token(token: str) -> str:
@@ -29,7 +29,7 @@ def public_token_dict(token: ApiTokenRecord) -> dict:
         "user_id": token.user_id,
         "key_mask": token.key_mask,
         "description": token.description,
-        "status": token.status,
+        "status": normalize_token_status(token.status),
         "created_at": token.created_at,
         "last_used_at": token.last_used_at,
         "usage_count": token.usage_count,

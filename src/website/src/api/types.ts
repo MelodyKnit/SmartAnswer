@@ -55,7 +55,7 @@ export interface ApiToken {
   user_id?: string
   key_mask: string
   description: string
-  status: string
+  status: 'active' | 'disabled' | 'revoked'
   created_at: number
   last_used_at: number
   usage_count: number
@@ -394,6 +394,7 @@ export interface SystemConfig {
   smart_proto_enabled?: string
   custom_proto_header?: string
   default_user_points?: string
+  api_key_max_count?: string
   invite_bonus_points?: string
   invite_reward_mode?: InviteRewardMode
   manual_grant_default_points?: string

@@ -12,6 +12,7 @@ class SystemConfigPayload(BaseModel):
     smart_proto_enabled: str | None = None
     custom_proto_header: str | None = None
     default_user_points: str | None = None
+    api_key_max_count: str | None = None
     invite_bonus_points: str | None = None
     invite_reward_mode: str | None = None
     manual_grant_default_points: str | None = None

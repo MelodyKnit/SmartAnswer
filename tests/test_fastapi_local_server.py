@@ -2506,8 +2506,11 @@ class FastAPILocalServerTests(unittest.TestCase):
                 "/api/v1/users/bob", json={"role": "admin"}, headers=admin_headers
             )
             patch_forbidden = client.patch("/api/v1/billing", json={"local_hit": 5}, headers=user_headers)
-            system_forbidden = client.patch(
-                "/api/v1/system-config", json={"llm_model": "x"}, headers=admin_headers
+            system_config_ok = client.patch(
+                "/api/v1/system-config", json={"api_key_max_count": "5"}, headers=admin_headers
+            )
+            regular_system_forbidden = client.patch(
+                "/api/v1/system-config", json={"api_key_max_count": "5"}, headers=user_headers
             )
             redeem_code_create = client.post(
                 "/api/v1/wallet/redeem-codes",
@@ -2539,7 +2542,9 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(patch_points_ok.json()["user"]["points"], 250)
         self.assertEqual(patch_role_forbidden.status_code, 403)
         self.assertEqual(patch_forbidden.status_code, 403)
-        self.assertEqual(system_forbidden.status_code, 403)
+        self.assertEqual(system_config_ok.status_code, 200)
+        self.assertEqual(system_config_ok.json()["config"]["api_key_max_count"], "5")
+        self.assertEqual(regular_system_forbidden.status_code, 403)
         self.assertEqual(redeem_code_create.status_code, 200)
         self.assertEqual(wallet_grant_ok.status_code, 200)
         self.assertEqual(wallet_grant_admin_forbidden.status_code, 403)

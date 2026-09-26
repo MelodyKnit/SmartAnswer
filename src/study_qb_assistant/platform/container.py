@@ -56,8 +56,8 @@ class PlatformServices:
         llm_repository = LlmRepository(session_factory, settings_repository)
         image_generation_repository = ImageGenerationRepository(session_factory)
 
-        self.tokens = TokenService(token_repository, lock)
         self.settings = SettingsService(settings_repository, llm_repository, lock)
+        self.tokens = TokenService(token_repository, lock, self.settings)
         self.usage = UsageService(usage_repository, lock)
         self.feedback = FeedbackService(feedback_repository, usage_repository, lock)
         self.notifications = NotificationService(
@@ -74,6 +74,7 @@ class PlatformServices:
         )
         self.permissions = PermissionService(role_repository, lock)
         self.permissions.ensure_system_roles()
+        self.permissions.ensure_admin_system_config_permission()
         self.permissions.ensure_image_generation_permission_defaults()
         self.llm = LlmManagementService(llm_repository, lock)
         self.image_generation = ImageGenerationService(

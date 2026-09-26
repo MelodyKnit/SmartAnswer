@@ -13,7 +13,7 @@ from ...security import (
     unauthorized_response,
 )
 from ...http import base_url_from_request
-from .schemas import TokenCreatePayload, TokenUpdatePayload
+from .schemas import TokenCreatePayload, TokenStatusPayload, TokenUpdatePayload
 
 
 def build_token_router() -> APIRouter:
@@ -38,14 +38,17 @@ def build_token_router() -> APIRouter:
         if user is None:
             return unauthorized_response("请先登录")
         platform = get_token_service(request)
-        raw_token, token_info = platform.create_token(
-            user_id=str(user["user_id"]),
-            description=payload.description,
-            quota_limit=payload.quota_limit,
-            reject_low_confidence=payload.reject_low_confidence,
-            min_answer_confidence=payload.min_answer_confidence,
-            bind_client=payload.bind_client,
-        )
+        try:
+            raw_token, token_info = platform.create_token(
+                user_id=str(user["user_id"]),
+                description=payload.description,
+                quota_limit=payload.quota_limit,
+                reject_low_confidence=payload.reject_low_confidence,
+                min_answer_confidence=payload.min_answer_confidence,
+                bind_client=payload.bind_client,
+            )
+        except AuthError as exc:
+            return auth_error_response(exc)
         settings = get_settings_service(request)
         token_config = build_ocs_config(
             base_url_from_request(request, settings),
@@ -58,6 +61,26 @@ def build_token_router() -> APIRouter:
             {"ok": True, "token": raw_token, "token_info": token_info, "ocs_config": token_config},
             headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
         )
+
+    @router.patch("/tokens/{token_id}/status")
+    def tokens_status(
+        request: Request,
+        token_id: str,
+        payload: TokenStatusPayload,
+    ) -> JSONResponse:
+        user = current_user(request)
+        if user is None:
+            return unauthorized_response("请先登录")
+        platform = get_token_service(request)
+        try:
+            token = platform.set_token_enabled(
+                user_id=str(user["user_id"]),
+                token_id=token_id,
+                enabled=payload.enabled,
+            )
+        except AuthError as exc:
+            return auth_error_response(exc)
+        return JSONResponse({"ok": True, "token": token})
 
     @router.post("/tokens/{token_id}/revoke")
     def tokens_revoke(request: Request, token_id: str) -> JSONResponse:

@@ -165,7 +165,7 @@ defineExpose({ open })
         <el-input :model-value="shareUrl" readonly />
         <el-button :icon="'CopyDocument'" @click="copyShareLink">复制</el-button>
       </div>
-      <div class="mt-2 text-xs text-ink-muted">链接不会过期，吊销或删除此 API Key 后会立即失效。</div>
+      <div class="mt-2 text-xs text-ink-muted">链接不会过期，禁用或删除此 API Key 后会立即失效。</div>
     </div>
     <template #footer>
       <el-button :disabled="isTokenSecretMissing" :loading="sharing" @click="generateShareLink">分享链接</el-button>

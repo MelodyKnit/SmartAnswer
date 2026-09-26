@@ -9,7 +9,6 @@ from starlette.responses import FileResponse, JSONResponse, Response
 
 STATIC_DIR = Path(__file__).resolve().parent / "site"
 STATIC_PAGES = {
-    "/": "index.html",
     "/dashboard": "index.html",
     "/dashboard.html": "index.html",
     "/index.html": "index.html",
@@ -21,23 +20,32 @@ def build_static_router() -> APIRouter:
 
     router = APIRouter()
 
+    def index_response() -> Response:
+        html_path = STATIC_DIR / "index.html"
+        if html_path.exists():
+            return FileResponse(html_path, media_type="text/html; charset=utf-8")
+        return JSONResponse(
+            {"ok": False, "error": {"code": "NOT_FOUND", "message": "资源不存在"}},
+            status_code=404,
+        )
+
+    @router.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
+    def static_root() -> Response:
+        return index_response()
+
     @router.api_route("/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
     def static_pages(request: Request, path: str) -> Response:
         route = "/" + path
         filename = STATIC_PAGES.get(route)
         if filename is not None:
-            html_path = STATIC_DIR / filename
-            if html_path.exists():
-                return FileResponse(html_path, media_type="text/html; charset=utf-8")
+            return index_response()
 
         target_path = safe_static_path(path)
         if target_path is not None and target_path.is_file():
             return FileResponse(target_path)
 
         if should_serve_spa_shell(request, path):
-            html_path = STATIC_DIR / "index.html"
-            if html_path.exists():
-                return FileResponse(html_path, media_type="text/html; charset=utf-8")
+            return index_response()
 
         return JSONResponse(
             {"ok": False, "error": {"code": "NOT_FOUND", "message": "资源不存在"}},

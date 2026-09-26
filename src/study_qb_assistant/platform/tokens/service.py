@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import secrets
 import time
+from threading import RLock
+from typing import Any
 from urllib.parse import quote
 
 from ...adapters.ocs.config import build_ocs_config_name
@@ -17,6 +19,15 @@ from .presentation import hash_token, mask_token, public_token_dict
 class TokenService(PlatformDomainService):
     """TokenService 领域实现。"""
 
+    def __init__(
+        self,
+        repository: Any,
+        lock: RLock,
+        settings_service: Any | None = None,
+    ) -> None:
+        super().__init__(repository, lock)
+        self.settings_service = settings_service
+
     def create_token(
         self,
         *,
@@ -29,6 +40,24 @@ class TokenService(PlatformDomainService):
     ) -> tuple[str, dict]:
         """为指定用户创建新的 API 令牌。"""
         with self.lock:
+            max_count = (
+                self.settings_service.get_api_key_max_count()
+                if self.settings_service is not None
+                else 0
+            )
+            if max_count > 0:
+                count_tokens = getattr(self.repository, "count_tokens", None)
+                current_count = (
+                    int(count_tokens(user_id=user_id))
+                    if callable(count_tokens)
+                    else len(self.repository.list_tokens(user_id=user_id))
+                )
+                if current_count >= max_count:
+                    raise AuthError(
+                        "TOKEN_LIMIT_EXCEEDED",
+                        f"每个用户最多创建 {max_count} 个 API Key",
+                        http_status=409,
+                    )
             raw = "sk_stqb_" + secrets.token_urlsafe(24)
             record = ApiTokenRecord(
                 token_id=secrets.token_hex(12),
@@ -114,8 +143,25 @@ class TokenService(PlatformDomainService):
             "requires_local_secret": not bool(selected.token_raw),
         }
 
+    def set_token_enabled(self, *, user_id: str, token_id: str, enabled: bool) -> dict:
+        """启用或禁用用户自己的 API Key；操作保持幂等。"""
+        with self.lock:
+            token = self.repository.get_token(token_id)
+            if token is None or token.user_id != user_id:
+                raise AuthError("TOKEN_NOT_FOUND", "令牌不存在", http_status=404)
+            if token.status == "revoked":
+                raise AuthError(
+                    "TOKEN_REVOKED",
+                    "已吊销的 API Key 不能重新启用，请创建新的 API Key",
+                    http_status=409,
+                )
+            token.status = "active" if enabled else "disabled"
+            self.repository.save_token(token)
+            return public_token_dict(token)
+
     def revoke_token(self, *, user_id: str, token_id: str) -> dict:
-        """吊销用户自己的 API 令牌。"""
+        """永久吊销用户自己的 API Key，保留其审计记录。"""
+
         with self.lock:
             token = self.repository.get_token(token_id)
             if token is None or token.user_id != user_id:

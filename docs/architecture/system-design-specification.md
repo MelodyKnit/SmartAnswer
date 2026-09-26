@@ -50,7 +50,7 @@ graph TD
 由于系统联网搜索引擎及大模型 Fallback 推理资源有限，为了防止 Token 被恶意高频调用，系统引入了**用户注册、登录控制以及管理员邀请码（Invitation Code）**机制。
 
 ### 1. 会话与登录流程 (Login Flow)
-*   **认证技术：** 采用轻量化 JWT（JSON Web Token）或服务端 Session。登录成功后，服务器向客户端下发带有签名的 Token，后续管理操作（导入题库、吊销 API 密钥、修改推理源）均需携带该 Token 进行鉴权。
+*   **认证技术：** 采用轻量化 JWT（JSON Web Token）或服务端 Session。登录成功后，服务器向客户端下发带有签名的 Token，后续管理操作（导入题库、启用或禁用 API 密钥、修改推理源）均需携带该 Token 进行鉴权。
 *   **普通用户视角：** 登录后可查看匹配趋势、使用题库检索工具、查看题目 AI 详析、生成自己个人的 OCS API Key。
 *   **管理员视角：** 拥有全局只读与写入特权，可生成新的邀请码、管理其他用户、导入物理题库及修改全局 LLM 代理参数。
 
@@ -120,7 +120,7 @@ CREATE TABLE api_keys (
     description VARCHAR(100),            -- 密钥用途说明 (如 "小明手机端 Tampermonkey")
     user_id VARCHAR(36) NOT NULL,        -- 归属用户 ID (关联 users.id)
     usage_count INT DEFAULT 0,           -- 累计请求查题次数
-    status VARCHAR(20) DEFAULT 'active', -- 状态：'active' (激活) 或 'revoked' (已吊销)
+    status VARCHAR(20) DEFAULT 'active', -- 状态：'active' (启用) 或 'disabled' (禁用)
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     last_used_at TIMESTAMP,
     FOREIGN KEY(user_id) REFERENCES users(id)

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** API Key 管理：列表 / 创建（一次性展示明文 + OCS 配置）/ 吊销与删除。用户级，仅管理自己的令牌。 */
+/** API Key 管理：列表、创建、启用/禁用与删除。用户级，仅管理自己的令牌。 */
 import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { tokenApi } from '@/api/endpoints'
@@ -21,7 +21,7 @@ const newMinAnswerConfidence = ref(0)
 
 const editVisible = ref(false)
 const updating = ref(false)
-const revoking = ref(false)
+const statusChanging = ref(false)
 const editForm = ref({
   token_id: '',
   key_mask: '',
@@ -76,26 +76,35 @@ async function submitCreate() {
   }
 }
 
-async function revokeEditingToken() {
+async function setEditingTokenEnabled() {
+  if (editForm.value.status === 'revoked') {
+    ElMessage.warning('已吊销的 API Key 不能重新启用，请创建新的 API Key')
+    return
+  }
   const label = editForm.value.description || editForm.value.key_mask
+  const enabled = editForm.value.status === 'disabled'
+  const action = enabled ? '启用' : '禁用'
+  const description = enabled
+    ? '启用后客户端可以恢复访问。'
+    : '禁用后使用该令牌的客户端将立即无法访问服务。'
   const confirmed = await ElMessageBox.confirm(
-    `确定吊销令牌「${label}」吗？吊销后使用该令牌的客户端将立即失效。`,
-    '吊销确认',
-    { type: 'warning', confirmButtonText: '吊销', cancelButtonText: '取消' },
+    '确定' + action + ' API Key「' + label + '」吗？' + description,
+    action + '确认',
+    { type: enabled ? 'info' : 'warning', confirmButtonText: action, cancelButtonText: '取消' },
   )
     .then(() => true)
     .catch(() => false)
   if (!confirmed) return
-  revoking.value = true
+  statusChanging.value = true
   try {
-    await tokenApi.revoke(editForm.value.token_id)
-    ElMessage.success('已吊销')
-    editVisible.value = false
+    const res = await tokenApi.setStatus(editForm.value.token_id, enabled)
+    editForm.value.status = res.token.status
+    ElMessage.success('已' + action)
     await load()
   } catch (err) {
     ElMessage.error(err instanceof ApiException ? err.message : '操作失败')
   } finally {
-    revoking.value = false
+    statusChanging.value = false
   }
 }
 
@@ -119,7 +128,7 @@ async function remove(token: ApiToken) {
 
 async function copyToken(token: ApiToken) {
   if (token.status !== 'active') {
-    ElMessage.warning('已吊销的 API Key 无法复制')
+    ElMessage.warning(token.status === 'revoked' ? '已吊销的 API Key 无法复制' : '已禁用的 API Key 无法复制')
     return
   }
   if (!token.is_recoverable) {
@@ -231,9 +240,9 @@ onMounted(load)
           <template #default="{ row }">
             <div class="inline-flex items-center gap-1.5">
               <code
-                class="cursor-pointer rounded bg-canvas px-2 py-1 text-xs text-ink-soft hover:bg-canvas-hover"
+                class="rounded bg-canvas px-2 py-1 text-xs"
                 :title="row.status === 'active' && row.is_recoverable ? '点击复制完整 API Key' : '该 API Key 当前不可复制'"
-                :class="row.status === 'active' && row.is_recoverable ? 'cursor-pointer rounded bg-canvas px-2 py-1 text-xs text-ink-soft hover:bg-canvas-hover' : 'cursor-not-allowed rounded bg-canvas px-2 py-1 text-xs text-ink-muted'"
+                :class="row.status === 'active' && row.is_recoverable ? 'cursor-pointer text-ink-soft hover:bg-canvas-hover' : 'cursor-not-allowed text-ink-muted'"
                 @click="copyToken(row)"
               >
                 {{ row.key_mask }}
@@ -252,8 +261,8 @@ onMounted(load)
         </el-table-column>
         <el-table-column label="状态" width="90" align="center">
           <template #default="{ row }">
-            <el-tag :type="row.status === 'active' ? 'success' : 'info'" size="small">
-              {{ row.status === 'active' ? '正常' : '已吊销' }}
+            <el-tag :type="row.status === 'active' ? 'success' : row.status === 'revoked' ? 'danger' : 'info'" size="small">
+              {{ row.status === 'active' ? '正常' : row.status === 'revoked' ? '已吊销' : '已禁用' }}
             </el-tag>
           </template>
         </el-table-column>
@@ -291,14 +300,15 @@ onMounted(load)
                 >
                   复制导入
                 </el-button>
-                <el-button
-                  link
-                  type="primary"
-                  @click="openEdit(row)"
-                >
-                  编辑
-                </el-button>
               </template>
+              <el-button
+                v-if="row.status !== 'revoked'"
+                link
+                type="primary"
+                @click="openEdit(row)"
+              >
+                编辑
+              </el-button>
               <el-button
                 link
                 type="danger"
@@ -346,7 +356,7 @@ onMounted(load)
 
     <!-- 编辑弹窗 -->
     <el-dialog v-model="editVisible" title="编辑 API Key" width="440px">
-      <el-form label-position="top" :disabled="updating || revoking">
+      <el-form label-position="top" :disabled="updating || statusChanging">
         <el-form-item label="API Key 名称">
           <el-input v-model="editForm.description" placeholder="请输入描述" maxlength="64" />
         </el-form-item>
@@ -368,20 +378,35 @@ onMounted(load)
         </el-form-item>
       </el-form>
       <div
-        v-if="editForm.status === 'active'"
-        class="mt-2 flex items-center justify-between gap-4 rounded-lg border border-danger/30 bg-danger/5 p-3"
+        v-if="editForm.status === 'revoked'"
+        class="mt-2 rounded-lg border border-danger/30 bg-danger/5 p-3"
+      >
+        <div class="text-sm font-medium text-ink">API Key 已永久吊销</div>
+        <div class="mt-1 text-xs text-ink-muted">已吊销的密钥不能重新启用。需要继续使用时，请创建新的 API Key。</div>
+      </div>
+      <div
+        v-else
+        class="mt-2 flex items-center justify-between gap-4 rounded-lg border p-3"
+        :class="editForm.status === 'active' ? 'border-danger/30 bg-danger/5' : 'border-line bg-card-soft'"
       >
         <div class="min-w-0">
-          <div class="text-sm font-medium text-ink">吊销 API Key</div>
-          <div class="mt-1 text-xs text-ink-muted">吊销后，使用该密钥的客户端将立即无法访问服务。</div>
+          <div class="text-sm font-medium text-ink">API Key 访问状态</div>
+          <div class="mt-1 text-xs text-ink-muted">
+            {{ editForm.status === 'active' ? '禁用后，使用该密钥的客户端将立即无法访问服务。' : '启用后，该密钥可以继续用于 OCS 和 API 调用。' }}
+          </div>
         </div>
-        <el-button type="danger" plain :loading="revoking" @click="revokeEditingToken">
-          吊销
+        <el-button
+          :type="editForm.status === 'active' ? 'danger' : 'success'"
+          plain
+          :loading="statusChanging"
+          @click="setEditingTokenEnabled"
+        >
+          {{ editForm.status === 'active' ? '禁用' : '启用' }}
         </el-button>
       </div>
       <template #footer>
-        <el-button :disabled="revoking" @click="editVisible = false">取消</el-button>
-        <el-button type="primary" :loading="updating" :disabled="revoking" @click="submitUpdate">
+        <el-button :disabled="statusChanging" @click="editVisible = false">取消</el-button>
+        <el-button type="primary" :loading="updating" :disabled="statusChanging" @click="submitUpdate">
           保存
         </el-button>
       </template>

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
-from ...platform.tokens.records import ApiTokenRecord
+from ...platform.tokens.records import ApiTokenRecord, normalize_token_status
 from ..orm import ApiTokenEntity
 from .base import SqlAlchemyRepository
 
@@ -29,6 +29,19 @@ class TokenRepository(SqlAlchemyRepository):
                 select(ApiTokenEntity).where(ApiTokenEntity.user_id == user_id)
             ).all()
             return [self._token_record(entity) for entity in entities]
+
+    def count_tokens(self, *, user_id: str) -> int:
+        """统计用户已创建且尚未删除的 API Key 数量。"""
+
+        with self.session_factory() as session:
+            return int(
+                session.scalar(
+                    select(func.count(ApiTokenEntity.id)).where(
+                        ApiTokenEntity.user_id == user_id
+                    )
+                )
+                or 0
+            )
 
     def delete_token(self, token_id: str) -> bool:
         """删除指定 API Key 记录。"""
@@ -82,7 +95,7 @@ class TokenRepository(SqlAlchemyRepository):
             key_mask=entity.key_mask,
             token_raw=str(getattr(entity, "token_raw", "") or ""),
             description=entity.description,
-            status=entity.status,
+            status=normalize_token_status(entity.status),
             created_at=entity.created_at,
             last_used_at=entity.last_used_at,
             usage_count=entity.usage_count,

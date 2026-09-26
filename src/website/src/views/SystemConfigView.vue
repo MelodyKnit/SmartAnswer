@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/** 系统配置：积分策略、账户与服务配置。仅超级管理员可访问与修改。
+/** 系统配置：积分策略、账户与服务配置。管理员和超级管理员可访问与修改。
  *  敏感项后端只返回 *_configured 标志，不回明文；留空表示不修改。 */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
@@ -51,6 +51,7 @@ const form = reactive({
   smart_proto_enabled: 'true',
   custom_proto_header: 'http',
   default_user_points: 100,
+  api_key_max_count: 0,
   invite_bonus_points: 0,
   invite_reward_mode: 'both' as InviteRewardMode,
   manual_grant_default_points: 100,
@@ -253,6 +254,7 @@ async function load() {
     form.smart_proto_enabled = (res.config.smart_proto_enabled as string) || 'true'
     form.custom_proto_header = (res.config.custom_proto_header as string) || 'http'
     form.default_user_points = Number(res.config.default_user_points || 100)
+    form.api_key_max_count = Number(res.config.api_key_max_count || 0)
     form.invite_bonus_points = Number(res.config.invite_bonus_points || 0)
     form.invite_reward_mode = res.config.invite_reward_mode || 'both'
     form.manual_grant_default_points = Number(res.config.manual_grant_default_points || 100)
@@ -314,6 +316,7 @@ async function save() {
       smart_proto_enabled: form.smart_proto_enabled,
       custom_proto_header: form.custom_proto_header,
       default_user_points: String(form.default_user_points),
+      api_key_max_count: String(form.api_key_max_count),
       invite_bonus_points: String(form.invite_bonus_points),
       invite_reward_mode: form.invite_reward_mode,
       manual_grant_default_points: String(form.manual_grant_default_points),
@@ -523,6 +526,10 @@ onMounted(load)
               <el-form label-position="top" class="grid grid-cols-1 gap-x-6 md:grid-cols-2">
                 <el-form-item label="允许用户注册">
                   <el-switch v-model="form.registration_enabled" active-value="true" inactive-value="false" />
+                </el-form-item>
+                <el-form-item label="每个用户最多创建 API Key">
+                  <el-input-number v-model="form.api_key_max_count" :min="0" :max="1000" class="w-full" />
+                  <p class="mt-1 text-xs leading-5 text-ink-muted">设为 0 表示不限制；已禁用但未删除的 Key 仍计入数量。</p>
                 </el-form-item>
                 <el-form-item label="注册邮箱策略">
                   <el-radio-group

@@ -185,8 +185,11 @@ export const tokenApi = {
       min_answer_confidence: minAnswerConfidence,
       bind_client: bindClient,
     }),
-  revoke: (tokenId: string) =>
-    api.post<{ ok: true; token: ApiToken }>(`/tokens/${encodeURIComponent(tokenId)}/revoke`),
+  setStatus: (tokenId: string, enabled: boolean) =>
+    api.patch<{ ok: true; token: ApiToken }>(
+      `/tokens/${encodeURIComponent(tokenId)}/status`,
+      { enabled },
+    ),
   update: (
     tokenId: string,
     description: string,

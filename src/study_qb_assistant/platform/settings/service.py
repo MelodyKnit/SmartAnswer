@@ -121,6 +121,11 @@ class SettingsService(PlatformDomainService):
 
         return self.system_points_value("default_user_points")
 
+    def get_api_key_max_count(self) -> int:
+        """返回每个用户可创建的 API Key 数量上限，0 表示不限制。"""
+
+        return self.system_points_value("api_key_max_count")
+
     def get_invite_bonus(self) -> int:
         """返回注册邀请码奖励积分。"""
 
@@ -358,6 +363,22 @@ class SettingsService(PlatformDomainService):
                         "邀请码奖励对象必须为 inviter、invitee 或 both",
                         http_status=400,
                     )
+            elif key == "api_key_max_count":
+                try:
+                    parsed = int(text or SYSTEM_CONFIG_DEFAULTS[key])
+                except ValueError as exc:
+                    raise AuthError(
+                        "INVALID_INPUT",
+                        "每个用户的 API Key 数量上限必须为非负整数",
+                        http_status=400,
+                    ) from exc
+                if parsed < 0 or parsed > 1000:
+                    raise AuthError(
+                        "INVALID_INPUT",
+                        "每个用户的 API Key 数量上限必须在 0 到 1000 之间",
+                        http_status=400,
+                    )
+                text = str(parsed)
             elif key in SYSTEM_CONFIG_BOOLEAN_KEYS:
                 text = (
                     "false" if text.lower() in {"0", "false", "no", "off", "disabled"} else "true"

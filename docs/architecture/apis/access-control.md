@@ -10,7 +10,8 @@ Token 资源接口均要求当前用户登录；资源所有权由服务端校�
 | --- | --- | --- | --- | --- |
 | `GET` | `/api/v1/tokens` | 无 | `tokens` | 列出当前用户 Token |
 | `POST` | `/api/v1/tokens` | `TokenCreatePayload` | `token`、`token_info`、`ocs_config` | 创建；敏感值仅在必要响应中返回，响应 `no-store` |
-| `POST` | `/api/v1/tokens/{token_id}/revoke` | path `token_id` | `token` | 撤销 Token |
+| `PATCH` | `/api/v1/tokens/{token_id}/status` | path `token_id` + `{"enabled": boolean}` | `token` | 启用或禁用 Token；操作幂等 |
+| `POST` | `/api/v1/tokens/{token_id}/revoke` | path `token_id` | `token` | 永久吊销 Token；兼容既有客户端，不可重新启用 |
 | `POST` | `/api/v1/tokens/{token_id}` | path + `TokenUpdatePayload` | `token` | 更新 Token |
 | `DELETE` | `/api/v1/tokens/{token_id}` | path `token_id` | `message` | 删除 Token |
 | `GET` | `/api/v1/tokens/import-script` | `token_id?`、`template_id?`（query） | 脚本和配置 | 生成/读取 Token 对应导入脚本；`no-store` |
@@ -23,8 +24,9 @@ Token 资源接口均要求当前用户登录；资源所有权由服务端校�
 | --- | --- |
 | `TokenCreatePayload` | `description: string = ""`、`quota_limit: integer = -1`、`reject_low_confidence: boolean = false`、`min_answer_confidence: number = 0`、`bind_client: boolean = false` |
 | `TokenUpdatePayload` | `description?`、`quota_limit?`、`reject_low_confidence?`、`min_answer_confidence?`、`bind_client?`、`reset_bound_client: boolean = false` |
+| `TokenStatusPayload` | `enabled: boolean`；`false` 禁用，`true` 启用 |
 
-常见错误包括未认证、权限不足、资源不存在和状态冲突；具体业务错误码以服务端返回为准。调用方必须将 Token 视为密码处理。
+创建接口在系统配置设置了 API Key 数量上限且当前用户已达到上限时返回 `409 TOKEN_LIMIT_EXCEEDED`。禁用和吊销的 Token 不能用于 OCS/API 调用，也不能复制或生成分享链接；禁用状态可恢复，吊销状态不可恢复。删除后才会从数量统计中移除。调用方必须将 Token 视为密码处理。
 
 ## 2. 角色目录与权限
 

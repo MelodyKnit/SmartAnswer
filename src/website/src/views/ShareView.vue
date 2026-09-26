@@ -86,7 +86,7 @@ onMounted(load)
       <div v-else-if="error" class="py-24 text-center">
         <div class="mb-4 text-6xl">!</div>
         <div class="mb-2 text-lg font-medium text-ink">{{ error }}</div>
-        <div class="text-sm text-ink-muted">请让链接提供者重新生成配置，或检查 API Key 是否已被吊销或删除。</div>
+        <div class="text-sm text-ink-muted">请让链接提供者重新生成配置，或检查 API Key 是否已被禁用或删除。</div>
       </div>
 
       <div v-else class="space-y-6">
@@ -126,7 +126,7 @@ onMounted(load)
         <div class="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4">
           <div class="mb-1 text-sm font-medium text-ink">注意</div>
           <div class="text-xs text-ink-muted">
-            此配置包含 API Key。链接本身不会过期，但对应 API Key 被吊销或删除后，配置会立即失效。
+            此配置包含 API Key。链接本身不会过期，但对应 API Key 被禁用或删除后，配置会立即失效。
           </div>
         </div>
       </div>

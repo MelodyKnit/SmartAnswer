@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -18,6 +19,7 @@ if str(SRC_ROOT) not in sys.path:
 from study_qb_assistant.api.app import create_app  # noqa: E402
 from study_qb_assistant.auth import AuthService  # noqa: E402
 from study_qb_assistant.platform.container import PlatformServices  # noqa: E402
+from study_qb_assistant.platform.tokens.records import normalize_token_status  # noqa: E402
 from study_qb_assistant.search import LocalQuestionIndex  # noqa: E402
 from study_qb_assistant.logger.storage import redact  # noqa: E402
 from study_qb_assistant.storage import database as database_module  # noqa: E402
@@ -26,6 +28,12 @@ from study_qb_assistant.storage.database import get_engine  # noqa: E402
 
 class TokenSharingTests(unittest.TestCase):
     """验证 API Key 原文动作与无状态分享的端到端契约。"""
+
+    def test_unknown_token_status_fails_closed(self) -> None:
+        self.assertEqual(normalize_token_status(None), "active")
+        self.assertEqual(normalize_token_status("revoked"), "revoked")
+        self.assertEqual(normalize_token_status(""), "disabled")
+        self.assertEqual(normalize_token_status("unexpected"), "disabled")
 
     @staticmethod
     def _runtime_database_path(directory: str) -> Path:
@@ -112,6 +120,7 @@ class TokenSharingTests(unittest.TestCase):
                 json={"description": "owner-only"},
                 headers=owner_headers,
             )
+            raw_token = created.json()["token"]
             token_id = created.json()["token_info"]["token_id"]
 
             other_copy = client.post(
@@ -122,28 +131,197 @@ class TokenSharingTests(unittest.TestCase):
                 f"/api/v1/tokens/{token_id}/share-link",
                 headers=member_headers,
             )
+            disabled = client.patch(
+                f"/api/v1/tokens/{token_id}/status",
+                json={"enabled": False},
+                headers=owner_headers,
+            )
+            disabled_copy = client.post(
+                f"/api/v1/tokens/{token_id}/copy-value",
+                headers=owner_headers,
+            )
+            disabled_share = client.post(
+                f"/api/v1/tokens/{token_id}/share-link",
+                headers=owner_headers,
+            )
+            disabled_query = client.get(
+                "/ocs/query",
+                params={"title": "disabled key", "type": "single"},
+                headers={"Authorization": f"Bearer {raw_token}"},
+            )
+            enabled = client.patch(
+                f"/api/v1/tokens/{token_id}/status",
+                json={"enabled": True},
+                headers=owner_headers,
+            )
+            enabled_copy = client.post(
+                f"/api/v1/tokens/{token_id}/copy-value",
+                headers=owner_headers,
+            )
             revoked = client.post(
                 f"/api/v1/tokens/{token_id}/revoke",
                 headers=owner_headers,
             )
-            revoked_copy = client.post(
-                f"/api/v1/tokens/{token_id}/copy-value",
+            revoked_enable = client.patch(
+                f"/api/v1/tokens/{token_id}/status",
+                json={"enabled": True},
                 headers=owner_headers,
             )
-            revoked_share = client.post(
-                f"/api/v1/tokens/{token_id}/share-link",
-                headers=owner_headers,
+            revoked_query = client.get(
+                "/ocs/query",
+                params={"title": "revoked key", "type": "single"},
+                headers={"Authorization": f"Bearer {raw_token}"},
             )
 
         self.assertEqual(other_copy.status_code, 404)
         self.assertEqual(other_copy.json()["error"]["code"], "TOKEN_NOT_FOUND")
         self.assertEqual(other_share.status_code, 404)
         self.assertEqual(other_share.json()["error"]["code"], "TOKEN_NOT_FOUND")
+        self.assertEqual(disabled.status_code, 200)
+        self.assertEqual(disabled.json()["token"]["status"], "disabled")
+        self.assertEqual(disabled_copy.status_code, 409)
+        self.assertEqual(disabled_copy.json()["error"]["code"], "TOKEN_INACTIVE")
+        self.assertEqual(disabled_share.status_code, 409)
+        self.assertEqual(disabled_share.json()["error"]["code"], "TOKEN_INACTIVE")
+        self.assertEqual(disabled_query.status_code, 401)
+        self.assertEqual(disabled_query.json()["error"]["code"], "UNAUTHORIZED")
+        self.assertEqual(enabled.status_code, 200)
+        self.assertEqual(enabled.json()["token"]["status"], "active")
+        self.assertEqual(enabled_copy.status_code, 200)
         self.assertEqual(revoked.status_code, 200)
-        self.assertEqual(revoked_copy.status_code, 409)
-        self.assertEqual(revoked_copy.json()["error"]["code"], "TOKEN_INACTIVE")
-        self.assertEqual(revoked_share.status_code, 409)
-        self.assertEqual(revoked_share.json()["error"]["code"], "TOKEN_INACTIVE")
+        self.assertEqual(revoked.json()["token"]["status"], "revoked")
+        self.assertEqual(revoked_enable.status_code, 409)
+        self.assertEqual(revoked_enable.json()["error"]["code"], "TOKEN_REVOKED")
+        self.assertEqual(revoked_query.status_code, 401)
+        self.assertEqual(revoked_query.json()["error"]["code"], "UNAUTHORIZED")
+
+    def test_legacy_revoked_status_is_not_migrated_to_reenableable_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            client, _auth, platform = self._client(directory)
+            headers = self._register_and_login(client, "legacy-revoked-owner")
+            created = client.post("/api/v1/tokens", json={}, headers=headers)
+            token_id = created.json()["token_info"]["token_id"]
+            record = platform.tokens.repository.get_token(token_id)
+            assert record is not None
+            record.status = "revoked"
+            platform.tokens.repository.save_token(record)
+
+            listed = client.get("/api/v1/tokens", headers=headers)
+            enabled = client.patch(
+                f"/api/v1/tokens/{token_id}/status",
+                json={"enabled": True},
+                headers=headers,
+            )
+
+        self.assertEqual(listed.status_code, 200)
+        self.assertEqual(listed.json()["tokens"][0]["status"], "revoked")
+        self.assertEqual(enabled.status_code, 409)
+        self.assertEqual(enabled.json()["error"]["code"], "TOKEN_REVOKED")
+
+    def test_user_api_key_limit_counts_disabled_keys_and_releases_deleted_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            client, _auth, _platform = self._client(directory)
+            headers = self._register_and_login(client, "limited-owner")
+            configured = client.patch(
+                "/api/v1/system-config",
+                json={"api_key_max_count": "2"},
+                headers=headers,
+            )
+            first = client.post("/api/v1/tokens", json={"description": "one"}, headers=headers)
+            second = client.post("/api/v1/tokens", json={"description": "two"}, headers=headers)
+            limited = client.post("/api/v1/tokens", json={"description": "three"}, headers=headers)
+            first_id = first.json()["token_info"]["token_id"]
+            disabled = client.patch(
+                f"/api/v1/tokens/{first_id}/status",
+                json={"enabled": False},
+                headers=headers,
+            )
+            still_limited = client.post(
+                "/api/v1/tokens",
+                json={"description": "four"},
+                headers=headers,
+            )
+            deleted = client.delete(f"/api/v1/tokens/{first_id}", headers=headers)
+            after_delete = client.post(
+                "/api/v1/tokens",
+                json={"description": "five"},
+                headers=headers,
+            )
+            invalid = client.patch(
+                "/api/v1/system-config",
+                json={"api_key_max_count": "-1"},
+                headers=headers,
+            )
+
+        self.assertEqual(configured.status_code, 200)
+        self.assertEqual(configured.json()["config"]["api_key_max_count"], "2")
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(limited.status_code, 409)
+        self.assertEqual(limited.json()["error"]["code"], "TOKEN_LIMIT_EXCEEDED")
+        self.assertEqual(disabled.status_code, 200)
+        self.assertEqual(still_limited.status_code, 409)
+        self.assertEqual(still_limited.json()["error"]["code"], "TOKEN_LIMIT_EXCEEDED")
+        self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(after_delete.status_code, 200)
+        self.assertEqual(invalid.status_code, 400)
+        self.assertEqual(invalid.json()["error"]["code"], "INVALID_INPUT")
+
+    def test_existing_admin_receives_system_config_permission_after_upgrade(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = self._runtime_database_path(directory)
+            auth = AuthService(database_path)
+            original_platform = PlatformServices(database_path)
+            admin_role = original_platform.permissions.repository.get_role("admin")
+            assert admin_role is not None
+            original_platform.permissions.repository.save_role(
+                replace(
+                    admin_role,
+                    permissions=tuple(
+                        permission
+                        for permission in admin_role.permissions
+                        if permission != "system:write"
+                    ),
+                )
+            )
+            original_platform.permissions.repository.settings.delete_settings(
+                "permission_migrations",
+                keys={"admin_system_config_permission_v1"},
+            )
+
+            upgraded_platform = PlatformServices(database_path)
+            client = TestClient(
+                create_app(
+                    LocalQuestionIndex(()),
+                    auth_service=auth,
+                    platform_services=upgraded_platform,
+                    require_auth=True,
+                )
+            )
+            owner_headers = self._register_and_login(client, "upgrade-owner")
+            client.post(
+                "/api/v1/auth/register",
+                json={"username": "upgrade-admin", "password": "password123"},
+            )
+            promoted = client.patch(
+                "/api/v1/users/upgrade-admin",
+                json={"role": "admin"},
+                headers=owner_headers,
+            )
+            admin_login = client.post(
+                "/api/v1/auth/login",
+                json={"username": "upgrade-admin", "password": "password123"},
+            )
+            admin_headers = {"Authorization": f"Bearer {admin_login.json()['token']}"}
+            configured = client.patch(
+                "/api/v1/system-config",
+                json={"api_key_max_count": "5"},
+                headers=admin_headers,
+            )
+
+        self.assertEqual(promoted.status_code, 200)
+        self.assertEqual(configured.status_code, 200, configured.text)
+        self.assertEqual(configured.json()["config"]["api_key_max_count"], "5")
 
     def test_deleted_key_invalidates_existing_capability_immediately(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

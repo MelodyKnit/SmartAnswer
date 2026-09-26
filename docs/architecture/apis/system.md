@@ -1,6 +1,6 @@
 # 系统配置、日志与帮助 API
 
-标准前缀：`/api/v1`。系统配置、更新和日志接口为管理接口；站点配置、帮助文档和部分公共资源可匿名访问。
+标准前缀：`/api/v1`。系统配置、更新和日志接口为管理接口；站点配置、帮助文档和部分公共资源可匿名访问。系统配置由具备 `system:write` 的管理员或超级管理员维护。
 
 ## 系统配置与更新
 
@@ -19,10 +19,12 @@
 
 所有字段可选，类型均为 `string`；仅更新实际传入的字段。
 
+`api_key_max_count` 为每个用户可创建的 API Key 数量上限，取值范围为 `0` 到 `1000`；设为 `0` 表示不限制。统计包含已启用和已禁用但尚未删除的 Key，删除后才释放名额。
+
 | 配置域 | 字段 |
 | --- | --- |
 | 站点与协议 | `site_title`、`site_logo_url`、`smart_proto_enabled`、`custom_proto_header` |
-| 积分与邀请 | `default_user_points`、`invite_bonus_points`、`invite_reward_mode`、`manual_grant_default_points`、`redeem_code_default_points` |
+| 积分与邀请 | `default_user_points`、`api_key_max_count`、`invite_bonus_points`、`invite_reward_mode`、`manual_grant_default_points`、`redeem_code_default_points` |
 | 答题与生图 | `answer_retry_times`、`image_generation_points`、`image_generation_max_active_jobs`、`image_generation_daily_limit`、`image_generation_retention_days` |
 | 认证与注册 | `registration_enabled`、`registration_captcha_enabled`、`login_captcha_enabled`、`login_failure_threshold`、`registration_email_mode`、`email_verification_enabled` |
 | SMTP | `smtp_host`、`smtp_port`、`smtp_security`、`smtp_username`、`smtp_password`、`smtp_from_email`、`smtp_from_name` |

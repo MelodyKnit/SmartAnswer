@@ -18,6 +18,7 @@ from .records import RoleRecord
 ROLE_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{2,31}$")
 RESERVED_ROLE_IDS = frozenset((*SYSTEM_ROLE_IDS, "all"))
 IMAGE_GENERATION_PERMISSION_MIGRATION_KEY = "image_generation_default_granted_v1"
+ADMIN_SYSTEM_CONFIG_PERMISSION_MIGRATION_KEY = "admin_system_config_permission_v1"
 
 
 class PermissionService(PlatformDomainService):
@@ -61,6 +62,33 @@ class PermissionService(PlatformDomainService):
                         updated_at=now,
                     )
                 )
+
+    def ensure_admin_system_config_permission(self) -> None:
+        """为已有管理员角色补齐系统配置权限。"""
+
+        with self.lock:
+            migration = self.repository.settings.get_settings(
+                "permission_migrations", keys={ADMIN_SYSTEM_CONFIG_PERMISSION_MIGRATION_KEY}
+            )
+            if migration.get(ADMIN_SYSTEM_CONFIG_PERMISSION_MIGRATION_KEY) == "true":
+                return
+            admin = self.repository.get_role("admin")
+            if admin is not None and "system:write" not in admin.permissions:
+                self.repository.save_role(
+                    RoleRecord(
+                        role_id=admin.role_id,
+                        name=admin.name,
+                        description=admin.description,
+                        permissions=tuple((*admin.permissions, "system:write")),
+                        is_system=admin.is_system,
+                        created_at=admin.created_at,
+                        updated_at=time.time(),
+                    )
+                )
+            self.repository.settings.set_settings(
+                "permission_migrations",
+                {ADMIN_SYSTEM_CONFIG_PERMISSION_MIGRATION_KEY: "true"},
+            )
 
     def ensure_image_generation_permission_defaults(self) -> None:
         """为升级前的角色一次性补齐图片生成权限。"""
