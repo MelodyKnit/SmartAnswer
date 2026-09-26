@@ -195,7 +195,7 @@ configs\ocs-local-study-bank.json
 http://127.0.0.1:8765/api/v1/configs/ocs-local-study-bank.json
 ```
 
-如果 OCS/Tampermonkey 拦截跨域请求，请在脚本或管理器配置中允许连接：
+如果 OCS 客户端拦截跨域请求，请在 OCS 或宿主环境配置中允许连接：
 
 ```text
 127.0.0.1
@@ -222,10 +222,10 @@ Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/v1/status"
 Invoke-RestMethod -Uri "http://127.0.0.1:8765/ocs/query?title=壁胸膜的分部不包括&type=single"
 ```
 
-模拟“读取配置、替换占位符、请求题库、执行 handler”的完整客户端流程：
+验证 OCS 题库配置完整调用流程：
 
 ```powershell
-在 OCS/Tampermonkey 中直接加载配置并发起一次真实查询
+在 OCS 中导入配置并发起一次真实查询
 ```
 
 检查当前已经运行在 `8765` 的真实服务：

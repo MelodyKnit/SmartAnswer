@@ -100,6 +100,7 @@ class TokenSharingTests(unittest.TestCase):
         self.assertNotIn(raw_token, public_json)
         self.assertNotIn("token_raw", public_json)
         self.assertEqual(template.status_code, 200)
+        self.assertEqual(set(template.json()), {"ok", "ocs_config"})
         self.assertIn("{{TOKEN}}", template.text)
         self.assertNotIn(raw_token, template.text)
         self.assertEqual(template.json()["ocs_config"][0]["headers"]["Authorization"], "Bearer {{TOKEN}}")
@@ -374,7 +375,7 @@ class TokenSharingTests(unittest.TestCase):
                 headers=headers,
             )
             imported = client.get(
-                "/api/v1/tokens/import-script",
+                "/api/v1/tokens/ocs-config",
                 params={"token_id": token_id},
                 headers=headers,
             )
@@ -391,9 +392,13 @@ class TokenSharingTests(unittest.TestCase):
         self.assertEqual(shared.status_code, 409)
         self.assertEqual(shared.json()["error"]["code"], "TOKEN_VALUE_UNAVAILABLE")
         self.assertEqual(imported.status_code, 200)
-        self.assertTrue(imported.json()["requires_local_secret"])
+        self.assertTrue(imported.json()["requires_token_replacement"])
         self.assertFalse(imported.json()["token_option"]["is_recoverable"])
-        self.assertIn("{{TOKEN}}", imported.json()["script"])
+        self.assertNotIn("script", imported.json())
+        self.assertEqual(
+            imported.json()["ocs_config"][0]["headers"]["Authorization"],
+            "Bearer {{TOKEN}}",
+        )
         self.assertEqual(authenticated.status_code, 200)
 
     def test_database_has_token_raw_compatibility_column_but_no_share_table(self) -> None:

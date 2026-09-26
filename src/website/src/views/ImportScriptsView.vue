@@ -1,8 +1,7 @@
 <script setup lang="ts">
 /**
- * 导入脚本（管理端）：以卡片网格展示仓库内 jsonl 模板目录。
- * 与普通用户工作台「复制导入脚本」共用同一模板源；标记「默认」的模板即普通用户点复制时拿到的那条。
- * 详情弹窗提供接入步骤指引、管理员/用户两种视角预览、脚本与接入配置分区复制。
+ * 接入模板管理：以卡片网格展示仓库内置和管理员自定义的客户端模板。
+ * 内置 OCS 模板只提供题库接入配置；自定义模板可按需包含脚本正文。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -153,10 +152,10 @@ function targetLabel(target: string): string {
 function accessSteps(target: string): string[] {
   if (target === 'ocs') {
     return [
-      '在浏览器安装 OCS 网课助手与配套的油猴（Tampermonkey）扩展。',
+      '打开 OCS 网课助手的题库配置页面。',
       '复制下方「接入配置」全文。',
       '打开 OCS 设置 → 通用 → 题库配置，粘贴该 JSON 配置。',
-      '保存并启用该题库，回到答题页即可自动调用本地题库。',
+      '保存并启用该题库，即可请求本地题库服务。',
     ]
   }
   return [
@@ -252,7 +251,7 @@ onMounted(load)
   <div>
     <PageHeader
       title="复制导入"
-      description="查看仓库内提交的导入脚本模板，和用户侧「复制导入脚本」共用同一模板源。"
+      description="管理 OCS 接入配置及管理员创建的客户端模板。"
     >
       <template #actions>
         <el-button :icon="'Refresh'" @click="load">刷新模板</el-button>
@@ -262,9 +261,9 @@ onMounted(load)
 
     <el-alert type="info" :closable="false" class="mb-4">
       <template #title>
-        模板目录由仓库中的 jsonl 文件统一维护，新增脚本只需补充模板记录。标记
+        内置接入配置由仓库统一维护。标记
         <el-tag size="small" type="success" effect="dark" class="mx-1">默认</el-tag>
-        的模板，就是普通用户在工作台点「复制导入脚本」时拿到的那条。
+        的模板，是普通用户复制导入时使用的 OCS 配置。
       </template>
     </el-alert>
 
@@ -412,7 +411,7 @@ onMounted(load)
         />
 
         <!-- 脚本 -->
-        <div>
+        <div v-if="renderedScript">
           <div class="mb-2 flex items-center justify-between">
             <span class="text-sm font-medium text-ink-soft">导入脚本</span>
             <div class="flex items-center gap-2">

@@ -1,6 +1,6 @@
 [project]
 name = "study-question-bank-assistant"
-version = "0.15.0"
+version = "0.16.0"
 description = "Study-oriented question-bank ingestion and retrieval foundation."
 license = { text = "CC-BY-NC-SA-4.0" }
 requires-python = ">=3.13,<4.0.0"
@@ -34,5 +34,4 @@ select = ["E4", "E7", "E9", "F"]
 [tool.setuptools.package-data]
 study_qb_assistant = [
   "adapters/ocs/resources/*.json",
-  "adapters/ocs/resources/*.js",
 ]

@@ -10,7 +10,7 @@ from study_qb_assistant.questions.models import QueryResult, QuestionQuery
 
 @runtime_checkable
 class OcsIntegrationPort(Protocol):
-    """OCS 请求解析、响应适配和资源渲染端口。"""
+    """OCS 请求解析、响应适配和配置生成端口。"""
 
     def parse_request(self, payload: Mapping[str, Any]) -> QuestionQuery:
         """把 OCS 载荷解析为内部查询。"""
@@ -28,6 +28,3 @@ class OcsIntegrationPort(Protocol):
 
     def build_config(self, base_url: str, *, platform_name: str) -> list[dict[str, Any]]:
         """生成可导入 OCS 的题库配置。"""
-
-    def render_client_script(self, base_url: str, *, token: str = "{{TOKEN}}") -> str:
-        """渲染 OCS 客户端桥接脚本。"""

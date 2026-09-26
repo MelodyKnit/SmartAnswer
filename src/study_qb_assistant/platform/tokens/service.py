@@ -8,10 +8,9 @@ from threading import RLock
 from typing import Any
 from urllib.parse import quote
 
-from ...adapters.ocs.config import build_ocs_config_name
+from ...adapters.ocs.config import TOKEN_PLACEHOLDER, build_ocs_config
 from ...auth import AuthError
 from ..base import PlatformDomainService
-from ..import_scripts.templates import get_import_script_template, render_import_script
 from .records import ApiTokenRecord
 from .presentation import hash_token, mask_token, public_token_dict
 
@@ -84,16 +83,15 @@ class TokenService(PlatformDomainService):
                 public_token_dict(token) for token in self.repository.list_tokens(user_id=user_id)
             ]
 
-    def token_import_script(
+    def token_ocs_config(
         self,
         *,
         user_id: str,
         base_url: str,
         platform_name: str,
         token_id: str | None = None,
-        template_id: str | None = None,
     ) -> dict:
-        """为普通用户即时生成导入脚本和 OCS 题库配置。"""
+        """为普通用户生成当前 API Key 对应的 OCS 配置。"""
         tokens = [
             token
             for token in self.repository.list_tokens(user_id=user_id)
@@ -113,34 +111,25 @@ class TokenService(PlatformDomainService):
         )
         if selected is None:
             raise AuthError("TOKEN_NOT_FOUND", "令牌不存在", http_status=404)
-        template = get_import_script_template(template_id)
-        rendered = render_import_script(
-            template,
+        ocs_config = build_ocs_config(
             base_url,
-            config_name=build_ocs_config_name(
-                platform_name,
-                token_description=selected.description,
-                token_key_mask=selected.key_mask,
-            ),
+            platform_name=platform_name,
+            token_description=selected.description,
+            token_key_mask=selected.key_mask,
         )
-        if selected.token_raw:
-            script_content = rendered["content"].replace("{{TOKEN}}", selected.token_raw)
-        else:
-            script_content = rendered["content"]
-        ocs_config = rendered["ocs_config"]
         if selected.token_raw:
             for item in ocs_config:
                 if isinstance(item, dict) and "headers" in item and isinstance(item["headers"], dict):
                     if "Authorization" in item["headers"]:
-                        item["headers"]["Authorization"] = item["headers"]["Authorization"].replace("{{TOKEN}}", selected.token_raw)
+                        item["headers"]["Authorization"] = item["headers"]["Authorization"].replace(
+                            TOKEN_PLACEHOLDER, selected.token_raw
+                        )
         return {
             "mode": "direct",
             "token_id": selected.token_id,
             "token_option": public_token_dict(selected),
-            "script": script_content,
             "ocs_config": ocs_config,
-            "template_id": template.template_id,
-            "requires_local_secret": not bool(selected.token_raw),
+            "requires_token_replacement": not bool(selected.token_raw),
         }
 
     def set_token_enabled(self, *, user_id: str, token_id: str, enabled: bool) -> dict:

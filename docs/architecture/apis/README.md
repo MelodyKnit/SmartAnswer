@@ -17,7 +17,7 @@
 | [conventions.md](conventions.md) | 基础 URL、版本、鉴权、通用响应、错误、分页和权限 | - |
 | [query.md](query.md) | 健康检查、查题、OCS 兼容、诊断、OCS 配置 | 10 |
 | [auth-users.md](auth-users.md) | 注册、登录、会话、密码、用户资料和用户管理 | 17 |
-| [access-control.md](access-control.md) | API Token、角色权限、Token 脚本和分享 | 17 |
+| [access-control.md](access-control.md) | API Token、角色权限、OCS 配置和分享 | 17 |
 | [questions-media.md](questions-media.md) | 题库管理、题目索引、媒体和图片代理 | 7 |
 | [usage-feedback-dashboard.md](usage-feedback-dashboard.md) | 使用日志、反馈、反馈关联记录和工作台 | 8 |
 | [wallet.md](wallet.md) | 钱包、计费、积分、权益发放和兑换码 | 12 |

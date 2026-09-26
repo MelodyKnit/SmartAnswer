@@ -20,7 +20,7 @@ const site = useSiteStore()
       </div>
       <div>
         <h1 class="text-4xl font-bold leading-tight">高效接入<br>稳定答题能力</h1>
-        <p class="mt-4 max-w-sm text-white/80">统一管理 API Key 与导入脚本，实时掌握调用数据与积分消耗。</p>
+        <p class="mt-4 max-w-sm text-white/80">统一管理 API Key 与 OCS 接入配置，实时掌握调用数据与积分消耗。</p>
         <div class="mt-8 flex gap-3">
           <span class="rounded-full bg-white/15 px-4 py-1.5 text-sm">高可用保障</span>
           <span class="rounded-full bg-white/15 px-4 py-1.5 text-sm">快速接入</span>

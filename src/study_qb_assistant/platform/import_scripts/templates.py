@@ -1,29 +1,20 @@
-"""导入脚本模板目录。
+"""后台客户端模板目录。
 
-本模块把可提交的导入脚本模板放在仓库内的 JSONL 文件中统一维护：
-
-- 普通用户“复制导入脚本”读取这里的默认模板。
-- 管理端“导入脚本”页面读取这里的模板目录与预览内容。
-
-后续如需新增其它平台脚本，开发者只需补充 JSONL 模板记录，不需要再改业务代码。
+内置 OCS 配置模板来自 OCS 适配器资源；管理员创建的自定义模板由模板仓储维护。
+普通用户复制 OCS 配置走 Token API，不经过这里的脚本模板渲染。
 """
 
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 from typing import Any
 
-from ...adapters.ocs.config import (
-    load_ocs_client_script_source,
-    load_ocs_import_template_payload,
-)
+from ...adapters.ocs.config import load_ocs_config_template_payload
 
 PLACEHOLDER_BASE_URL = "{{BASE_URL}}"
 PLACEHOLDER_TOKEN = "{{TOKEN}}"
 PLACEHOLDER_CONFIG_JSON = "{{CONFIG_JSON}}"
-CLIENT_SCRIPT_TEMPLATE_PATTERN = re.compile(r"^\{\{CLIENT_SCRIPT:([^}]+)\}\}$")
 
 
 @dataclass(slots=True, frozen=True)
@@ -55,7 +46,7 @@ class ImportScriptTemplate:
 def load_import_script_templates() -> list[ImportScriptTemplate]:
     """读取随 OCS 集成包发布的默认导入模板。"""
 
-    return [template_from_dict(load_ocs_import_template_payload())]
+    return [template_from_dict(load_ocs_config_template_payload())]
 
 
 def template_from_dict(payload: dict[str, Any]) -> ImportScriptTemplate:
@@ -99,49 +90,16 @@ def render_import_script(
         replace_template_placeholders(item, normalized_base_url, config_name)
         for item in template.config_items
     ]
-    script_template = resolve_script_template_content(template.script_template)
     script_content = replace_string_placeholders(
-        script_template,
+        template.script_template,
         base_url=normalized_base_url,
         config_name=config_name,
         config_json=json.dumps(config_items, ensure_ascii=False, indent=2),
     )
-    if script_content.lstrip().startswith("// ==UserScript=="):
-        script_content = inject_client_script_defaults(
-            script_content,
-            base_url=normalized_base_url,
-        )
     result = {}
     result.update(template.to_summary())
     result.update({"content": script_content, "ocs_config": config_items})
     return result
-
-
-def resolve_script_template_content(script_template: str) -> str:
-    """解析脚本模板正文，支持读取 OCS 包内桥接脚本。"""
-
-    raw = str(script_template or "")
-    match = CLIENT_SCRIPT_TEMPLATE_PATTERN.match(raw.strip())
-    if not match:
-        return raw
-    filename = match.group(1).strip()
-    if filename not in {"client-bridge.user.js", "sisu-ocs-client-bridge.user.js"}:
-        raise ValueError(f"不支持的客户端脚本资源: {filename}")
-    return load_ocs_client_script_source()
-
-
-def inject_client_script_defaults(script_content: str, *, base_url: str) -> str:
-    """把桥接脚本中的默认服务地址和占位密钥替换为平台当前值。"""
-
-    rendered = script_content.replace(
-        '    baseUrl: "http://127.0.0.1:8765",',
-        f'    baseUrl: "{base_url}",',
-    )
-    rendered = rendered.replace(
-        '    apiKey: "",',
-        '    apiKey: "{{TOKEN}}",',
-    )
-    return rendered
 
 
 def replace_template_placeholders(value: Any, base_url: str, config_name: str) -> Any:

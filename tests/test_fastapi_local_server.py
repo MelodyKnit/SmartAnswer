@@ -3497,9 +3497,12 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertTrue(default_scripts[0]["is_default"])
         self.assertEqual(script_detail.json()["script"]["target"], "ocs")
         self.assertTrue(default_script_detail.json()["script"]["builtin"])
-        self.assertIn("// ==UserScript==", default_script_detail.json()["script"]["content"])
-        self.assertIn("/ocs/query", default_script_detail.json()["script"]["content"])
-        self.assertIn('apiKey: "{{TOKEN}}"', default_script_detail.json()["script"]["content"])
+        self.assertEqual(default_script_detail.json()["script"]["content"], "")
+        self.assertTrue(
+            default_script_detail.json()["script"]["ocs_config"][0]["url"].endswith(
+                "/ocs/query"
+            )
+        )
         self.assertEqual(missing_script_detail.status_code, 404)
         self.assertEqual(missing_script_detail.json()["error"]["code"], "SCRIPT_NOT_FOUND")
         self.assertEqual(default_script_delete.status_code, 400)
@@ -3518,7 +3521,7 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(invalid_role_update.status_code, 400)
         self.assertEqual(invalid_role_update.json()["error"]["code"], "INVALID_PERMISSION")
 
-    def test_user_workbench_actions_hide_admin_entries_and_expose_copy_script(self) -> None:
+    def test_user_workbench_actions_hide_admin_entries_and_expose_ocs_config(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
@@ -3539,7 +3542,7 @@ class FastAPILocalServerTests(unittest.TestCase):
 
         self.assertTrue(workbench.json()["ok"])
         actions = {item["key"] for item in workbench.json()["workbench"]["quick_actions"]}
-        self.assertIn("copy_import_script", actions)
+        self.assertIn("copy_ocs_config", actions)
         self.assertNotIn("generate_script", actions)
         self.assertNotIn("test_integration", actions)
         self.assertNotIn("integration_manage", actions)
@@ -4415,7 +4418,7 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
             self.assertEqual(q5.status_code, 401)
 
-    def test_token_import_script_requires_token_or_returns_template(self) -> None:
+    def test_token_ocs_config_requires_token_and_returns_selected_config(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
             auth = AuthService(database_path)
@@ -4431,13 +4434,14 @@ class FastAPILocalServerTests(unittest.TestCase):
                 "Authorization": f"Bearer {client.post('/api/v1/auth/login', json={'username': 'boss', 'password': 'password123'}).json()['token']}"
             }
 
-            no_token = client.get("/api/v1/tokens/import-script", headers=headers)
+            legacy_script = client.get("/api/v1/tokens/import-script", headers=headers)
+            no_token = client.get("/api/v1/tokens/ocs-config", headers=headers)
             token_a = client.post("/api/v1/tokens", json={"description": "A"}, headers=headers)
-            one_token = client.get("/api/v1/tokens/import-script", headers=headers)
+            one_token = client.get("/api/v1/tokens/ocs-config", headers=headers)
             token_b = client.post("/api/v1/tokens", json={"description": "B"}, headers=headers)
-            multiple_tokens = client.get("/api/v1/tokens/import-script", headers=headers)
+            multiple_tokens = client.get("/api/v1/tokens/ocs-config", headers=headers)
             direct = client.get(
-                "/api/v1/tokens/import-script",
+                "/api/v1/tokens/ocs-config",
                 params={"token_id": token_b.json()["token_info"]["token_id"]},
                 headers=headers,
             )
@@ -4447,7 +4451,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                 headers=headers,
             )
             renamed_direct = client.get(
-                "/api/v1/tokens/import-script",
+                "/api/v1/tokens/ocs-config",
                 params={"token_id": token_b.json()["token_info"]["token_id"]},
                 headers=headers,
             )
@@ -4457,26 +4461,26 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
 
         self.assertEqual(no_token.status_code, 404)
+        self.assertEqual(legacy_script.status_code, 404)
         self.assertEqual(no_token.json()["error"]["code"], "TOKEN_REQUIRED")
         self.assertEqual(token_a.status_code, 200)
         self.assertEqual(one_token.json()["mode"], "direct")
-        self.assertEqual(one_token.json()["template_id"], "ocs_local_question_bank")
-        self.assertIn(token_a.json()["token"], one_token.json()["script"])
-        self.assertNotIn("{{TOKEN}}", one_token.json()["script"])
-        self.assertFalse(one_token.json()["requires_local_secret"])
-        self.assertIn("// ==UserScript==", one_token.json()["script"])
-        self.assertIn('baseUrl: "http://testserver"', one_token.json()["script"])
-        self.assertIn("image_data_urls", one_token.json()["script"])
-        self.assertIn("/ocs/query", one_token.json()["script"])
+        self.assertNotIn("script", one_token.json())
+        self.assertNotIn("template_id", one_token.json())
+        self.assertFalse(one_token.json()["requires_token_replacement"])
         self.assertIsInstance(one_token.json()["ocs_config"], list)
         self.assertEqual(one_token.json()["ocs_config"][0]["type"], "GM_xmlhttpRequest")
         self.assertEqual(one_token.json()["ocs_config"][0]["name"], "AI题库 · A")
         self.assertIn("/ocs/query", one_token.json()["ocs_config"][0]["url"])
-        self.assertIn(token_a.json()["token"], one_token.json()["ocs_config"][0]["headers"]["Authorization"])
+        self.assertEqual(
+            one_token.json()["ocs_config"][0]["headers"]["Authorization"],
+            f"Bearer {token_a.json()['token']}",
+        )
         self.assertEqual(token_b.status_code, 200)
         self.assertEqual(multiple_tokens.json()["mode"], "select_token")
         self.assertEqual(len(multiple_tokens.json()["token_options"]), 2)
         self.assertEqual(direct.json()["mode"], "direct")
+        self.assertNotIn("script", direct.json())
         self.assertEqual(
             direct.json()["token_id"],
             token_b.json()["token_info"]["token_id"],

@@ -127,23 +127,21 @@ def build_token_router() -> APIRouter:
             return auth_error_response(exc)
         return JSONResponse({"ok": True, "message": "令牌已删除"})
 
-    @router.get("/tokens/import-script")
-    def token_import_script(
+    @router.get("/tokens/ocs-config")
+    def token_ocs_config(
         request: Request,
         token_id: str | None = None,
-        template_id: str | None = None,
     ) -> JSONResponse:
         user = current_user(request)
         if user is None:
             return unauthorized_response("请先登录")
         platform = get_token_service(request)
         try:
-            payload = platform.token_import_script(
+            payload = platform.token_ocs_config(
                 user_id=str(user["user_id"]),
                 base_url=base_url_from_request(request, get_settings_service(request)),
                 platform_name=str(get_settings_service(request).get_site_config()["site_title"]),
                 token_id=token_id,
-                template_id=template_id,
             )
         except AuthError as exc:
             return auth_error_response(exc)

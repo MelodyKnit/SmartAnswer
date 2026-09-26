@@ -46,7 +46,7 @@ import type {
   SiteConfig,
   UsageAudit,
   SystemConfig,
-  TokenImportScriptResponse,
+  TokenOcsConfigResponse,
   User,
   UsageLog,
   WalletChange,
@@ -212,8 +212,8 @@ export const tokenApi = {
     ),
   delete: (tokenId: string) =>
     api.delete<{ ok: true; message: string }>(`/tokens/${encodeURIComponent(tokenId)}`),
-  importScript: (tokenId?: string) =>
-    api.get<{ ok: true } & TokenImportScriptResponse>('/tokens/import-script', tokenId ? { token_id: tokenId } : {}),
+  ocsConfig: (tokenId?: string) =>
+    api.get<{ ok: true } & TokenOcsConfigResponse>('/tokens/ocs-config', tokenId ? { token_id: tokenId } : {}),
   copyValue: (tokenId: string) =>
     api.post<{ ok: true; token_id: string; token: string }>(
       `/tokens/${encodeURIComponent(tokenId)}/copy-value`,
@@ -229,8 +229,6 @@ export const shareApi = {
   apikeyTemplate: () =>
     api.get<{
       ok: true
-      template_id: string
-      script: string
       ocs_config: OcsConfig
     }>('/shares/apikey-template'),
 }

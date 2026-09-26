@@ -8,7 +8,6 @@ import type { OcsConfig } from '@/api/types'
 
 const loading = ref(true)
 const error = ref('')
-const script = ref('')
 const ocsConfig = ref<OcsConfig | null>(null)
 
 function readFragmentKey(): string {
@@ -42,21 +41,11 @@ async function load() {
   try {
     // 只请求不含 Key 的模板，fragment 不会被浏览器发送到 HTTP 服务端。
     const template = await shareApi.apikeyTemplate()
-    script.value = template.script.replaceAll('{{TOKEN}}', token)
     ocsConfig.value = replaceToken(template.ocs_config, token) as OcsConfig
   } catch (err) {
     error.value = err instanceof ApiException ? err.message : '加载分享模板失败，请稍后重试'
   } finally {
     loading.value = false
-  }
-}
-
-async function copyScript() {
-  try {
-    await navigator.clipboard.writeText(script.value)
-    ElMessage.success('已复制脚本')
-  } catch {
-    ElMessage.error('复制失败')
   }
 }
 
@@ -93,20 +82,6 @@ onMounted(load)
         <div class="rounded-2xl bg-canvas-raised p-6">
           <div class="mb-1 text-2xl font-semibold text-ink">API Key 分享配置</div>
           <div class="text-sm text-ink-muted">复制下方内容后，在对应客户端中完成配置。</div>
-        </div>
-
-        <div class="rounded-2xl bg-canvas-raised p-6">
-          <div class="mb-3 flex items-center justify-between gap-3">
-            <div class="text-lg font-medium text-ink">用户脚本</div>
-            <button
-              class="rounded-full bg-accent px-5 py-2 text-sm font-medium text-canvas-deep transition-transform hover:scale-105 active:scale-95"
-              @click="copyScript"
-            >
-              复制脚本
-            </button>
-          </div>
-          <div class="mb-3 text-xs text-ink-muted">脚本已在当前浏览器中填入分享的 API Key，请勿继续转发。</div>
-          <pre class="max-h-[400px] overflow-auto rounded-lg bg-canvas-deep p-4 text-xs text-ink-soft">{{ script }}</pre>
         </div>
 
         <div class="rounded-2xl bg-canvas-raised p-6">

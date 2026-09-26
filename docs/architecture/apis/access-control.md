@@ -14,7 +14,7 @@ Token 资源接口均要求当前用户登录；资源所有权由服务端校�
 | `POST` | `/api/v1/tokens/{token_id}/revoke` | path `token_id` | `token` | 永久吊销 Token；兼容既有客户端，不可重新启用 |
 | `POST` | `/api/v1/tokens/{token_id}` | path + `TokenUpdatePayload` | `token` | 更新 Token |
 | `DELETE` | `/api/v1/tokens/{token_id}` | path `token_id` | `message` | 删除 Token |
-| `GET` | `/api/v1/tokens/import-script` | `token_id?`、`template_id?`（query） | 脚本和配置 | 生成/读取 Token 对应导入脚本；`no-store` |
+| `GET` | `/api/v1/tokens/ocs-config` | `token_id?`（query） | `mode`、`token_id`、`token_option`、`token_options?`、`ocs_config?`、`requires_token_replacement?` | 生成所选 Token 的 OCS 接入配置；`no-store` |
 | `POST` | `/api/v1/tokens/{token_id}/copy-value` | path `token_id` | `token_id`、一次性 `token` | 复制 Token 值；`no-store` |
 | `POST` | `/api/v1/tokens/{token_id}/share-link` | path `token_id` | 分享信息 | 创建 Token 分享链接；`no-store` |
 
@@ -48,19 +48,17 @@ Token 资源接口均要求当前用户登录；资源所有权由服务端校�
 
 系统角色、正在使用中的角色或不存在角色的删除由服务端拒绝，并返回结构化业务错误。
 
-## 3. API Key 配置模板
+## 3. API Key 分享配置模板
 
 ### `GET /api/v1/shares/apikey-template`
 
-公开接口，返回用于外部脚本接入的模板：
+公开接口，返回不含 API Key 的 OCS 配置模板：
 
 ```json
 {
   "ok": true,
-  "template_id": "...",
-  "script": "...",
   "ocs_config": []
 }
 ```
 
-响应允许公开缓存 300 秒。模板中的占位符由客户端或管理端在使用时替换，实际 Token 不应写入模板。
+响应允许公开缓存 300 秒。`ocs_config` 中的 `{{TOKEN}}` 由分享页在浏览器中从 URL fragment 读取并替换；实际 Token 不会随模板请求发送或写入模板。

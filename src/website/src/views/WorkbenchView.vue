@@ -9,18 +9,18 @@ import type { Workbench } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
 import { questionTypeLabel, relativeTime } from '@/utils/format'
 import EChart from '@/components/EChart.vue'
-import ImportScriptCopyDialog from '@/components/ImportScriptCopyDialog.vue'
+import OcsConfigCopyDialog from '@/components/OcsConfigCopyDialog.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
 const loading = ref(true)
 const data = ref<Workbench | null>(null)
-const importScriptDialog = ref<InstanceType<typeof ImportScriptCopyDialog>>()
+const ocsConfigDialog = ref<InstanceType<typeof OcsConfigCopyDialog>>()
 const scope = ref<'self' | 'global'>(auth.hasPermission('dashboard:all') ? 'global' : 'self')
 
 const QUICK_ICONS: Record<string, string> = {
   create_api_key: 'Key',
-  copy_import_script: 'DocumentCopy',
+  copy_ocs_config: 'DocumentCopy',
   generate_script: 'Document',
   interface_status: 'DataLine',
   usage_logs: 'Tickets',
@@ -47,8 +47,8 @@ async function handleQuickAction(action: Workbench['quick_actions'][number]) {
   if (!auth.hasAllPermissions(action.requires_permissions)) {
     return
   }
-  if (action.action === 'copy_import_script') {
-    await importScriptDialog.value?.open()
+  if (action.action === 'copy_ocs_config') {
+    await ocsConfigDialog.value?.open()
     return
   }
   router.push(ROUTE_MAP[action.path] ?? action.path)
@@ -320,7 +320,7 @@ watch(scope, (_value, oldValue) => {
         </div>
       </section>
 
-      <ImportScriptCopyDialog ref="importScriptDialog" />
+      <OcsConfigCopyDialog ref="ocsConfigDialog" />
     </template>
   </div>
 </template>

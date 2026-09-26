@@ -55,7 +55,6 @@ RUN pip install --no-cache-dir --upgrade pip -i https://pypi.tuna.tsinghua.edu.c
         uvicorn
 
 COPY configs ./configs
-COPY client-scripts ./client-scripts
 COPY scripts ./scripts
 COPY src ./src
 COPY docs/help ./docs/help

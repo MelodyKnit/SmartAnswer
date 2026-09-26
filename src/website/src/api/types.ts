@@ -334,7 +334,7 @@ export interface Workbench {
     key: string
     label: string
     path: string
-    action: 'navigate' | 'copy_import_script'
+    action: 'navigate' | 'copy_ocs_config'
     requires_permissions: string[]
   }[]
   overview: {
@@ -805,14 +805,13 @@ export interface RuntimeEvent {
   [key: string]: unknown
 }
 
-export interface TokenImportScriptResponse {
+export interface TokenOcsConfigResponse {
   mode: 'direct' | 'select_token'
   token_id?: string
   token_option?: ApiToken
   token_options?: ApiToken[]
-  script?: string
   ocs_config?: OcsConfig
-  requires_local_secret?: boolean
+  requires_token_replacement?: boolean
 }
 
 export interface QuestionRecord {

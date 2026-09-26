@@ -131,10 +131,10 @@ class DashboardService:
                 "requires_permissions": ["tokens:self"],
             },
             {
-                "key": "copy_import_script",
-                "label": "复制导入脚本",
+                "key": "copy_ocs_config",
+                "label": "复制 OCS 配置",
                 "path": "/tokens",
-                "action": "copy_import_script",
+                "action": "copy_ocs_config",
                 "requires_permissions": ["tokens:self"],
             },
             {

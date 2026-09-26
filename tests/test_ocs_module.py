@@ -10,7 +10,7 @@ from study_qb_assistant.adapters.ocs import (
     OcsIntegrationPort,
     OcsQuestionTypeRegistry,
 )
-from study_qb_assistant.adapters.ocs.config import load_ocs_client_script_source
+from study_qb_assistant.adapters.ocs.config import load_ocs_config_template_payload
 from study_qb_assistant.adapters.ocs.question_types import SingleChoiceOcsHandler
 from study_qb_assistant.questions.models import QueryResult, QuestionQuery
 
@@ -76,8 +76,15 @@ class OcsModuleTests(unittest.TestCase):
         self.assertEqual(payload["data"]["answer"], "对")
         self.assertEqual(payload["data"]["ai"]["ocs_question_type"], "judgement")
 
-    def test_packaged_client_script_is_readable(self) -> None:
-        self.assertIn("// ==UserScript==", load_ocs_client_script_source())
+    def test_packaged_ocs_template_contains_only_connection_config(self) -> None:
+        template = load_ocs_config_template_payload()
+
+        self.assertEqual(len(template["config_items"]), 1)
+        self.assertNotIn("script_template", template)
+        config = DefaultOcsIntegration().build_config(
+            "https://example.test", platform_name="示例平台"
+        )
+        self.assertEqual(config[0]["url"], "https://example.test/ocs/query")
 
 
 if __name__ == "__main__":

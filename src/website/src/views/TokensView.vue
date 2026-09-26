@@ -7,7 +7,7 @@ import type { ApiToken, OcsConfig } from '@/api/types'
 import { ApiException } from '@/api/http'
 import { formatDateTime } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
-import ImportScriptCopyDialog from '@/components/ImportScriptCopyDialog.vue'
+import OcsConfigCopyDialog from '@/components/OcsConfigCopyDialog.vue'
 
 const loading = ref(false)
 const tokens = ref<ApiToken[]>([])
@@ -35,7 +35,7 @@ const editForm = ref({
 const revealVisible = ref(false)
 const revealToken = ref('')
 const revealConfig = ref<OcsConfig | null>(null)
-const importScriptDialog = ref<InstanceType<typeof ImportScriptCopyDialog>>()
+const ocsConfigDialog = ref<InstanceType<typeof OcsConfigCopyDialog>>()
 
 async function load() {
   loading.value = true
@@ -189,8 +189,8 @@ async function copy(text: string) {
   }
 }
 
-function openImportScript(token?: ApiToken) {
-  importScriptDialog.value?.open(token?.token_id)
+function openOcsConfig(token?: ApiToken) {
+  ocsConfigDialog.value?.open(token?.token_id)
 }
 
 const ocsConfigText = (config: OcsConfig | null) =>
@@ -206,7 +206,7 @@ onMounted(load)
         <router-link to="/help?article=api-key-guide">
           <el-button :icon="'QuestionFilled'" plain>使用指南</el-button>
         </router-link>
-        <el-button :icon="'DocumentCopy'" @click="openImportScript()">复制导入</el-button>
+        <el-button :icon="'DocumentCopy'" @click="openOcsConfig()">复制 OCS 配置</el-button>
         <el-button type="primary" :icon="'Plus'" @click="openCreate">创建 API Key</el-button>
       </template>
     </PageHeader>
@@ -223,7 +223,7 @@ onMounted(load)
             to="/help?article=api-key-guide"
             class="ml-1 font-semibold text-brand-600 hover:underline dark:text-brand-400"
           >
-            点击查看《API Key 是什么、如何创建以及如何接入外部脚本》
+            点击查看《API Key 是什么、如何创建以及如何接入 OCS》
           </router-link>
         </template>
       </el-alert>
@@ -296,9 +296,9 @@ onMounted(load)
                 <el-button
                   link
                   type="primary"
-                  @click="openImportScript(row)"
+                  @click="openOcsConfig(row)"
                 >
-                  复制导入
+                  复制 OCS 配置
                 </el-button>
               </template>
               <el-button
@@ -433,6 +433,6 @@ onMounted(load)
       </template>
     </el-dialog>
 
-    <ImportScriptCopyDialog ref="importScriptDialog" />
+    <OcsConfigCopyDialog ref="ocsConfigDialog" />
   </div>
 </template>

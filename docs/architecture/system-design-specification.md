@@ -117,7 +117,7 @@ CREATE TABLE api_keys (
     id VARCHAR(36) PRIMARY KEY,          -- 主键标识 (UUID)
     key_hash VARCHAR(64) UNIQUE NOT NULL,-- API 密钥哈希值 (用于服务端校验)
     key_mask VARCHAR(20) NOT NULL,       -- 遮罩展示 (如 sk_stqb_8af2c...1c)
-    description VARCHAR(100),            -- 密钥用途说明 (如 "小明手机端 Tampermonkey")
+    description VARCHAR(100),            -- 密钥用途说明 (如 "小明笔记本 OCS")
     user_id VARCHAR(36) NOT NULL,        -- 归属用户 ID (关联 users.id)
     usage_count INT DEFAULT 0,           -- 累计请求查题次数
     status VARCHAR(20) DEFAULT 'active', -- 状态：'active' (启用) 或 'disabled' (禁用)

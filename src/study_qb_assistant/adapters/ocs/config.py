@@ -1,4 +1,4 @@
-"""OCS 配置与客户端包资源读取。"""
+"""OCS 配置模板读取与运行时渲染。"""
 
 from __future__ import annotations
 
@@ -11,26 +11,15 @@ TOKEN_PLACEHOLDER = "{{TOKEN}}"
 CONFIG_NAME_PLACEHOLDER = "{{CONFIG_NAME}}"
 
 
-def load_ocs_import_template_payload() -> dict[str, Any]:
-    """读取随 Python 包发布的 OCS 导入模板。"""
+def load_ocs_config_template_payload() -> dict[str, Any]:
+    """读取随 Python 包发布的 OCS 配置模板。"""
 
-    resource = files("study_qb_assistant.adapters.ocs.resources").joinpath(
-        "import-script-template.json"
-    )
+    resource = files("study_qb_assistant.adapters.ocs.resources").joinpath("ocs-config-template.json")
     with resource.open("r", encoding="utf-8") as handle:
         payload = json.load(handle)
     if not isinstance(payload, dict):
         raise ValueError("OCS 导入模板必须是 JSON 对象")
     return payload
-
-
-def load_ocs_client_script_source() -> str:
-    """读取随 Python 包发布的 OCS 客户端桥接脚本。"""
-
-    resource = files("study_qb_assistant.adapters.ocs.resources").joinpath(
-        "client-bridge.user.js"
-    )
-    return resource.read_text(encoding="utf-8")
 
 
 def build_ocs_config(
@@ -42,7 +31,7 @@ def build_ocs_config(
 ) -> list[dict[str, Any]]:
     """根据运行时平台与令牌信息构建 OCS 题库配置。"""
 
-    payload = load_ocs_import_template_payload()
+    payload = load_ocs_config_template_payload()
     normalized_base_url = base_url.rstrip("/")
     config_items = payload.get("config_items") or []
     config_name = build_ocs_config_name(
@@ -75,18 +64,6 @@ def build_ocs_config_name(
     if normalized_key_mask:
         return f"{normalized_platform_name} · {normalized_key_mask[-4:]}"
     return normalized_platform_name
-
-
-def render_ocs_client_script(base_url: str, *, token: str = TOKEN_PLACEHOLDER) -> str:
-    """渲染默认服务地址和 API Key 的 OCS 客户端脚本。"""
-
-    normalized_base_url = base_url.rstrip("/")
-    script = load_ocs_client_script_source()
-    script = script.replace(
-        '    baseUrl: "http://127.0.0.1:8765",',
-        f'    baseUrl: "{normalized_base_url}",',
-    )
-    return script.replace('    apiKey: "",', f'    apiKey: "{token}",')
 
 
 def replace_placeholders(value: Any, base_url: str, config_name: str) -> Any:
