@@ -38,6 +38,7 @@ const grantForm = reactive<{ username: string; kind: 'points' | 'days'; points: 
 })
 const codeVisible = ref(false)
 const codeForm = reactive<{
+  title: string
   kind: 'points' | 'days'
   points: number
   days: number
@@ -47,6 +48,7 @@ const codeForm = reactive<{
   code: string
   count: number
 }>({
+  title: '',
   kind: 'points',
   points: pointsPolicy.redeemCode,
   days: 30,
@@ -274,6 +276,7 @@ async function submitCode() {
 
   try {
     await walletApi.createRedeemCode({
+      title: codeForm.title.trim(),
       kind: codeForm.kind,
       points: codeForm.kind === 'points' ? codeForm.points : 0,
       days: codeForm.kind === 'days' ? codeForm.days : 0,
@@ -284,6 +287,7 @@ async function submitCode() {
     })
     ElMessage.success('兑换码已创建')
     codeVisible.value = false
+    codeForm.title = ''
     codeForm.points = pointsPolicy.redeemCode
     codeForm.days = 30
     codeForm.max_uses = 1
@@ -364,6 +368,9 @@ onMounted(load)
             </div>
             <el-table v-loading="codesLoading" :data="codes" style="width: 100%" @selection-change="handleCodeSelectionChange">
               <el-table-column type="selection" width="45" align="center" />
+              <el-table-column label="兑换码标题" min-width="150" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.title || '—' }}</template>
+              </el-table-column>
               <el-table-column label="兑换码" min-width="220">
                 <template #default="{ row }">
                   <code class="rounded bg-canvas px-2 py-1 text-xs font-mono font-bold select-all">{{ row.code }}</code>
@@ -530,6 +537,14 @@ onMounted(load)
 
     <el-dialog v-model="codeVisible" title="创建兑换码" width="420px">
       <el-form label-position="top">
+        <el-form-item label="兑换码标题（可选）">
+          <el-input
+            v-model="codeForm.title"
+            placeholder="例如：新用户奖励、节日活动"
+            maxlength="255"
+            show-word-limit
+          />
+        </el-form-item>
         <el-form-item label="兑换码类型">
           <el-radio-group v-model="codeForm.kind" class="w-full">
             <el-radio-button value="points">积分兑换码</el-radio-button>

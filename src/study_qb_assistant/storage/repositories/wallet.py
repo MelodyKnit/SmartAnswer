@@ -208,6 +208,7 @@ class WalletRepository(SqlAlchemyRepository):
     def _apply_redeem_code(self, entity: RedeemCodeEntity, record: RedeemCodeRecord) -> None:
         entity.code_id = record.code_id
         entity.code = record.code
+        entity.title = record.title
         entity.kind = record.kind
         entity.points = record.points
         entity.days = record.days
@@ -273,6 +274,7 @@ class WalletRepository(SqlAlchemyRepository):
         return RedeemCodeRecord(
             code_id=entity.code_id,
             code=entity.code,
+            title=str(getattr(entity, "title", "") or ""),
             kind=entity.kind,
             points=entity.points,
             days=entity.days,

@@ -12,6 +12,7 @@ class BillingPayload(BaseModel):
 
 class RedeemCodePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    title: str = Field(default="", max_length=255)
     kind: str = "points"
     points: int = 0
     days: int = 0

@@ -4174,6 +4174,7 @@ class FastAPILocalServerTests(unittest.TestCase):
 
         self.assertIn("unlimited_expires_at", columns_by_table["users"])
         self.assertIn("days", columns_by_table["redeem_codes"])
+        self.assertIn("title", columns_by_table["redeem_codes"])
         self.assertIn("days_delta", columns_by_table["wallet_orders"])
 
     def test_dashboard_rankings_user_isolation(self) -> None:

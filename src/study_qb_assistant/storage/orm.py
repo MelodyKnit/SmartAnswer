@@ -224,6 +224,7 @@ class RedeemCodeEntity(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     code_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     code: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    title: Mapped[str] = mapped_column(String(255), default="")
     kind: Mapped[str] = mapped_column(String(32))
     points: Mapped[int] = mapped_column(Integer, default=0)
     days: Mapped[int] = mapped_column(Integer, default=0)

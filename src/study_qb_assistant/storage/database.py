@@ -80,6 +80,7 @@ def ensure_sqlite_compat_columns(engine: Engine) -> None:
         },
         "redeem_codes": {
             "days": "INTEGER DEFAULT 0",
+            "title": "TEXT DEFAULT ''",
         },
         "wallet_orders": {
             "days_delta": "INTEGER DEFAULT 0",
@@ -207,6 +208,7 @@ def ensure_sql_compat_columns(engine: Engine) -> None:
         },
         "redeem_codes": {
             "days": "INTEGER DEFAULT 0",
+            "title": "VARCHAR(255) DEFAULT ''",
         },
         "wallet_orders": {
             "days_delta": "INTEGER DEFAULT 0",

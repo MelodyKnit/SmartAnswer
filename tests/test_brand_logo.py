@@ -220,6 +220,7 @@ def test_redeem_code_custom_and_bulk(temp_db_dir):
     res = client.post(
         "/api/v1/wallet/redeem-codes",
         json={
+            "title": "  新用户奖励  ",
             "kind": "points",
             "points": 1000,
             "max_uses": 5,
@@ -231,6 +232,7 @@ def test_redeem_code_custom_and_bulk(temp_db_dir):
     data = res.json()
     assert data["ok"] is True
     assert data["redeem_code"]["code"] == "VIP_WELCOME_2026"
+    assert data["redeem_code"]["title"] == "新用户奖励"
     assert data["redeem_code"]["points"] == 1000
     assert data["redeem_code"]["max_uses"] == 5
 
@@ -246,13 +248,14 @@ def test_redeem_code_custom_and_bulk(temp_db_dir):
     # 3. 测试批量随机创建兑换码 (如 5 个 1000 积分兑换码)
     res_bulk = client.post(
         "/api/v1/wallet/redeem-codes",
-        json={"kind": "points", "points": 1000, "count": 5},
+        json={"title": "新用户奖励", "kind": "points", "points": 1000, "count": 5},
         headers=headers,
     )
     assert res_bulk.status_code == 200
     data_bulk = res_bulk.json()
     assert data_bulk["ok"] is True
     assert data_bulk["redeem_code"]["points"] == 1000
+    assert data_bulk["redeem_code"]["title"] == "新用户奖励"
 
     # 获取列表验证目前数据库中新增的兑换码
     list_res = client.get("/api/v1/wallet/redeem-codes", headers=headers)
@@ -260,6 +263,7 @@ def test_redeem_code_custom_and_bulk(temp_db_dir):
     all_codes = list_res.json()["redeem_codes"]
     # 应该包括 (1个自定义兑换码 + 5个批量创建的兑换码) = 6个
     assert len(all_codes) == 6
+    assert {code["title"] for code in all_codes} == {"新用户奖励"}
 
     # 过滤出 1000 积分的随机兑换码 (前缀以 rc_ 开头)
     random_1000_codes = [

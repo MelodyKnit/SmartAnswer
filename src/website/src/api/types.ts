@@ -215,6 +215,7 @@ export interface WalletChange {
 export interface RedeemCode {
   code_id: string
   code: string
+  title?: string
   kind: string
   points: number
   days?: number

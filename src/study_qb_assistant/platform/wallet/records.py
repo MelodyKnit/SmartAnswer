@@ -21,11 +21,13 @@ class RedeemCodeRecord:
     created_at: float
     expires_at: float = 0.0
     days: int = 0
+    title: str = ""
 
     def to_dict(self) -> dict:
         return {
             "code_id": self.code_id,
             "code": self.code,
+            "title": self.title,
             "kind": self.kind,
             "points": self.points,
             "days": self.days,
@@ -51,6 +53,7 @@ class RedeemCodeRecord:
             created_by=str(payload.get("created_by") or ""),
             created_at=float(payload.get("created_at") or time.time()),
             expires_at=float(payload.get("expires_at") or 0.0),
+            title=str(payload.get("title") or ""),
         )
 
 @dataclass(slots=True)

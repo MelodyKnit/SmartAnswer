@@ -47,6 +47,7 @@ class WalletService(PlatformDomainService):
         self,
         *,
         created_by: str,
+        title: str = "",
         kind: str,
         points: int = 0,
         days: int = 0,
@@ -59,6 +60,9 @@ class WalletService(PlatformDomainService):
 
         if kind not in ("points", "days"):
             raise AuthError("INVALID_INPUT", "兑换码类型仅支持 points 或 days", http_status=400)
+        normalized_title = str(title or "").strip()
+        if len(normalized_title) > 255:
+            raise AuthError("INVALID_INPUT", "兑换码标题不能超过 255 个字符", http_status=400)
         amount = require_positive_amount(
             points if kind == "points" else days,
             "积分数量" if kind == "points" else "兑换天数",
@@ -101,6 +105,7 @@ class WalletService(PlatformDomainService):
                 record = RedeemCodeRecord(
                     code_id=secrets.token_hex(12),
                     code=actual_code,
+                    title=normalized_title,
                     kind=kind,
                     points=amount if kind == "points" else 0,
                     days=amount if kind == "days" else 0,

@@ -182,6 +182,7 @@ def build_wallet_router() -> APIRouter:
         try:
             code = wallet_service.create_redeem_code(
                 created_by=str(actor["username"]),
+                title=payload.title,
                 kind=payload.kind,
                 points=payload.points,
                 days=payload.days,

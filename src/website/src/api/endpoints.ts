@@ -473,6 +473,7 @@ export const walletApi = {
   }) => api.post<{ ok: true; order: WalletOrder }>('/wallet/grants', body),
   redeemCodes: () => api.get<{ ok: true; redeem_codes: RedeemCode[] }>('/wallet/redeem-codes'),
   createRedeemCode: (body: {
+    title?: string
     kind: 'points' | 'days'
     points?: number
     days?: number
