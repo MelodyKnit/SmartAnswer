@@ -50,7 +50,13 @@ def build_query_router() -> APIRouter:
         denied = guard_protected_request(request)
         if denied:
             return denied
-        return JSONResponse(status_payload(get_lookup_service(request)))
+        return JSONResponse(
+            status_payload(
+                get_lookup_service(request),
+                query_admission=getattr(request.app.state, "query_admission", None),
+                query_policy=get_settings_service(request).get_query_protection_policy(),
+            )
+        )
 
     @router.get("/debug/recent")
     def debug_recent(

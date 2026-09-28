@@ -77,6 +77,21 @@ class SettingsService(PlatformDomainService):
             self.system_points_value("log_max_size_mb"),
         )
 
+    def get_query_protection_policy(self) -> dict[str, str]:
+        """返回查题准入保护配置；每次请求读取，支持保存后即时生效。"""
+
+        config = self.get_system_config()
+        return {
+            key: str(config.get(key) or SYSTEM_CONFIG_DEFAULTS[key])
+            for key in (
+                "query_rate_limit_enabled",
+                "query_rate_limit_window_seconds",
+                "query_rate_limit_requests_per_user",
+                "query_max_active_requests_per_user",
+                "query_max_active_requests",
+            )
+        }
+
     def set_billing(self, values: dict[str, int]) -> dict:
         """更新积分计费配置。"""
         current = self.get_billing()
@@ -376,6 +391,32 @@ class SettingsService(PlatformDomainService):
                     raise AuthError(
                         "INVALID_INPUT",
                         "每个用户的 API Key 数量上限必须在 0 到 1000 之间",
+                        http_status=400,
+                    )
+                text = str(parsed)
+            elif key in {
+                "query_rate_limit_window_seconds",
+                "query_rate_limit_requests_per_user",
+                "query_max_active_requests_per_user",
+                "query_max_active_requests",
+            }:
+                bounds = {
+                    "query_rate_limit_window_seconds": (10, 3600),
+                    "query_rate_limit_requests_per_user": (1, 600),
+                    "query_max_active_requests_per_user": (1, 8),
+                    "query_max_active_requests": (1, 32),
+                }
+                minimum, maximum = bounds[key]
+                try:
+                    parsed = int(text or SYSTEM_CONFIG_DEFAULTS[key])
+                except ValueError as exc:
+                    raise AuthError(
+                        "INVALID_INPUT", f"{key} 必须为整数", http_status=400
+                    ) from exc
+                if parsed < minimum or parsed > maximum:
+                    raise AuthError(
+                        "INVALID_INPUT",
+                        f"{key} 必须在 {minimum} 到 {maximum} 之间",
                         http_status=400,
                     )
                 text = str(parsed)

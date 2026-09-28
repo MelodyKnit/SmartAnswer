@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import secrets
 import time
 
@@ -22,6 +23,7 @@ from ..questions.models import QuestionQuery
 from ..search import LocalQuestionIndex
 from .dependencies import get_ocs_integration
 from .http import model_visible_base_url, extract_client_ip, extract_client_fingerprint
+from .query_admission import QueryAdmissionController, QueryAdmissionDecision
 from .security import auth_error_response, authorization_bearer, current_user
 
 
@@ -94,13 +96,33 @@ def run_lookup(
             )
         return auth_error_response(pre_auth_error)
 
-    if not query.request_id:
-        query.request_id = secrets.token_hex(12)
-    if not query.service_base_url:
-        query.service_base_url = model_visible_base_url(request, settings)
-    client_ip = extract_client_ip(request)
-    started = time.time()
+    admission = getattr(request.app.state, "query_admission", None)
+    lease = None
+    if isinstance(admission, QueryAdmissionController):
+        principal = query_principal_key(tokens, auth, request)
+        lease, decision = admission.try_acquire(
+            principal,
+            settings.get_query_protection_policy(),
+        )
+        if not decision.allowed:
+            log_event(
+                "query_admission_rejected",
+                {
+                    "path": path,
+                    "reason": decision.reason,
+                    "retry_after_seconds": decision.retry_after_seconds,
+                    "principal": principal,
+                },
+            )
+            return query_admission_error(path, query, decision)
+
     try:
+        if not query.request_id:
+            query.request_id = secrets.token_hex(12)
+        if not query.service_base_url:
+            query.service_base_url = model_visible_base_url(request, settings)
+        client_ip = extract_client_ip(request)
+        started = time.time()
         set_request_id(str(query.request_id or ""))
         result = lookup.query(query)
         # 客户端 IP 仅用于使用审计，不能写入面向调用方的查题结果。
@@ -137,6 +159,80 @@ def run_lookup(
         )
     finally:
         reset_request_id()
+        if lease is not None:
+            lease.release()
+
+
+def query_principal_key(tokens: TokenService, auth: AuthService, request: Request) -> str:
+    """返回不含原始凭据的稳定限流主体标识。"""
+
+    user = current_user(request)
+    bearer = authorization_bearer(request)
+    token = None
+    if bearer:
+        try:
+            token = tokens.resolve_token(
+                bearer,
+                client_id=extract_client_fingerprint(request),
+            )
+        except AuthError:
+            token = None
+    if user is None and token is not None:
+        user = auth.resolve_user_by_id(token["user_id"])
+    if user is not None:
+        return "user:" + _principal_digest(str(user["user_id"]))
+    if token is not None and token.get("token_id"):
+        return "token:" + _principal_digest(str(token["token_id"]))
+    if bearer:
+        return "credential:" + _principal_digest(bearer)
+    fingerprint = extract_client_fingerprint(request)
+    return "client:" + _principal_digest(fingerprint)
+
+
+def _principal_digest(value: str) -> str:
+    """将限流主体压缩为不可逆的短标识，避免运行日志暴露内部 ID。"""
+
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:24]
+
+
+def query_admission_error(
+    path: str,
+    query: QuestionQuery,
+    decision: QueryAdmissionDecision,
+) -> JSONResponse:
+    """按接口契约返回统一的查题过载响应。"""
+
+    message = (
+        "当前查题请求较多，请稍后重试"
+        if decision.reason == "global_concurrency"
+        else "当前用户查题请求过于频繁，请稍后重试"
+        if decision.reason in {"user_concurrency", "rate_limit"}
+        else "当前查题服务暂时繁忙，请稍后重试"
+    )
+    headers = {"Retry-After": str(decision.retry_after_seconds)}
+    if path == "/ocs/query":
+        return JSONResponse(
+            {
+                "code": 1,
+                "message": message,
+                "data": {
+                    "question": query.title,
+                    "answer": None,
+                    "ai": {
+                        "review_required": True,
+                        "error_code": "RATE_LIMITED",
+                        "rate_limit_reason": decision.reason,
+                    },
+                },
+            },
+            status_code=429,
+            headers=headers,
+        )
+    return JSONResponse(
+        {"ok": False, "error": {"code": "RATE_LIMITED", "message": message}},
+        status_code=429,
+        headers=headers,
+    )
 
 def response_for_path(
     path: str,

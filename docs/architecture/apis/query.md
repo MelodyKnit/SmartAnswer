@@ -8,12 +8,14 @@
 | --- | --- | --- | --- | --- |
 | `GET` | `/api/v1/healthz` | `public` | 无 | `{"ok": true}` |
 | `GET` | `/api/v1/version` | `public` | 无 | `ok`、`version`、构建信息 |
-| `GET` | `/api/v1/status` | 鉴权启用时 `session` | 无 | 服务状态、索引和运行时信息 |
+| `GET` | `/api/v1/status` | 鉴权启用时 `session` | 无 | 服务状态、索引、运行时信息和查题保护统计 |
 | `GET` | `/api/v1/debug/recent` | `system:read` | `start_date`、`end_date`（query，可选） | `{"ok": true, "events": [...]}` |
 | `GET` | `/api/v1/debug/usage-audit` | `system:read` | `date`（query，可选） | `{"ok": true, "audit": {...}}` |
 | `GET` | `/api/v1/configs/ocs-local-study-bank.json` | `public` | 无 | OCS 源配置 JSON |
 
 日期格式为 `YYYY-MM-DD`。日期无效或开始日期晚于结束日期时返回 `400 INVALID_DATE`。
+
+当查题活动请求数或用户窗口速率达到系统配置限制时，`GET/POST /api/v1/query` 与 `/ocs/query` 返回 HTTP `429`，并附带 `Retry-After`。`/api/v1/query` 使用标准错误结构；`/ocs/query` 保留 `code/data` 响应结构并在 `data.ai.error_code` 中返回 `RATE_LIMITED`。
 
 ## 2. 标准查题
 

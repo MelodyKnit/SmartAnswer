@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import difflib
 import re
 import string
+from threading import RLock
 import unicodedata
 from typing import Any
 
@@ -80,22 +81,88 @@ class QuestionMatcher:
     def __init__(self, records: tuple[CanonicalQuestionRecord, ...]) -> None:
         """构建精确键、题干键和 n-gram 倒排索引。"""
 
-        self.records = records
+        self._lock = RLock()
+        self.records: list[CanonicalQuestionRecord | None] = list(records)
         self.exact_key_index: dict[QuestionMatchKey, list[int]] = {}
         self.title_key_index: dict[str, list[int]] = {}
         self.ngram_inverted_index: dict[str, set[int]] = {}
+        self._record_positions: dict[str, int] = {}
         for index, record in enumerate(records):
-            title_key = normalize_match_title(record.title_raw)
-            option_signature = normalize_options(record.options_raw)
-            key = QuestionMatchKey(
-                question_type=normalize_question_type(record.question_type),
-                title_key=title_key,
-                option_signature=option_signature,
-            )
-            self.exact_key_index.setdefault(key, []).append(index)
-            self.title_key_index.setdefault(title_key, []).append(index)
-            for gram in title_ngrams(title_key):
-                self.ngram_inverted_index.setdefault(gram, set()).add(index)
+            self._add_record_indexes(record, index)
+
+    def upsert(self, record: CanonicalQuestionRecord) -> None:
+        """增量替换或追加一条可匹配记录，避免完整重建 n-gram 索引。"""
+
+        with self._lock:
+            question_id = str(record.question_id)
+            existing_index = self._record_positions.get(question_id)
+            if existing_index is not None:
+                old_record = self.records[existing_index]
+                if old_record is not None:
+                    self._remove_record_indexes(old_record, existing_index)
+                self.records[existing_index] = record
+                self._add_record_indexes(record, existing_index)
+                return
+            index = len(self.records)
+            self.records.append(record)
+            self._add_record_indexes(record, index)
+
+    def remove(self, question_id: str) -> None:
+        """增量移除一条记录；使用稳定位置避免重排全部倒排索引。"""
+
+        with self._lock:
+            index = self._record_positions.get(str(question_id))
+            if index is None:
+                return
+            record = self.records[index]
+            if record is not None:
+                self._remove_record_indexes(record, index)
+            self.records[index] = None
+
+    def _add_record_indexes(self, record: CanonicalQuestionRecord, index: int) -> None:
+        title_key = normalize_match_title(record.title_raw)
+        option_signature = normalize_options(record.options_raw)
+        key = QuestionMatchKey(
+            question_type=normalize_question_type(record.question_type),
+            title_key=title_key,
+            option_signature=option_signature,
+        )
+        self._record_positions[str(record.question_id)] = index
+        self.exact_key_index.setdefault(key, []).append(index)
+        self.title_key_index.setdefault(title_key, []).append(index)
+        for gram in title_ngrams(title_key):
+            self.ngram_inverted_index.setdefault(gram, set()).add(index)
+
+    def _remove_record_indexes(self, record: CanonicalQuestionRecord, index: int) -> None:
+        title_key = normalize_match_title(record.title_raw)
+        option_signature = normalize_options(record.options_raw)
+        key = QuestionMatchKey(
+            question_type=normalize_question_type(record.question_type),
+            title_key=title_key,
+            option_signature=option_signature,
+        )
+        self._record_positions.pop(str(record.question_id), None)
+        self._remove_index_value(self.exact_key_index, key, index)
+        self._remove_index_value(self.title_key_index, title_key, index)
+        for gram in title_ngrams(title_key):
+            indexes = self.ngram_inverted_index.get(gram)
+            if indexes is None:
+                continue
+            indexes.discard(index)
+            if not indexes:
+                self.ngram_inverted_index.pop(gram, None)
+
+    @staticmethod
+    def _remove_index_value(index: dict, key, value: int) -> None:
+        values = index.get(key)
+        if values is None:
+            return
+        try:
+            values.remove(value)
+        except ValueError:
+            return
+        if not values:
+            index.pop(key, None)
 
     def status(self) -> dict[str, int]:
         """返回索引结构统计，便于运行时诊断。"""
@@ -109,88 +176,90 @@ class QuestionMatcher:
     def exact_match(self, query: QuestionQuery) -> MatchCandidate | None:
         """执行严格且高可信的规范键匹配。"""
 
-        query_title_key = normalize_match_title(query.title)
-        query_options = normalize_options(query.options)
-        key = QuestionMatchKey(
-            question_type=normalize_question_type(query.question_type),
-            title_key=query_title_key,
-            option_signature=query_options,
-        )
-        exact_indexes = self.exact_key_index.get(key) or []
-        exact_candidates = self.valid_candidates(exact_indexes, query)
-        if exact_candidates:
-            record = self.rank_by_option_and_review(exact_candidates, query)[0]
-            return MatchCandidate(record, 0.99, "exact_key", 1.0, 1.0, len(exact_candidates), 1.0)
+        with self._lock:
+            query_title_key = normalize_match_title(query.title)
+            query_options = normalize_options(query.options)
+            key = QuestionMatchKey(
+                question_type=normalize_question_type(query.question_type),
+                title_key=query_title_key,
+                option_signature=query_options,
+            )
+            exact_indexes = self.exact_key_index.get(key) or []
+            exact_candidates = self.valid_candidates(exact_indexes, query)
+            if exact_candidates:
+                record = self.rank_by_option_and_review(exact_candidates, query)[0]
+                return MatchCandidate(record, 0.99, "exact_key", 1.0, 1.0, len(exact_candidates), 1.0)
 
-        title_indexes = self.title_key_index.get(query_title_key) or []
-        title_candidates = self.valid_candidates(title_indexes, query)
-        trusted_title_candidates = [
-            record for record in title_candidates if self.title_key_candidate_is_safe(record, query)
-        ]
-        if not trusted_title_candidates:
-            return None
-        record = self.rank_by_option_and_review(trusted_title_candidates, query)[0]
-        option_score = option_similarity(record.options_raw, query.options)
-        return MatchCandidate(
-            record=record,
-            confidence=0.99,
-            match_stage="title_key",
-            title_score=1.0,
-            option_score=option_score,
-            candidate_count=len(trusted_title_candidates),
-            top_gap=1.0,
-        )
+            title_indexes = self.title_key_index.get(query_title_key) or []
+            title_candidates = self.valid_candidates(title_indexes, query)
+            trusted_title_candidates = [
+                record for record in title_candidates if self.title_key_candidate_is_safe(record, query)
+            ]
+            if not trusted_title_candidates:
+                return None
+            record = self.rank_by_option_and_review(trusted_title_candidates, query)[0]
+            option_score = option_similarity(record.options_raw, query.options)
+            return MatchCandidate(
+                record=record,
+                confidence=0.99,
+                match_stage="title_key",
+                title_score=1.0,
+                option_score=option_score,
+                candidate_count=len(trusted_title_candidates),
+                top_gap=1.0,
+            )
 
     def fuzzy_match(self, query: QuestionQuery) -> MatchCandidate | None:
         """先通过 n-gram 倒排召回候选，再进行高置信精排。"""
 
-        query_title_key = normalize_match_title(query.title)
-        candidate_indexes = self.recall_candidate_indexes(query_title_key)
-        scored: list[MatchCandidate] = []
-        for index in candidate_indexes:
-            record = self.records[index]
-            if is_ai_record(record):
-                continue
-            title_score = title_similarity(normalize_match_title(record.title_raw), query_title_key)
-            option_score = option_similarity(record.options_raw, query.options)
-            if not self.fuzzy_candidate_is_safe(record, query, title_score, option_score):
-                continue
-            confidence = combined_confidence(record, query, title_score, option_score)
-            scored.append(
-                MatchCandidate(
-                    record=record,
-                    confidence=confidence,
-                    match_stage="ngram_fuzzy",
-                    title_score=title_score,
-                    option_score=option_score,
-                    candidate_count=len(candidate_indexes),
-                    top_gap=0.0,
+        with self._lock:
+            query_title_key = normalize_match_title(query.title)
+            candidate_indexes = self.recall_candidate_indexes(query_title_key)
+            scored: list[MatchCandidate] = []
+            for index in candidate_indexes:
+                record = self.records[index]
+                if record is None or is_ai_record(record):
+                    continue
+                title_score = title_similarity(normalize_match_title(record.title_raw), query_title_key)
+                option_score = option_similarity(record.options_raw, query.options)
+                if not self.fuzzy_candidate_is_safe(record, query, title_score, option_score):
+                    continue
+                confidence = combined_confidence(record, query, title_score, option_score)
+                scored.append(
+                    MatchCandidate(
+                        record=record,
+                        confidence=confidence,
+                        match_stage="ngram_fuzzy",
+                        title_score=title_score,
+                        option_score=option_score,
+                        candidate_count=len(candidate_indexes),
+                        top_gap=0.0,
+                    )
                 )
+            if not scored:
+                return None
+            scored.sort(
+                key=lambda item: (
+                    item.confidence,
+                    title_similarity(normalize_match_title(item.record.title_raw), query_title_key),
+                    review_priority(item.record),
+                ),
+                reverse=True,
             )
-        if not scored:
-            return None
-        scored.sort(
-            key=lambda item: (
-                item.confidence,
-                title_similarity(normalize_match_title(item.record.title_raw), query_title_key),
-                review_priority(item.record),
-            ),
-            reverse=True,
-        )
-        best = scored[0]
-        second_score = scored[1].confidence if len(scored) > 1 else 0.0
-        top_gap = best.confidence - second_score
-        if len(scored) > 1 and top_gap < MIN_TOP_GAP:
-            return None
-        return MatchCandidate(
-            record=best.record,
-            confidence=round(best.confidence, 4),
-            match_stage=best.match_stage,
-            title_score=round(best.title_score, 4),
-            option_score=round(best.option_score, 4),
-            candidate_count=best.candidate_count,
-            top_gap=round(top_gap, 4),
-        )
+            best = scored[0]
+            second_score = scored[1].confidence if len(scored) > 1 else 0.0
+            top_gap = best.confidence - second_score
+            if len(scored) > 1 and top_gap < MIN_TOP_GAP:
+                return None
+            return MatchCandidate(
+                record=best.record,
+                confidence=round(best.confidence, 4),
+                match_stage=best.match_stage,
+                title_score=round(best.title_score, 4),
+                option_score=round(best.option_score, 4),
+                candidate_count=best.candidate_count,
+                top_gap=round(top_gap, 4),
+            )
 
     def recall_candidate_indexes(self, title_key: str) -> list[int]:
         """用 n-gram 重合度召回候选，替代全量扫描。"""
@@ -215,6 +284,8 @@ class QuestionMatcher:
         records: list[CanonicalQuestionRecord] = []
         for index in indexes:
             record = self.records[index]
+            if record is None:
+                continue
             if is_ai_record(record) and not record_options_match(record, query):
                 continue
             records.append(record)

@@ -57,19 +57,13 @@ OCS 或 `/api/v1/query` 请求
 .\scripts\run.ps1
 ```
 
-可选的模型支持模式：
-
-```powershell
-.\scripts\run.ps1
-```
-
 开发模式热重载：
 
 ```powershell
 .\scripts\run-dev.ps1
 ```
 
-模型支持模式需要 [model-provider.md](model-provider.md) 中记录的环境变量。
+模型实例在后台「大模型配置」中维护并写入数据库；本地启动不需要通过环境变量提供模型地址、模型名或 API 密钥。具体配置和旧环境变量升级说明见[模型提供商](model-provider.md)。
 
 运行时存储相关环境变量：
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime, timezone
-import os
 from pathlib import Path
 from threading import Lock
 import time
@@ -36,11 +35,6 @@ def redact(value: Any) -> Any:
         return [redact(item) for item in value]
     if isinstance(value, tuple):
         return [redact(item) for item in value]
-    if isinstance(value, str):
-        api_key = os.getenv("STQB_LLM_API_KEY")
-        if api_key:
-            value = value.replace(api_key, "[redacted]")
-        return value
     return value
 
 

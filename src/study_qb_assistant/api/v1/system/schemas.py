@@ -23,6 +23,11 @@ class SystemConfigPayload(BaseModel):
     image_generation_daily_limit: str | None = None
     image_generation_retention_days: str | None = None
     registration_enabled: str | None = None
+    query_rate_limit_enabled: str | None = None
+    query_rate_limit_window_seconds: str | None = None
+    query_rate_limit_requests_per_user: str | None = None
+    query_max_active_requests_per_user: str | None = None
+    query_max_active_requests: str | None = None
     registration_captcha_enabled: str | None = None
     login_captcha_enabled: str | None = None
     login_failure_threshold: str | None = None

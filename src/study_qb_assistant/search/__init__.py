@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import RLock
 
 from study_qb_assistant.answering.reuse import record_should_be_indexable_by_reuse_policy
 from ..auth import AuthError
@@ -35,9 +36,30 @@ class LocalQuestionIndex:
             records: 标准化题目记录的元组。
             source_path: 加载的数据源文件路径（可选，主要用于 status 展示）。
         """
-        self.records = records
+        self._lock = RLock()
+        self._records_by_id: dict[str, CanonicalQuestionRecord] = {}
+        self._record_order: list[str] = []
+        self._record_order_positions: dict[str, int] = {}
+        for record in records:
+            key = str(record.question_id)
+            if key not in self._record_order_positions:
+                self._record_order_positions[key] = len(self._record_order)
+                self._record_order.append(key)
+            self._records_by_id[key] = record
         self.source_path = source_path
         self._matcher = QuestionMatcher(self._matchable_records())
+
+    @property
+    def records(self) -> tuple[CanonicalQuestionRecord, ...]:
+        """返回按首次插入顺序排列的题库快照。"""
+
+        with self._lock:
+            return tuple(
+                self._records_by_id[key]
+                for position, key in enumerate(self._record_order)
+                if self._record_order_positions.get(key) == position
+                and key in self._records_by_id
+            )
 
     @classmethod
     def from_jsonl(cls, path: str | Path) -> "LocalQuestionIndex":
@@ -78,36 +100,50 @@ class LocalQuestionIndex:
 
         运行时 LLM 自动沉淀题会通过此入口立即参与后续查询，无需重启服务。
         """
-        records = [
-            existing for existing in self.records if existing.question_id != record.question_id
-        ]
-        records.append(record)
-        self.records = tuple(records)
-        self._rebuild_match_index()
+        with self._lock:
+            key = str(record.question_id)
+            if key not in self._record_order_positions:
+                self._record_order_positions[key] = len(self._record_order)
+                self._record_order.append(key)
+            self._records_by_id[key] = record
+            if not self._is_matchable(record):
+                self._matcher.remove(key)
+            else:
+                self._matcher.upsert(record)
+            self._compact_record_order_if_needed()
 
     def remove(self, question_id: str) -> None:
         """从当前内存索引中移除一条题库记录。"""
 
-        self.records = tuple(
-            record for record in self.records if record.question_id != question_id
-        )
-        self._rebuild_match_index()
+        with self._lock:
+            key = str(question_id)
+            self._records_by_id.pop(key, None)
+            self._record_order_positions.pop(key, None)
+            self._matcher.remove(key)
+            self._compact_record_order_if_needed()
 
     def replace_records(self, records: tuple[CanonicalQuestionRecord, ...]) -> None:
         """用一批可信记录整体重建当前内存索引。"""
 
-        self.records = records
-        self._rebuild_match_index()
+        with self._lock:
+            self._records_by_id = {}
+            self._record_order = []
+            self._record_order_positions = {}
+            for record in records:
+                key = str(record.question_id)
+                if key not in self._record_order_positions:
+                    self._record_order_positions[key] = len(self._record_order)
+                    self._record_order.append(key)
+                self._records_by_id[key] = record
+            self._rebuild_match_index()
 
     def update_record(self, question_id: str, values: dict[str, object]) -> CanonicalQuestionRecord:
         """更新题库记录，并在源为 JSONL 文件时同步持久化。"""
-        updated: CanonicalQuestionRecord | None = None
-        next_records: list[CanonicalQuestionRecord] = []
-        for record in self.records:
-            if record.question_id != question_id:
-                next_records.append(record)
-                continue
-            payload = record.to_dict()
+        with self._lock:
+            current = self._records_by_id.get(str(question_id))
+            if current is None:
+                raise AuthError("QUESTION_NOT_FOUND", "题目不存在", http_status=404)
+            payload = current.to_dict()
             for key in {
                 "title_raw",
                 "question_type",
@@ -141,14 +177,14 @@ class LocalQuestionIndex:
             if "metadata" in values and isinstance(values["metadata"], dict):
                 payload["metadata"] = {str(k): str(v) for k, v in values["metadata"].items()}
             updated = CanonicalQuestionRecord.from_dict(payload)
-            next_records.append(updated)
-        if updated is None:
-            raise AuthError("QUESTION_NOT_FOUND", "题目不存在", http_status=404)
-        self.records = tuple(next_records)
-        self._rebuild_match_index()
-        if self.source_path and Path(self.source_path).suffix.lower() == ".jsonl":
-            write_jsonl(self.records, self.source_path)
-        return updated
+            self._records_by_id[str(question_id)] = updated
+            if self._is_matchable(updated):
+                self._matcher.upsert(updated)
+            else:
+                self._matcher.remove(str(question_id))
+            if self.source_path and Path(self.source_path).suffix.lower() == ".jsonl":
+                write_jsonl(self.records, self.source_path)
+            return updated
 
     def _rebuild_match_index(self) -> None:
         """重建本地高稳匹配索引。"""
@@ -160,9 +196,19 @@ class LocalQuestionIndex:
         return tuple(
             record
             for record in self.records
-            if not normalize_image_urls((record.title_raw,))
-            and record_should_be_indexable_by_reuse_policy(record)
+            if self._is_matchable(record)
         )
+
+    @staticmethod
+    def _is_matchable(record: CanonicalQuestionRecord) -> bool:
+        return not normalize_image_urls((record.title_raw,)) and record_should_be_indexable_by_reuse_policy(record)
+
+    def _compact_record_order_if_needed(self) -> None:
+        if len(self._record_order) > max(1024, len(self._records_by_id) * 2):
+            self._record_order = list(self._records_by_id)
+            self._record_order_positions = {
+                key: position for position, key in enumerate(self._record_order)
+            }
 
     def status(self) -> dict:
         """获取关于已加载索引的非敏感统计和运行时诊断细节。
@@ -170,18 +216,19 @@ class LocalQuestionIndex:
         Returns:
             dict: 包含提供商名称、记录总数、源文件路径、涉及的数据源名称及授权许可列表。
         """
-        sources = sorted({record.source_name for record in self.records})
-        licenses = sorted(
-            {record.source_license for record in self.records if record.source_license}
-        )
-        return {
-            "provider": "local-normalized-jsonl",
-            "record_count": len(self.records),
-            "source_path": self.source_path,
-            "source_names": sources,
-            "source_licenses": licenses,
-            "match_index": self._matcher.status(),
-        }
+        with self._lock:
+            sources = sorted({record.source_name for record in self.records})
+            licenses = sorted(
+                {record.source_license for record in self.records if record.source_license}
+            )
+            return {
+                "provider": "local-normalized-jsonl",
+                "record_count": len(self._records_by_id),
+                "source_path": self.source_path,
+                "source_names": sources,
+                "source_licenses": licenses,
+                "match_index": self._matcher.status(),
+            }
 
     def query(self, query: QuestionQuery, *, allow_fuzzy: bool = True) -> QueryResult:
         """根据标准查询，在本地索引中检索最匹配的答案候选。

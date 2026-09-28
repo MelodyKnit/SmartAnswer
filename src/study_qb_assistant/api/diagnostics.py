@@ -3,21 +3,31 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 
 from ..answering import AnswerService
 from ..logger import log_path, recent_events
 from ..platform.usage.time_ranges import local_day_range_from_text
 from ..search import LocalQuestionIndex
+from .query_admission import QueryAdmissionController
 
 
-def status_payload(lookup: LocalQuestionIndex | AnswerService) -> dict:
+def status_payload(
+    lookup: LocalQuestionIndex | AnswerService,
+    *,
+    query_admission: QueryAdmissionController | None = None,
+    query_policy: Mapping[str, object] | None = None,
+) -> dict:
     """构造服务状态响应。"""
     status = lookup.status()
-    return {
+    payload = {
         "ok": True,
         "service": "study-question-bank-assistant",
         **status,
     }
+    if query_admission is not None:
+        payload["query_protection"] = query_admission.status(query_policy)
+    return payload
 
 def debug_events_payload(start_date: str = "", end_date: str = "") -> dict[str, object]:
     """返回最近一批结构化事件，支持根据日期区间过滤本地日志文件。"""

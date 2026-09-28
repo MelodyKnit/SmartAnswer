@@ -277,6 +277,7 @@ class AnswerService:
             else "low_confidence"
         )
         learned_record = None
+        index_record = None
         if has_answer_content:
             learned_record = self._persist_model_answer_record(
                 answer_query,
@@ -286,8 +287,6 @@ class AnswerService:
                 reuse_tags=reuse_decision.tags,
                 original_query=query,
             )
-            if safe_for_question_bank and learned_record is not None and learned_status == "trusted":
-                self.index.add_or_replace(learned_record)
         if self.llm_answer_cache is not None and safe_for_question_bank:
             cache_entry = self.llm_answer_cache.record_model_answer(
                 answer_query,
@@ -297,7 +296,7 @@ class AnswerService:
             )
             cache_status = cache_entry.status if cache_entry else "not_cached"
             if cache_entry is not None and cache_entry.status == "trusted":
-                self.index.add_or_replace(cache_entry.to_record())
+                index_record = learned_record or cache_entry.to_record()
         elif self.llm_answer_cache is not None:
             cache_status = (
                 "non_reusable_not_cached"
@@ -306,6 +305,10 @@ class AnswerService:
                 if image_context_without_text
                 else "unsafe_not_cached"
             )
+        elif safe_for_question_bank and learned_record is not None and learned_status == "trusted":
+            index_record = learned_record
+        if index_record is not None:
+            self.index.add_or_replace(index_record)
         return QueryResult(
             ok=True,
             query=query,

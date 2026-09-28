@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -87,6 +88,10 @@ async def runtime_lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         await image_worker.stop()
+        lookup = getattr(app.state, "lookup", None)
+        cache = getattr(lookup, "llm_answer_cache", None)
+        if cache is not None:
+            cache.close()
 
 
 def create_runtime_app() -> FastAPI:
@@ -96,6 +101,7 @@ def create_runtime_app() -> FastAPI:
     configure_external_loggers()
     app = build_runtime_app()
     config = get_global_config()
+    report_container_resource_limits()
     log_event(
         "service_start",
         {
@@ -108,6 +114,37 @@ def create_runtime_app() -> FastAPI:
         },
     )
     return app
+
+
+def report_container_resource_limits() -> None:
+    """记录 cgroup 资源限制是否可见，避免部署层限制失效却无人知晓。"""
+
+    if sys.platform != "linux" or not Path("/.dockerenv").exists():
+        return
+    cgroup_root = Path("/sys/fs/cgroup")
+    files = {
+        "memory_max": cgroup_root / "memory.max",
+        "cpu_max": cgroup_root / "cpu.max",
+        "pids_max": cgroup_root / "pids.max",
+    }
+    values: dict[str, str] = {}
+    missing: list[str] = []
+    for name, path in files.items():
+        try:
+            values[name] = path.read_text(encoding="ascii").strip()
+        except (OSError, UnicodeError):
+            missing.append(name)
+    if missing:
+        log_event(
+            "container_resource_limits_unavailable",
+            {"missing": missing},
+        )
+        return
+    enforced = all(value and value != "max" for value in values.values())
+    log_event(
+        "container_resource_limits",
+        {**values, "enforced": enforced},
+    )
 
 
 def main() -> None:
@@ -330,6 +367,14 @@ def build_provider_stack(
     )
     provider: OpenAICompatibleProvider | MultiModelProvider | SearchAugmentedModelProvider | None
     provider = build_base_model_provider(model_management_service)
+    if provider is None:
+        log_event(
+            "llm_provider_unconfigured",
+            {
+                "model_config_source": "database",
+                "hint": "add an active model in the LLM configuration page",
+            },
+        )
     search_provider = build_search_provider(runtime_config=llm_runtime, global_config=config)
     if provider is not None and search_provider is not None:
         provider = SearchAugmentedModelProvider(
@@ -362,6 +407,7 @@ def build_provider_stack(
     if provider is not None and cache_enabled and not no_local_bank:
         llm_answer_cache = LlmAnswerCache(
             ai_learned_path,
+            state_path=config.llm_cache_state_path_resolved,
             min_confidence=float_from_config(
                 llm_runtime.get("llm_cache_min_confidence")
                 or llm_runtime.get("ai_cache_min_confidence"),

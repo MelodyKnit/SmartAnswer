@@ -23,6 +23,8 @@ GitHub 仓库。
 GHCR 镜像使用 `STQB_GHCR_USERNAME` 与 `STQB_GHCR_TOKEN_FILE`。凭据文件只保存在
 服务器，权限应为 `600`。
 
+升级后，模型接口地址、模型名和 API 密钥只从部署数据库读取。若旧实例仅通过 `STQB_LLM_*` 环境变量配置模型，需先在后台「大模型配置」创建并测试 active 模型，再移除旧变量；旧环境变量不会自动导入数据库。
+
 ## 启动方式
 
 手动检查或更新：
@@ -45,3 +47,5 @@ systemctl --user status stqb-release-update.timer
 服务器只会跟随已发布的正式 `vX.Y.Z` Release；普通分支 push 不会直接部署。Release
 发布后，下一次轮询会自动执行。版本比较、镜像 digest 校验、SQLite 备份、健康检查和
 失败回滚仍由本地 `apply-release.sh` 负责。
+
+OCS Compose 服务默认带有内存、CPU、进程数和 JSON 日志轮转保护。应用层的查题并发/速率限制仍在系统配置中控制；两层保护同时生效，容器资源上限用于避免单个 OCS 实例拖垮同机其他服务。

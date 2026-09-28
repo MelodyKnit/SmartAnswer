@@ -187,6 +187,91 @@ class LocalQuestionIndexTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(result.error_code, "NOT_FOUND")
 
+    def test_runtime_upsert_replaces_record_without_rebuilding_full_index(self) -> None:
+        """运行时单条沉淀只更新对应倒排项，并且不会留下旧答案。"""
+        original = _record(
+            question_id="runtime:replace",
+            title="运行时增量索引题",
+            question_type="single",
+            options=("旧答案", "干扰项"),
+            answer="A",
+        )
+        replacement = _record(
+            question_id="runtime:replace",
+            title="运行时增量索引题",
+            question_type="single",
+            options=("新答案", "干扰项"),
+            answer="A",
+        )
+        index = LocalQuestionIndex((original,))
+
+        index.add_or_replace(replacement)
+        result = index.query(
+            QuestionQuery(
+                title="运行时增量索引题",
+                options=("新答案", "干扰项"),
+                question_type="single",
+            )
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.answer_text, "新答案")
+        self.assertEqual(len(index.records), 1)
+
+    def test_remove_then_reinsert_keeps_one_record_in_public_snapshot(self) -> None:
+        original = _record(
+            question_id="runtime:remove-reinsert",
+            title="移除后重建题",
+            question_type="single",
+            options=("答案", "干扰项"),
+            answer="A",
+        )
+        index = LocalQuestionIndex((original,))
+
+        index.remove(original.question_id)
+        index.add_or_replace(original)
+
+        self.assertEqual(index.records, (original,))
+        result = index.query(
+            QuestionQuery(
+                title=original.title_raw,
+                options=original.options_raw,
+                question_type="single",
+            )
+        )
+        self.assertTrue(result.ok)
+
+    def test_model_answer_upsert_does_not_iterate_the_full_record_map(self) -> None:
+        """热路径 upsert 只能查找和更新单条记录，不能扫描所有题目。"""
+        class NonIteratingRecordMap(dict):
+            def __iter__(self):
+                raise AssertionError("full record map iteration is not allowed during upsert")
+
+        index = LocalQuestionIndex(
+            (
+                _record(
+                    question_id="runtime:existing",
+                    title="原题",
+                    question_type="single",
+                    answer="A",
+                    options=("甲", "乙"),
+                ),
+            )
+        )
+        original_map = index._records_by_id
+        index._records_by_id = NonIteratingRecordMap(original_map)
+        replacement = _record(
+            question_id="runtime:existing",
+            title="新题干",
+            question_type="single",
+            answer="B",
+            options=("丙", "丁"),
+        )
+
+        index.add_or_replace(replacement)
+
+        self.assertEqual(index.records, (replacement,))
+
     def test_ai_learned_records_do_not_fuzzy_match_similar_questions(self) -> None:
         """LLM 自动沉淀题不能通过相似题干复用，避免选项顺序不同导致错答。"""
         index = LocalQuestionIndex(

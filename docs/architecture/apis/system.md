@@ -26,10 +26,13 @@
 | 站点与协议 | `site_title`、`site_logo_url`、`smart_proto_enabled`、`custom_proto_header` |
 | 积分与邀请 | `default_user_points`、`api_key_max_count`、`invite_bonus_points`、`invite_reward_mode`、`manual_grant_default_points`、`redeem_code_default_points` |
 | 答题与生图 | `answer_retry_times`、`image_generation_points`、`image_generation_max_active_jobs`、`image_generation_daily_limit`、`image_generation_retention_days` |
+| 服务保护 | `query_rate_limit_enabled`、`query_rate_limit_window_seconds`、`query_rate_limit_requests_per_user`、`query_max_active_requests_per_user`、`query_max_active_requests` |
 | 认证与注册 | `registration_enabled`、`registration_captcha_enabled`、`login_captcha_enabled`、`login_failure_threshold`、`registration_email_mode`、`email_verification_enabled` |
 | SMTP | `smtp_host`、`smtp_port`、`smtp_security`、`smtp_username`、`smtp_password`、`smtp_from_email`、`smtp_from_name` |
 | 邮箱验证码 | `email_code_ttl_minutes`、`email_code_cooldown_seconds`、`email_code_daily_limit`、`email_code_ip_hourly_limit`、`email_code_max_attempts` |
 | 日志 | `log_retention_days`、`log_max_size_mb` |
+
+服务保护配置默认值为 `true / 60 / 60 / 2 / 8`，依次表示启用用户速率限制、60 秒窗口、每用户 60 次窗口请求、每用户最多 2 个活动请求和全局最多 8 个活动请求。有效范围分别为 `10-3600`、`1-600`、`1-8`、`1-32`；全局并发即使关闭用户速率限制仍然生效。超限请求返回 `429` 和 `Retry-After`，不会进入无限等待队列。
 
 ## 日志
 

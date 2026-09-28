@@ -232,6 +232,12 @@ class GlobalConfig(BaseModel):
         return self.legacy_llm_cache_path
 
     @property
+    def llm_cache_state_path_resolved(self) -> Path:
+        """返回增量 LLM 缓存状态文件路径。"""
+
+        return self.data_runtime_dir / "llm-answer-cache-state.jsonl"
+
+    @property
     def reviewed_results_dir_resolved(self) -> Path | None:
         """返回已批改结果页目录。"""
         return self.resolve_optional_path(self.reviewed_results_dir)

@@ -6,7 +6,7 @@
 
 | 方法 | 路径 | 权限 | 请求参数 | 成功响应 |
 | --- | --- | --- | --- | --- |
-| `GET` | `/api/v1/usage-logs` | 登录；普通用户仅可查看自身记录 | Query：`username`、`token_id`、`api_key_id`、`log_id`、`keyword`、`start_date`、`end_date`、`limit`（默认 `100`，上限 `500`）、`page`（默认 `1`） | `{ok,logs,total,page,limit}` |
+| `GET` | `/api/v1/usage-logs` | 登录；普通用户仅可查看自身记录 | Query：`username`、`token_id`、`api_key_id`、`log_id`、`keyword`、`start_date`、`end_date`、`limit`（默认 `100`，上限 `500`）、`page`（默认 `1`） | `{ok,logs,total,page,limit}`；每条日志包含 `elapsed_ms`（请求耗时，毫秒） |
 
 具有 `dashboard:all` 权限的用户可跨用户查询；普通用户传入其他用户筛选条件时按权限限制处理。日期格式错误返回 `400 INVALID_DATE`。
 

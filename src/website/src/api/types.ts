@@ -405,6 +405,11 @@ export interface SystemConfig {
   image_generation_daily_limit?: string
   image_generation_retention_days?: string
   answer_retry_times?: string
+  query_rate_limit_enabled?: string
+  query_rate_limit_window_seconds?: string
+  query_rate_limit_requests_per_user?: string
+  query_max_active_requests_per_user?: string
+  query_max_active_requests?: string
   registration_enabled?: string
   registration_captcha_enabled?: string
   login_captcha_enabled?: string

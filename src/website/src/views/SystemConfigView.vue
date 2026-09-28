@@ -61,6 +61,11 @@ const form = reactive({
   image_generation_daily_limit: 20,
   image_generation_retention_days: 30,
   answer_retry_times: 3,
+  query_rate_limit_enabled: 'true',
+  query_rate_limit_window_seconds: 60,
+  query_rate_limit_requests_per_user: 60,
+  query_max_active_requests_per_user: 2,
+  query_max_active_requests: 8,
   registration_enabled: 'true',
   registration_captcha_enabled: 'false',
   login_captcha_enabled: 'true',
@@ -264,6 +269,11 @@ async function load() {
     form.image_generation_daily_limit = Number(res.config.image_generation_daily_limit || 20)
     form.image_generation_retention_days = Number(res.config.image_generation_retention_days || 30)
     form.answer_retry_times = Number(res.config.answer_retry_times || 3)
+    form.query_rate_limit_enabled = (res.config.query_rate_limit_enabled as string) || 'true'
+    form.query_rate_limit_window_seconds = Number(res.config.query_rate_limit_window_seconds || 60)
+    form.query_rate_limit_requests_per_user = Number(res.config.query_rate_limit_requests_per_user || 60)
+    form.query_max_active_requests_per_user = Number(res.config.query_max_active_requests_per_user || 2)
+    form.query_max_active_requests = Number(res.config.query_max_active_requests || 8)
     form.registration_enabled = (res.config.registration_enabled as string) || 'true'
     form.registration_captcha_enabled = (res.config.registration_captcha_enabled as string) || 'false'
     form.login_captcha_enabled = (res.config.login_captcha_enabled as string) || 'true'
@@ -326,6 +336,11 @@ async function save() {
       image_generation_daily_limit: String(form.image_generation_daily_limit),
       image_generation_retention_days: String(form.image_generation_retention_days),
       answer_retry_times: String(form.answer_retry_times),
+      query_rate_limit_enabled: form.query_rate_limit_enabled,
+      query_rate_limit_window_seconds: String(form.query_rate_limit_window_seconds),
+      query_rate_limit_requests_per_user: String(form.query_rate_limit_requests_per_user),
+      query_max_active_requests_per_user: String(form.query_max_active_requests_per_user),
+      query_max_active_requests: String(form.query_max_active_requests),
       registration_enabled: form.registration_enabled,
       registration_captcha_enabled: form.registration_captcha_enabled,
       login_captcha_enabled: form.login_captcha_enabled,
@@ -513,6 +528,37 @@ onMounted(load)
               </el-form>
               <p class="text-xs text-ink-muted">
                 生图任务提交时预扣积分，成功后确认，模型拒绝、超时或存储失败会自动退款。每日上限或保留天数设为 0 分别表示不限制和永久保留。
+              </p>
+            </div>
+            <div class="app-card p-6">
+              <div class="mb-4 flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 class="text-base font-semibold text-ink">服务保护</h3>
+                  <p class="mt-1 text-xs text-ink-muted">
+                    限制查题并发和请求频率，避免单个用户或突发流量拖垮服务。超限请求会立即返回 429，不会无限排队。
+                  </p>
+                </div>
+                <el-tag type="warning" effect="plain">全局并发上限始终生效</el-tag>
+              </div>
+              <el-form label-position="top" class="grid grid-cols-1 gap-x-6 md:grid-cols-2 xl:grid-cols-4">
+                <el-form-item label="启用用户速率限制">
+                  <el-switch v-model="form.query_rate_limit_enabled" active-value="true" inactive-value="false" />
+                </el-form-item>
+                <el-form-item label="速率窗口（秒）">
+                  <el-input-number v-model="form.query_rate_limit_window_seconds" :min="10" :max="3600" class="w-full" />
+                </el-form-item>
+                <el-form-item label="每用户窗口请求数">
+                  <el-input-number v-model="form.query_rate_limit_requests_per_user" :min="1" :max="600" class="w-full" />
+                </el-form-item>
+                <el-form-item label="每用户最大活动请求数">
+                  <el-input-number v-model="form.query_max_active_requests_per_user" :min="1" :max="8" class="w-full" />
+                </el-form-item>
+                <el-form-item label="全局最大活动查题请求数" class="md:col-span-2 xl:col-span-1">
+                  <el-input-number v-model="form.query_max_active_requests" :min="1" :max="32" class="w-full" />
+                </el-form-item>
+              </el-form>
+              <p class="mt-1 text-xs text-ink-muted">
+                限制按用户 ID 聚合，多把 API Key 不会绕过限制；关闭用户速率限制不会关闭活动请求保护。修改后即时生效。
               </p>
             </div>
           </div>

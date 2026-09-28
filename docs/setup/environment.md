@@ -78,19 +78,10 @@ pre-commit run --all-files
 - 保持依赖列表最简化
 - 记录为什么需要每个新依赖
 
-## 7. 模型提供商环境
+## 7. 模型与外部服务
 
-可选的模型后端服务模式读取以下变量：
+模型实例（接口地址、模型名、API 密钥、流式设置和生成参数）统一保存在数据库 `llm_models` 表，并通过后台「大模型配置」管理。`STQB_LLM_BASE_URL`、`STQB_LLM_MODEL` 等旧环境变量不再作为模型来源；env-only 部署升级前，先在后台建立并测试数据库模型。详见[模型提供商](../services/model-provider.md)。
 
-- `STQB_LLM_BASE_URL`
-- `STQB_LLM_MODEL`
-- `STQB_LLM_API_KEY`
-- `STQB_LLM_PROXY`
-- `STQB_WEB_SEARCH_PROVIDER`
-- `STQB_SEARCH_PROXY`
-- `STQB_LLM_CACHE_ENABLED`
-- `STQB_LLM_CACHE_MIN_CONFIDENCE`
-- `STQB_LLM_CACHE_MIN_CONFIRMATIONS`
-- `STQB_PUBLIC_BASE_URL`
+`STQB_PUBLIC_BASE_URL` 用于图片题视觉请求中的服务端图片地址。搜索提供商、搜索代理和运行环境等配置按当前部署/后台配置方式设置，不包含模型实例凭据。
 
-API 密钥特意不存储在项目文件中。默认的 AI 已学题库路径为 `data\normalized\ai-learned.jsonl`；它以常规的 `CanonicalQuestionRecord` JSONL 行格式存储 AI 生成的答案，并带有 `ai_generated` 和 `auto_learned` 标签。当启用基于模型学习的模式时，遗留的 `data\runtime\ai-answer-cache.json` 文件将作为兼容性迁移源进行读取。生产环境如需处理图片题，`STQB_PUBLIC_BASE_URL` 应设置为模型提供商可访问的服务公开地址。
+默认 AI 学习题库路径为 `data\normalized\ai-learned.jsonl`，以 `CanonicalQuestionRecord` JSONL 行格式保存 AI 题目；旧 `data\runtime\ai-answer-cache.json` 仍作为兼容性迁移源读取。

@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 import json
+import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Lock
 
@@ -27,6 +29,11 @@ from study_qb_assistant.media.inputs import normalize_image_urls
 from study_qb_assistant.questions.models import CanonicalQuestionRecord, ModelAnswer, QuestionQuery
 from study_qb_assistant.questions.normalization import normalize_options, normalize_text
 from study_qb_assistant.questions.labels import canonicalize_label_answer
+from ...logger import log_event
+
+
+STATE_COMPACTION_BYTES = 64 * 1024 * 1024
+STATE_COMPACTION_MIN_RECORDS = 1000
 
 
 class LlmAnswerCache:
@@ -36,6 +43,7 @@ class LlmAnswerCache:
         self,
         path: str | Path,
         *,
+        state_path: str | Path | None = None,
         min_confidence: float = 0.95,
         min_confirmations: int = 2,
         legacy_paths: tuple[str | Path, ...] = (),
@@ -49,11 +57,19 @@ class LlmAnswerCache:
             legacy_paths: 旧版 JSON 缓存路径集合，用于迁移。
         """
         self.path = Path(path)
+        self.state_path = Path(state_path) if state_path is not None else None
         self.min_confidence = min(max(min_confidence, 0.0), 1.0)
         self.min_confirmations = max(1, min_confirmations)
         self.legacy_paths = tuple(Path(value) for value in legacy_paths)
         self._lock = Lock()
         self._entries: dict[str, CachedLlmAnswer] = {}
+        self._state_record_count = 0
+        self._compaction_scheduled = False
+        self._compaction_executor = (
+            ThreadPoolExecutor(max_workers=1, thread_name_prefix="llm-cache-compact")
+            if self.state_path is not None
+            else None
+        )
         self.load_entries()
 
     def get_trusted(self, query: QuestionQuery) -> CachedLlmAnswer | None:
@@ -116,7 +132,7 @@ class LlmAnswerCache:
                     updated_at=now,
                 )
                 self._entries[key] = entry
-                self.save_entries()
+                self._persist_entry(entry)
                 return entry
 
             existing_candidate = (
@@ -127,7 +143,7 @@ class LlmAnswerCache:
                 existing.conflicts += 1
                 existing.status = "conflict"
                 existing.updated_at = now
-                self.save_entries()
+                self._persist_entry(existing)
                 return existing
 
             existing.confirmations += 1
@@ -141,7 +157,7 @@ class LlmAnswerCache:
                 and (force_trusted or existing.confirmations >= self.min_confirmations)
             ):
                 existing.status = "trusted"
-            self.save_entries()
+            self._persist_entry(existing)
             return existing
 
     def status(self) -> dict:
@@ -172,6 +188,146 @@ class LlmAnswerCache:
                 loaded_legacy = self.load_legacy_json(legacy_path) or loaded_legacy
         if loaded_legacy and self.path.suffix.lower() == ".jsonl":
             self.save_entries()
+        if self.state_path is not None:
+            self.load_state_journal(self.state_path)
+
+    def _persist_entry(self, entry: CachedLlmAnswer) -> None:
+        """持久化一条缓存状态；生产模式追加小记录，兼容模式保留旧快照。"""
+
+        if self.state_path is None:
+            self.save_entries()
+            return
+        try:
+            self.state_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.state_path.open("a", encoding="utf-8") as handle:
+                json.dump(entry.to_dict(), handle, ensure_ascii=False, sort_keys=True)
+                handle.write("\n")
+                handle.flush()
+            self._state_record_count += 1
+            self._schedule_compaction_if_needed()
+        except OSError as exc:
+            log_event(
+                "llm_cache_persist_failed",
+                {"error_type": type(exc).__name__},
+            )
+
+    def load_state_journal(self, path: Path) -> None:
+        """读取增量状态文件，后出现的同键记录覆盖旧状态。"""
+
+        if not path.exists():
+            return
+        offset = 0
+        truncate_at: int | None = None
+        append_separator = False
+        malformed_lines = 0
+        try:
+            with path.open("rb") as handle:
+                for raw_line in handle:
+                    terminated = raw_line.endswith(b"\n")
+                    line = raw_line.rstrip(b"\r\n")
+                    if not line.strip():
+                        if not terminated:
+                            truncate_at = offset
+                            break
+                        offset += len(raw_line)
+                        continue
+                    try:
+                        payload = json.loads(line.decode("utf-8"))
+                        if not isinstance(payload, dict):
+                            raise ValueError("cache journal record must be an object")
+                        entry = CachedLlmAnswer.from_dict(
+                            payload,
+                            canonical_candidate_from_payload=canonical_candidate_from_payload,
+                            optional_string=optional_string,
+                            float_value=float_value,
+                            int_value=int_value,
+                        )
+                    except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+                        malformed_lines += 1
+                        if not terminated:
+                            truncate_at = offset
+                            break
+                        offset += len(raw_line)
+                        continue
+                    self._entries[entry.key] = entry
+                    self._state_record_count += 1
+                    offset += len(raw_line)
+                    if not terminated:
+                        append_separator = True
+
+            if truncate_at is not None:
+                with path.open("r+b") as handle:
+                    handle.truncate(truncate_at)
+            elif append_separator:
+                with path.open("ab") as handle:
+                    handle.write(b"\n")
+            if malformed_lines:
+                log_event(
+                    "llm_cache_journal_recovered",
+                    {
+                        "malformed_lines": malformed_lines,
+                        "truncated_tail": truncate_at is not None,
+                    },
+                )
+        except OSError as exc:
+            log_event(
+                "llm_cache_load_failed",
+                {"error_type": type(exc).__name__},
+            )
+
+    def _schedule_compaction_if_needed(self) -> None:
+        if self._compaction_executor is None or self._compaction_scheduled:
+            return
+        try:
+            file_size = self.state_path.stat().st_size if self.state_path else 0
+        except OSError:
+            return
+        if file_size < STATE_COMPACTION_BYTES and self._state_record_count < max(
+            STATE_COMPACTION_MIN_RECORDS, len(self._entries) * 2
+        ):
+            return
+        self._compaction_scheduled = True
+        self._compaction_executor.submit(self._compact_state_journal)
+
+    def _compact_state_journal(self) -> None:
+        """在单线程后台任务中压缩增量状态，避免请求线程全量重写。"""
+
+        temporary: Path | None = None
+        try:
+            if self.state_path is None:
+                return
+            with self._lock:
+                snapshot = tuple(self._entries.values())
+                snapshot_count = self._state_record_count
+            temporary = self.state_path.with_suffix(f"{self.state_path.suffix}.tmp")
+            with temporary.open("w", encoding="utf-8") as handle:
+                for entry in snapshot:
+                    json.dump(entry.to_dict(), handle, ensure_ascii=False, sort_keys=True)
+                    handle.write("\n")
+            with self._lock:
+                if self._state_record_count == snapshot_count:
+                    os.replace(temporary, self.state_path)
+                    self._state_record_count = len(snapshot)
+                    temporary = None
+        except OSError as exc:
+            log_event(
+                "llm_cache_compaction_failed",
+                {"error_type": type(exc).__name__},
+            )
+        finally:
+            if temporary is not None:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            self._compaction_scheduled = False
+
+    def close(self) -> None:
+        """停止后台压缩线程；缓存追加写入无需额外刷新。"""
+
+        if self._compaction_executor is not None:
+            self._compaction_executor.shutdown(wait=True, cancel_futures=False)
+            self._compaction_executor = None
 
     def save_entries(self) -> None:
         """以原子写方式把当前 LLM 沉淀记录落盘到 JSONL。"""

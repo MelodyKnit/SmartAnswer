@@ -1,244 +1,25 @@
 # 模型提供商
 
-更新时间：`2026-06-07`
+## 配置来源
 
-## 1. 目的
+模型实例的接口地址、模型标识、API 密钥、流式设置、生成上限、超时和主备顺序只保存在数据库 `llm_models` 表中。管理员在「大模型配置」页面创建并启用模型；运行时只使用数据库中的 active 模型，不从环境变量构建 provider。
 
-本项目支持一个可选的兼容 OpenAI 的模型提供商。本地检索仍然是第一可信源。仅在启动时明确启用模型层时，才会使用该模型层。
+旧版数据库 `system_config` 中的模型字段会在读取 LLM 配置时迁移到 `llm_models`。旧的 `STQB_LLM_BASE_URL`、`STQB_LLM_MODEL`、`STQB_LLM_API_KEY`、`STQB_LLM_STREAM` 和 `STQB_LLM_MAX_COMPLETION_TOKENS` 环境变量不会再被读取或自动导入。
 
-此模型提供商可以指向以下任意一处：
+从旧环境变量部署升级前，应先在后台创建并测试数据库模型，再移除旧环境变量。若数据库没有启用模型，服务仍可进行本地题库检索，但不会执行模型兜底。
 
-- 暴露了兼容 OpenAI 的 `/chat/completions` 接口的云端 API
-- 本地运行时，例如 Ollama、LM Studio 或 vLLM
-- 将不同模型提供商规范化在兼容 OpenAI API 之后的自建网关
+API 密钥只在创建或更新模型时提交；模型列表和追溯接口对密钥做脱敏，不要把密钥放入 OCS 配置、项目文件、日志或截图。
 
-## 2. 提供商契约
+## 运行行为
 
-实现文件：
+- 本地题库是首选来源；可信的 AI 学习库结果也作为本地结果复用。
+- 本地未命中后，若已启用模型兜底，服务才调用数据库中的 active 模型。
+- 模型实例使用 OpenAI-compatible `/chat/completions` 协议；流式和非流式响应均由 provider 解析。
+- 启用了联网搜索时，搜索配置先提供证据，再交给模型；搜索运行配置在「大模型配置」中管理。
+- 图片题在服务端下载和校验；生产视觉调用需要 `STQB_PUBLIC_BASE_URL` 指向模型可访问的站点地址。
 
-- [llm/providers/base.py](../../src/study_qb_assistant/llm/providers/base.py)
-- [llm/providers/openai_compatible.py](../../src/study_qb_assistant/llm/providers/openai_compatible.py)
-- [llm/http_client.py](../../src/study_qb_assistant/llm/http_client.py) 包装了 `httpx`，用于处理超时、可选的代理支持、JSON 解码和 HTTP 状态错误。
+## 配置与验证
 
-模型提供商返回：
+启动服务后登录管理后台，打开「大模型配置」，新增模型并使用连通性测试确认配置。受保护的 `GET /api/v1/status` 会返回模型是否已配置以及非敏感运行状态，不会返回 API 密钥。
 
-- `candidate_answer`
-- `answer_text`
-- `explanation`
-- `confidence`
-
-## 3. 环境变量
-
-启用大模型功能时需要配置以下环境变量：
-
-- `STQB_LLM_BASE_URL`：兼容 OpenAI 接口的端点基础 URL
-- `STQB_LLM_MODEL`：模型名称
-
-可选变量：
-
-- `STQB_LLM_API_KEY`：API 密钥，仅从环境中读取
-- `STQB_LLM_STREAM`：默认为 `true`；对于返回服务器发送事件（Server-Sent Events）流式分块的网关，请保持启用
-- `STQB_LLM_MAX_COMPLETION_TOKENS`：默认为 `700`
-- `STQB_WEB_SEARCH_PROVIDER`：以逗号分隔的网页搜索提供商；默认为 `duckduckgo`，设为 `none` 以禁用
-- `STQB_GOOGLE_SEARCH_API_KEY` 和 `STQB_GOOGLE_SEARCH_CX`：Google 可编程搜索 JSON API 的凭据
-- `STQB_BAIDU_SEARCH_API_KEY`：百度千帆 AI 搜索 API 密钥
-- `STQB_SEARCH_PROXY`：用于网页搜索请求的可选 HTTP/HTTPS 代理，例如 `http://127.0.0.1:7890`
-- `STQB_LLM_PROXY`：用于模型提供商请求的可选 HTTP/HTTPS 代理
-- `STQB_LLM_CACHE_ENABLED`：默认为 `true`；仅在多次一致后才持久化高置信度的 AI 答案
-- `STQB_LLM_CACHE_MIN_CONFIDENCE`：默认为 `0.95`
-- `STQB_LLM_CACHE_MIN_CONFIRMATIONS`：默认为 `2`
-- `STQB_PUBLIC_BASE_URL`：生产环境公开访问地址，用于把 OCS 图片题转换成本地图床 URL 提供给视觉模型
-- `STQB_ANSWER_RULES_PATH`：可选的本地规则文件路径；未配置时默认禁用规则文件机制
-
-任何 API 密钥都不应写入项目文件中。
-
-## 4. 启动模式
-
-仅本地检索：
-
-```powershell
-.\scripts\run.ps1
-```
-
-仅在本地查找未命中时才使用模型：
-
-```powershell
-.\scripts\run.ps1
-```
-
-使用模型为缺乏解释的本地匹配项添加解释说明：
-
-```powershell
-.\scripts\run.ps1
-```
-
-同时使用两者：
-
-```powershell
-.\scripts\run.ps1
-```
-
-## 5. 云端 API 示例
-
-当相比于离线推理，更看重答案质量且本地硬件使用率较低时，请使用此模式。配置的端点必须暴露兼容 OpenAI 的 `/chat/completions` API。
-
-```powershell
-$env:STQB_LLM_BASE_URL="https://api.example.com/v1"
-$env:STQB_LLM_MODEL="your-model-name"
-$env:STQB_LLM_API_KEY="your-api-key"
-.\scripts\run.ps1
-```
-
-请仅在环境变量中保留 API 密钥。不要将其放入 OCS 配置、JSON 文件、示例、日志或源代码中。
-
-ClassBot/New API 风格的网关是通过兼容 OpenAI 的聊天补全（Chat Completions）契约进行处理的。该提供商默认发送 `stream: true`，并在解析答案之前将服务器发送事件（Server-Sent Events）的 `choices[].delta.content` 分块拼接为常规消息内容结构。
-
-图片题处理流程：
-
-- 服务端先把 OCS 传入的图片 URL 或 data URL 保存到 `data/images/ocs/`。
-- 图片文件按内容 SHA-256 去重命名，例如 `<sha256>.png`。
-- 视觉模型调用时优先使用 `{STQB_PUBLIC_BASE_URL}/api/v1/media/ocs/images/<sha256>.png`。
-- 如果没有可靠公开地址，本地开发会回退为 data URL；生产环境建议始终配置 `STQB_PUBLIC_BASE_URL`。
-- 原始图片和 base64 不写入题库、调用追溯或日志，只记录必要的文件名和统计信息。
-
-设置完环境变量后验证所配置的模型提供商：
-
-```powershell
-Invoke-RestMethod -Uri "http://127.0.0.1:8765/api/v1/status"
-```
-
-状态接口不会打印 API 密钥。
-
-## 6. 可选的网页搜索增强
-
-对于模型记忆可能会产生幻觉的问题，服务可以先进行搜索并将网页片段作为证据传递给模型。默认提供商是 DuckDuckGo Instant Answer，它不需要项目 API 密钥。
-
-当前已实现的运行行为：
-
-- 只有在本地检索、直接规则、受信任的 AI 学习库查找以及模糊检索均未命中后，才会进行网页搜索
-- 一旦请求进入模型兜底，`SearchAugmentedModelProvider` 会在请求模型前先执行搜索
-- 如果搜索返回了证据，该证据将被传入模型提示词中
-- 如果搜索未返回证据，或者搜索提供商在近期发生失败后处于冷却期，提供商将退回到纯模型回答
-- 当前实现尚未仅因为模型报告的置信度较低而执行第二次网页搜索
-
-默认免密钥模式：
-
-```powershell
-$env:STQB_WEB_SEARCH_PROVIDER="duckduckgo"
-```
-
-完全禁用网页搜索：
-
-```powershell
-$env:STQB_WEB_SEARCH_PROVIDER="none"
-```
-
-为搜索引擎使用本地代理：
-
-```powershell
-$env:STQB_SEARCH_PROXY="http://127.0.0.1:7890"
-```
-
-如果需要，为模型 API 使用代理：
-
-```powershell
-$env:STQB_LLM_PROXY="http://127.0.0.1:7890"
-```
-
-Google 示例：
-
-```powershell
-$env:STQB_WEB_SEARCH_PROVIDER="google"
-$env:STQB_GOOGLE_SEARCH_API_KEY="your-google-api-key"
-$env:STQB_GOOGLE_SEARCH_CX="your-programmable-search-engine-id"
-```
-
-百度示例：
-
-```powershell
-$env:STQB_WEB_SEARCH_PROVIDER="baidu"
-$env:STQB_BAIDU_SEARCH_API_KEY="your-baidu-ai-search-api-key"
-```
-
-可以同时启用两者：
-
-```powershell
-$env:STQB_WEB_SEARCH_PROVIDER="google,baidu"
-```
-
-搜索密钥仅从环境变量中读取。本项目刻意采用官方 API 形式的提供商，而非爬取搜索结果页面。
-
-## 7. AI 学习题库
-
-服务可以将 AI 生成的答案持久化为常规的题库 JSONL 记录以应对重复的 OCS 请求，但它不会立即信任第一次的模型回答。
-
-默认行为：
-
-- 第一次的高置信度模型答案被存储为 `pending`（待定）状态
-- 相同的规范化题目和选项必须至少获得 `2` 次相同的答案
-- 只有这样，该 AI 学习库条目才会被晋升为 `trusted`（受信任）状态
-- 只有 `trusted` 状态的条目才会被加载到本地检索流中，并标记为 `resolution_mode: ai_cache`
-- 产生冲突的模型答案会被标记为 `conflict`（冲突），且不会从学习库中提供
-
-禁用 AI 答案学习功能：
-
-```powershell
-$env:STQB_LLM_CACHE_ENABLED="false"
-```
-
-收紧晋升条件：
-
-```powershell
-$env:STQB_LLM_CACHE_MIN_CONFIDENCE="0.98"
-$env:STQB_LLM_CACHE_MIN_CONFIRMATIONS="3"
-```
-
-默认的学习库路径为 `data\normalized\ai-learned.jsonl`。每一行都是一条具有 `source_name: AIGenerated`、`ai_generated` 和 `auto_learned` 标签以及 AI 状态元数据的 `CanonicalQuestionRecord` 记录。当启用了基于模型支持的学习路径时，旧的 `data\runtime\ai-answer-cache.json` 条目将被迁移至此 JSONL 格式中。
-
-## 8. 可选规则文件
-
-规则文件机制默认关闭，仅在显式设置环境变量时启用：
-
-```powershell
-$env:STQB_ANSWER_RULES_PATH="configs\\my-answer-rules.json"
-```
-
-此能力仅适合本地私有场景下的少量固定表达式规则，不应作为常规补题方式，也不建议把运行时规则文件提交进仓库。
-
-## 9. 可靠性规则
-
-- 相比于模型输出，更倾向于采用本地精确或模糊匹配。
-- 相比于模型输出，更倾向于采用本地固定表达式规则。
-- 受信任的 AI 学习库条目是本地检索的一部分，并带有 `AIGenerated` 来源标签。
-- 模型兜底响应被标记为 `resolution_mode: llm_fallback`。
-- 模型兜底响应设置 `review_required: true`。
-- 即使置信度较低，模型兜底响应仍可返回；低置信度目前影响审核和 AI 库晋升，不影响是否输出 OCS 兼容的答案负载。
-- AI 学习库响应被标记为 `resolution_mode: ai_cache`。
-- 提供商发生失败时返回结构化的 `MODEL_ERROR` 响应。
-- API 密钥优先从后台模型/联网搜索配置读取，环境变量作为部署级回退；前端读取配置时只返回 `*_configured` 标记，不回显明文密钥。
-- 当配置了网页搜索时，搜索网页片段会被记录以供本地排障，但搜索凭证会被脱敏屏蔽。
-
-## 10. 验证通过的真实提供商
-
-OpenAI 兼容提供商链路已通过私有测试提供商实测。提交到仓库的示例统一使用占位配置：
-
-- 基础 URL：`https://api.example.com/v1`
-- 模型：`your-model-name`
-- 端点：`/chat/completions`
-- 响应模式：流式服务器发送事件（Server-Sent Events）
-
-验证器已通过并将其非敏感结果写入 `data\manifests\configured-model-verification.json` 中。
-
-## 11. 真实本地模型说明
-
-本次会话检查了 `http://127.0.0.1:11434/api/tags`，但该端口上没有运行兼容 Ollama 的服务。
-
-对于 Ollama 风格的兼容 OpenAI 的服务，预期的配置为：
-
-```powershell
-$env:STQB_LLM_BASE_URL="http://127.0.0.1:11434/v1"
-$env:STQB_LLM_MODEL="qwen2.5:7b"
-.\scripts\run.ps1
-```
-
-实际模型名称应与本地运行时中安装的模型相匹配。
+部署环境可以单独配置网络代理等运行基础设施参数；这些设置不会提供或覆盖模型接口地址、模型名或模型 API 密钥。

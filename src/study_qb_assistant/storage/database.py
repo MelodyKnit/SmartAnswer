@@ -7,7 +7,7 @@ import shutil
 import time
 from pathlib import Path
 
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
@@ -43,11 +43,21 @@ def get_engine(path_or_url: str | Path | None) -> Engine:
 
     url = resolve_database_url(path_or_url)
     if url not in _ENGINE_CACHE:
-        connect_args = {"check_same_thread": False} if url.startswith("sqlite:///") else {}
+        connect_args = (
+            {"check_same_thread": False, "timeout": 30}
+            if url.startswith("sqlite:///")
+            else {}
+        )
         engine_kwargs = {"future": True, "connect_args": connect_args}
         if url.startswith("sqlite:///"):
             engine_kwargs["poolclass"] = NullPool
         engine = create_engine(url, **engine_kwargs)
+        if url.startswith("sqlite:///"):
+            install_sqlite_concurrency_pragmas(engine)
+            with engine.connect() as connection:
+                journal_mode = connection.exec_driver_sql("PRAGMA journal_mode=WAL").scalar_one()
+                if str(journal_mode).lower() != "wal":
+                    raise RuntimeError("SQLite WAL mode could not be enabled")
         Base.metadata.create_all(engine)
         ensure_obsolete_platform_schema_cleanup(engine)
         if url.startswith("sqlite:///"):
@@ -56,6 +66,19 @@ def get_engine(path_or_url: str | Path | None) -> Engine:
             ensure_sql_compat_columns(engine)
         _ENGINE_CACHE[url] = engine
     return _ENGINE_CACHE[url]
+
+
+def install_sqlite_concurrency_pragmas(engine: Engine) -> None:
+    """为每个 SQLite 连接设置忙等待和同步级别；WAL 在 Engine 初始化时只设置一次。"""
+
+    @event.listens_for(engine, "connect")
+    def _configure_sqlite_connection(dbapi_connection, _connection_record) -> None:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA busy_timeout=30000")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+        finally:
+            cursor.close()
 
 
 def get_session_factory(path_or_url: str | Path | None) -> sessionmaker[Session]:

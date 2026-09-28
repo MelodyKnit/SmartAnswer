@@ -342,31 +342,12 @@ def migrate_legacy_llm_settings(
     default_system_config: dict[str, str],
 ) -> None:
     """把旧 system_config 中的大模型相关字段迁移到统一配置域。"""
-    import os
-
-    env_base_url = os.getenv("STQB_LLM_BASE_URL", "").strip()
-    env_model = os.getenv("STQB_LLM_MODEL", "").strip()
-    env_api_key = os.getenv("STQB_LLM_API_KEY", "").strip()
-    env_stream = os.getenv("STQB_LLM_STREAM", "true").strip().lower() not in {
-        "0",
-        "false",
-        "no",
-        "off",
-        "disabled",
-    }
-    env_max_tokens_str = os.getenv("STQB_LLM_MAX_COMPLETION_TOKENS", "700").strip()
-    try:
-        env_max_tokens = int(env_max_tokens_str)
-    except ValueError:
-        env_max_tokens = 700
-
     legacy_keys = set(legacy_system_llm_keys())
     current_system = repository.get_settings("system_config")
     legacy_values = {key: current_system.get(key, "") for key in legacy_keys}
 
     has_legacy_in_db = any(str(value).strip() for value in legacy_values.values())
-    has_legacy_in_env = bool(env_base_url and env_model)
-    if not has_legacy_in_db and not has_legacy_in_env:
+    if not has_legacy_in_db:
         return
 
     existing_runtime = repository.get_settings(
@@ -395,8 +376,8 @@ def migrate_legacy_llm_settings(
     repository.replace_settings("llm_runtime_config", runtime_payload)
 
     if not repository.list_llm_models():
-        base_url = env_base_url or str(legacy_values.get("llm_base_url") or "").strip()
-        model = env_model or str(legacy_values.get("llm_model") or "").strip()
+        base_url = str(legacy_values.get("llm_base_url") or "").strip()
+        model = str(legacy_values.get("llm_model") or "").strip()
         if base_url and model:
             now = time.time()
             record = LlmModelRecord(
@@ -404,18 +385,14 @@ def migrate_legacy_llm_settings(
                 name="默认模型",
                 base_url=base_url,
                 model=model,
-                api_key=env_api_key or str(legacy_values.get("llm_api_key") or "").strip(),
+                api_key=str(legacy_values.get("llm_api_key") or "").strip(),
                 role="primary",
                 priority=0,
                 stream=(
-                    env_stream
-                    if env_base_url
-                    else (
-                        str(legacy_values.get("llm_stream") or "true").strip().lower()
-                        not in {"0", "false", "no", "off", "disabled"}
-                    )
+                    str(legacy_values.get("llm_stream") or "true").strip().lower()
+                    not in {"0", "false", "no", "off", "disabled"}
                 ),
-                max_completion_tokens=env_max_tokens if env_base_url else 700,
+                max_completion_tokens=700,
                 timeout_seconds=30.0,
                 status="active",
                 created_at=now,

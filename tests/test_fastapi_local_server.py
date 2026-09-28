@@ -5040,12 +5040,21 @@ class FastAPILocalServerTests(unittest.TestCase):
 
             patch = client.patch(
                 "/api/v1/system-config",
-                json={"answer_retry_times": "3"},
+                json={
+                    "answer_retry_times": "3",
+                    "query_rate_limit_enabled": "true",
+                    "query_rate_limit_window_seconds": "30",
+                    "query_rate_limit_requests_per_user": "20",
+                    "query_max_active_requests_per_user": "1",
+                    "query_max_active_requests": "4",
+                },
                 headers=headers,
             )
 
         self.assertTrue(patch.json()["ok"])
         self.assertEqual(patch.json()["config"]["answer_retry_times"], "3")
+        self.assertEqual(patch.json()["config"]["query_rate_limit_window_seconds"], "30")
+        self.assertEqual(patch.json()["config"]["query_max_active_requests"], "4")
         self.assertEqual(lookup.answer_retry_times, 3)
 
     def test_email_domain_whitelist_normalizes_and_rejects_invalid_entries(self) -> None:

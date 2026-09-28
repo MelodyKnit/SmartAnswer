@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import json
-import os
 import time
 from dataclasses import dataclass
 
@@ -29,10 +28,8 @@ from ..tracing import record_trace
 from ..contracts.providers import BaseModelProvider
 from .openai_answer_parser import (
     answer_field,
-    bool_from_env,
     completion_answer_field,
     decode_chat_response,
-    int_from_env,
     is_completion_without_options,
     normalize_answer_for_query,
     optional_float,
@@ -69,43 +66,6 @@ class OpenAICompatibleProvider(BaseModelProvider):
         """规范化容器内访问宿主机服务的基础地址。"""
 
         self.base_url = normalize_container_loopback_url(self.base_url)
-
-    @classmethod
-    def from_env(
-        cls,
-        *,
-        base_url_env: str = "STQB_LLM_BASE_URL",
-        model_env: str = "STQB_LLM_MODEL",
-        api_key_env: str = "STQB_LLM_API_KEY",
-        stream_env: str = "STQB_LLM_STREAM",
-        max_tokens_env: str = "STQB_LLM_MAX_COMPLETION_TOKENS",
-    ) -> "OpenAICompatibleProvider | None":
-        """从环境变量中读取配置并构建 OpenAICompatibleProvider 实例。
-
-        若关键环境变量 (base_url_env 或 model_env) 未配置，则直接返回 None。
-
-        参数:
-            base_url_env: 基础 URL 对应的环境变量键名，默认 "STQB_LLM_BASE_URL"。
-            model_env: 模型名称对应的环境变量键名，默认 "STQB_LLM_MODEL"。
-            api_key_env: API 密钥对应的环境变量键名，默认 "STQB_LLM_API_KEY"。
-            stream_env: 流式开关对应的环境变量键名，默认 "STQB_LLM_STREAM"。
-            max_tokens_env: 最大 token 数限制对应的环境变量键名，默认 "STQB_LLM_MAX_COMPLETION_TOKENS"。
-
-        返回:
-            OpenAICompatibleProvider | None: 成功构建的实例或 None。
-        """
-
-        base_url = os.getenv(base_url_env)
-        model = os.getenv(model_env)
-        if not base_url or not model:
-            return None
-        return cls(
-            base_url=base_url,
-            model=model,
-            api_key=os.getenv(api_key_env),
-            stream=bool_from_env(os.getenv(stream_env), default=True),
-            max_completion_tokens=int_from_env(os.getenv(max_tokens_env), default=700),
-        )
 
     def answer(self, query: QuestionQuery) -> ModelAnswer:
         """为指定的题目查询获取结构化答案（不带搜索证据）。

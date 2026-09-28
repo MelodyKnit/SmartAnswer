@@ -71,16 +71,10 @@ conda activate ai-study-qb
 
 ## 4. 接入云 API 大模型
 
-不要把 API 密钥（API Key）写进 OCS 配置。推荐放在本地服务环境变量里。
 
 通用 OpenAI 兼容配置：
 
-```powershell
-$env:STQB_LLM_BASE_URL="https://api.example.com/v1"
-$env:STQB_LLM_MODEL="your-model-name"
-$env:STQB_LLM_API_KEY="your-api-key"
-.\scripts\run.ps1
-```
+如果需要大模型 fallback，请在启动服务后登录管理后台，进入「大模型配置」界面添加并激活对应模型。在本地题库未命中的情况下，系统会自动走已激活的大模型补全答案。如果不需要模型，直接运行 `.\scripts\run.ps1` 即可。
 
 说明：
 
@@ -150,13 +144,7 @@ Ollama 只是可选方案，不是项目依赖。
 
 如果使用 Ollama 的 OpenAI 兼容接口：
 
-```powershell
-$env:STQB_LLM_BASE_URL="http://127.0.0.1:11434/v1"
-$env:STQB_LLM_MODEL="qwen2.5:7b"
-.\scripts\run.ps1
-```
-
-如果使用 LM Studio、vLLM 或其他本地服务，把 `STQB_LLM_BASE_URL` and `STQB_LLM_MODEL` 改成对应服务即可。
+如果接入本地 Ollama，可在后台「大模型配置」中添加模型，接口地址填写 `http://127.0.0.1:11434/v1`，模型名称填写 `qwen2.5:7b`。如果使用 LM Studio、vLLM 或其他本地服务，将接口地址和模型名称对应填入即可。
 
 ## 6. OCS 配置
 

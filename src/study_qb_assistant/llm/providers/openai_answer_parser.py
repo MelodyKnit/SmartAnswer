@@ -363,21 +363,3 @@ def iter_sse_payloads(response_body: str) -> list[str]:
     if current:
         payloads.append("\n".join(current))
     return payloads
-
-
-def bool_from_env(value: str | None, *, default: bool) -> bool:
-    """解析布尔环境变量。"""
-    if value is None or not value.strip():
-        return default
-    return value.strip().lower() not in {"0", "false", "no", "off"}
-
-
-def int_from_env(value: str | None, *, default: int) -> int:
-    """解析正整数环境变量。"""
-    if value is None or not value.strip():
-        return default
-    try:
-        parsed = int(value)
-    except ValueError:
-        return default
-    return parsed if parsed > 0 else default

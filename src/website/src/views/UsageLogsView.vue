@@ -247,6 +247,24 @@ function tokenTooltip(log: UsageLog) {
   return parts.join('\n') || tokenLabel(log)
 }
 
+function elapsedMilliseconds(value: number | null | undefined): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0
+}
+
+function elapsedTagType(value: number | null | undefined): 'success' | 'warning' | 'danger' {
+  const milliseconds = elapsedMilliseconds(value)
+  if (milliseconds <= 10_000) return 'success'
+  if (milliseconds <= 60_000) return 'warning'
+  return 'danger'
+}
+
+function formatElapsed(value: number | null | undefined): string {
+  const milliseconds = elapsedMilliseconds(value)
+  if (milliseconds < 1000) return `${Math.round(milliseconds)} ms`
+  return `${(milliseconds / 1000).toFixed(2)} s`
+}
+
 onMounted(() => {
   const keyword = String(route.query.keyword || '').trim()
   if (keyword) {
@@ -360,6 +378,13 @@ onUnmounted(revokeImagePreviewUrls)
             <template #default="{ row }">{{ (row.confidence * 100).toFixed(0) }}%</template>
           </el-table-column>
           <el-table-column label="积分" width="70" prop="points_cost" align="center" />
+          <el-table-column label="耗时" width="95" align="center">
+            <template #default="{ row }">
+              <el-tag size="small" :type="elapsedTagType(row.elapsed_ms)" effect="light">
+                {{ formatElapsed(row.elapsed_ms) }}
+              </el-tag>
+            </template>
+          </el-table-column>
           <el-table-column label="时间" width="170" align="center">
             <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
           </el-table-column>
@@ -509,6 +534,14 @@ onUnmounted(revokeImagePreviewUrls)
           <div class="flex justify-between border-b border-line pb-2">
             <dt class="text-ink-muted">消耗积分</dt>
             <dd class="font-medium text-warning">{{ detail.points_cost }}</dd>
+          </div>
+          <div class="flex justify-between border-b border-line pb-2">
+            <dt class="text-ink-muted">耗时</dt>
+            <dd>
+              <el-tag size="small" :type="elapsedTagType(detail.elapsed_ms)" effect="light">
+                {{ formatElapsed(detail.elapsed_ms) }}
+              </el-tag>
+            </dd>
           </div>
           <div class="flex justify-between border-b border-line pb-2">
             <dt class="text-ink-muted">提供方</dt>

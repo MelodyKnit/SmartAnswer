@@ -15,7 +15,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from study_qb_assistant.llm.cache import LlmAnswerCache, cache_key  # noqa: E402
-from study_qb_assistant.questions.models import QuestionQuery  # noqa: E402
+from study_qb_assistant.questions.models import ModelAnswer, QuestionQuery  # noqa: E402
 
 
 class LlmAnswerCachePersistenceTests(unittest.TestCase):
@@ -160,6 +160,86 @@ class LlmAnswerCachePersistenceTests(unittest.TestCase):
 
         self.assertIsNone(trusted)
         self.assertEqual(records, [])
+
+    def test_incremental_state_journal_reloads_without_rewriting_legacy_file(self) -> None:
+        """生产缓存状态应追加小记录，且重启后仍可恢复可信答案。"""
+        query = QuestionQuery(
+            title="单选题(1分)增量缓存题",
+            options=("正确项", "干扰项"),
+            question_type="single",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            legacy_path = base / "normalized" / "ai-learned.jsonl"
+            state_path = base / "runtime" / "llm-answer-cache-state.jsonl"
+            cache = LlmAnswerCache(
+                legacy_path,
+                state_path=state_path,
+                min_confirmations=1,
+            )
+            cache.record_model_answer(
+                query,
+                ModelAnswer("A", "正确项", "", 0.99),
+                provider_name="test-provider",
+            )
+            cache.close()
+
+            self.assertFalse(legacy_path.exists())
+            self.assertEqual(len(_read_jsonl(state_path)), 1)
+
+            reloaded = LlmAnswerCache(
+                legacy_path,
+                state_path=state_path,
+                min_confirmations=1,
+            )
+            trusted = reloaded.get_trusted(query)
+            reloaded.close()
+
+        self.assertIsNotNone(trusted)
+        self.assertEqual(trusted.candidate_answer, "A")
+
+    def test_incremental_state_journal_recovers_from_partial_tail(self) -> None:
+        """进程崩溃留下的半行只会被截断，不会屏蔽后续缓存状态。"""
+        first_query = QuestionQuery(
+            title="单选题(1分)journal 第一题",
+            options=("甲", "乙"),
+            question_type="single",
+        )
+        second_query = QuestionQuery(
+            title="单选题(1分)journal 第二题",
+            options=("丙", "丁"),
+            question_type="single",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            base = Path(directory)
+            path = base / "normalized" / "ai-learned.jsonl"
+            state_path = base / "runtime" / "llm-answer-cache-state.jsonl"
+            cache = LlmAnswerCache(path, state_path=state_path, min_confirmations=1)
+            cache.record_model_answer(
+                first_query,
+                ModelAnswer("A", "甲", "", 0.99),
+                provider_name="test-provider",
+            )
+            cache.close()
+            with state_path.open("ab") as handle:
+                handle.write(b'{"key":"partial')
+
+            recovered = LlmAnswerCache(path, state_path=state_path, min_confirmations=1)
+            self.assertEqual(recovered.get_trusted(first_query).candidate_answer, "A")
+            recovered.record_model_answer(
+                second_query,
+                ModelAnswer("A", "丙", "", 0.99),
+                provider_name="test-provider",
+            )
+            recovered.close()
+
+            reloaded = LlmAnswerCache(path, state_path=state_path, min_confirmations=1)
+            first = reloaded.get_trusted(first_query)
+            second = reloaded.get_trusted(second_query)
+            reloaded.close()
+
+        self.assertEqual(first.candidate_answer, "A")
+        self.assertEqual(second.candidate_answer, "A")
 
 
 def _read_jsonl(path: Path) -> list[dict]:
