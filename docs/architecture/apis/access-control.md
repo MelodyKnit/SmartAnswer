@@ -32,9 +32,9 @@ Token 资源接口均要求当前用户登录；资源所有权由服务端校�
 
 | 方法 | 路径 | 权限 | 请求 | 成功响应 |
 | --- | --- | --- | --- | --- |
-| `GET` | `/api/v1/roles` | `roles:read` | 无 | `roles`、`permission_catalog` |
-| `GET` | `/api/v1/roles/{role_id}` | `roles:read` | path `role_id` | `role` |
-| `GET` | `/api/v1/roles/{role_id}/permissions` | `roles:read` | path `role_id` | `{ok,role}` |
+| `GET` | `/api/v1/roles` | `roles:read` | 无 | `roles`（含 `color`）、`permission_catalog` |
+| `GET` | `/api/v1/roles/{role_id}` | `roles:read` | path `role_id` | `role`（含 `color`） |
+| `GET` | `/api/v1/roles/{role_id}/permissions` | `roles:read` | path `role_id` | `{ok,role}`（角色含 `color`） |
 | `POST` | `/api/v1/roles` | `roles:write` + `superadmin` | `RoleCreatePayload` | `201`，`role` |
 | `PATCH` | `/api/v1/roles/{role_id}` | `roles:write` | path + `RoleUpdatePayload` | `role` |
 | `PUT` | `/api/v1/roles/{role_id}/permissions` | `roles:write` | path + `RolePermissionPayload` | `role` |
@@ -42,9 +42,11 @@ Token 资源接口均要求当前用户登录；资源所有权由服务端校�
 
 | 模型 | 字段 |
 | --- | --- |
-| `RoleCreatePayload` | `role_id: string`、`name: string`、`description: string`、`permissions: string[]` |
-| `RoleUpdatePayload` | `name?`、`description?`、`permissions?: string[]` |
+| `RoleCreatePayload` | `role_id: string`、`name: string`、`description: string`、`permissions: string[]`、`color?: string` |
+| `RoleUpdatePayload` | `name?`、`description?`、`permissions?: string[]`、`color?: string` |
 | `RolePermissionPayload` | `permissions: string[]` |
+
+角色颜色使用 `#RRGGBB` 六位十六进制格式。超级管理员可调整系统角色颜色；有 `roles:write` 的委托管理员只能调整其授权范围内的自定义角色颜色。系统角色名称和说明仍不可编辑。用户列表及当前用户资料返回 `role_color` 作为角色展示摘要。
 
 系统角色、正在使用中的角色或不存在角色的删除由服务端拒绝，并返回结构化业务错误。
 

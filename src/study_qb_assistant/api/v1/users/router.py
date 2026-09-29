@@ -10,6 +10,7 @@ from fastapi import APIRouter, Request
 from starlette.responses import JSONResponse
 
 from ....auth import AuthError
+from ....platform.permissions.records import DEFAULT_ROLE_COLOR
 from ....platform.usage.time_ranges import LOCAL_TIMEZONE
 from ...dependencies import (
     get_auth_service,
@@ -119,9 +120,22 @@ def build_user_router() -> APIRouter:
         permission_service = get_permission_service(request)
         usage_counts = get_usage_service(request).user_usage_counts()
         users = auth.list_users()
+        role_summaries = {
+            str(role["role_id"]): role_summary_from_record(role)
+            for role in permission_service.list_roles()
+        }
         for user in users:
             user["usage_count"] = usage_counts.get(str(user["username"]), 0)
-            user.update(role_summary(str(user["role"]), permission_service))
+            user.update(
+                role_summaries.get(
+                    str(user["role"]),
+                    {
+                        "role_name": str(user.get("role") or "未知角色"),
+                        "role_is_system": False,
+                        "role_color": DEFAULT_ROLE_COLOR,
+                    },
+                )
+            )
         return JSONResponse({"ok": True, "users": users})
 
     @router.patch("/users/{username}")
@@ -278,8 +292,22 @@ def role_summary(role_id: str, permission_service: Any) -> dict[str, str | bool]
     try:
         role = permission_service.get_role(role_id)
     except AuthError:
-        return {"role_name": role_id or "未知角色", "role_is_system": False}
-    return {"role_name": str(role["name"]), "role_is_system": bool(role["is_system"])}
+        return {
+            "role_name": role_id or "未知角色",
+            "role_is_system": False,
+            "role_color": DEFAULT_ROLE_COLOR,
+        }
+    return role_summary_from_record(role)
+
+
+def role_summary_from_record(role: dict[str, Any]) -> dict[str, str | bool]:
+    """将角色元数据压缩为用户资源中的展示摘要。"""
+
+    return {
+        "role_name": str(role.get("name") or role.get("role_id") or "未知角色"),
+        "role_is_system": bool(role.get("is_system")),
+        "role_color": str(role.get("color") or DEFAULT_ROLE_COLOR),
+    }
 
 
 def format_unlimited_expiry(timestamp: float) -> str:

@@ -8,6 +8,7 @@ import { useAuthStore } from '@/stores/auth'
 import { ApiException } from '@/api/http'
 import { formatDateTime } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
+import DataTable from '@/components/data-table/DataTable.vue'
 
 const auth = useAuthStore()
 const loading = ref(false)
@@ -17,6 +18,19 @@ const manualGrantDefault = ref(1)
 const canAssignRoles = computed(() => auth.isSuperAdmin)
 const canGrantPoints = computed(() => auth.hasPermission('wallet:changes:write'))
 const canReadBillingPolicy = computed(() => auth.hasPermission('billing:read'))
+
+function roleTagStyle(rawColor?: string) {
+  const color = /^#[\da-f]{6}$/i.test(rawColor || '') ? rawColor! : '#64748B'
+  const red = Number.parseInt(color.slice(1, 3), 16)
+  const green = Number.parseInt(color.slice(3, 5), 16)
+  const blue = Number.parseInt(color.slice(5, 7), 16)
+  const textColor = (red * 299 + green * 587 + blue * 114) / 1000 > 160 ? '#273449' : color
+  return {
+    color: textColor,
+    borderColor: color,
+    backgroundColor: `${color}20`,
+  }
+}
 
 async function loadUsers() {
   loading.value = true
@@ -154,15 +168,11 @@ onMounted(async () => {
       </template>
     </PageHeader>
 
-    <div class="app-card p-1">
-      <el-table v-loading="loading" :data="users" style="width: 100%">
+    <DataTable :data="users" :loading="loading" empty-text="暂无用户">
         <el-table-column label="用户名" min-width="140" prop="username" />
         <el-table-column label="角色" width="120" align="center">
           <template #default="{ row }">
-            <el-tag
-              size="small"
-              :type="row.role_is_system ? 'info' : 'success'"
-            >
+            <el-tag size="small" effect="light" :style="roleTagStyle(row.role_color)">
               {{ row.role_name || row.role }}
             </el-tag>
           </template>
@@ -209,9 +219,7 @@ onMounted(async () => {
             <span v-else class="text-xs text-ink-muted">无权限</span>
           </template>
         </el-table-column>
-        <template #empty><el-empty description="暂无用户" /></template>
-      </el-table>
-    </div>
+    </DataTable>
 
     <el-dialog v-model="editVisible" :title="`编辑用户 · ${editing.username}`" width="420px">
       <el-form label-position="top">

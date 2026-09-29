@@ -6,6 +6,8 @@ import { imageGenerationApi } from '@/api/endpoints'
 import { ApiException } from '@/api/http'
 import type { ImageGenerationModel } from '@/api/types'
 import { formatDateTime } from '@/utils/format'
+import DataTable from '@/components/data-table/DataTable.vue'
+import DataTableToolbar from '@/components/data-table/DataTableToolbar.vue'
 
 defineProps<{ canManage: boolean }>()
 
@@ -327,22 +329,19 @@ onMounted(load)
 </script>
 
 <template>
-  <section class="space-y-4">
-    <div class="app-card p-5">
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h3 class="text-base font-semibold text-ink">生图模型</h3>
-          <p class="mt-1 text-xs text-ink-soft">模型协议、尺寸能力与聊天模型独立配置；同一时间仅一个生图模型启用。</p>
-        </div>
-        <div class="flex gap-2">
-          <el-button @click="load">刷新</el-button>
-          <el-button v-if="canManage" type="primary" :icon="'Plus'" @click="openCreate">新增模型</el-button>
-        </div>
+  <section class="flex flex-col gap-3">
+    <DataTableToolbar class="flex items-center justify-between gap-3">
+      <div>
+        <h3 class="text-base font-semibold text-ink">生图模型</h3>
+        <p class="mt-1 text-xs text-ink-soft">模型协议、尺寸能力与聊天模型独立配置；同一时间仅一个生图模型启用。</p>
       </div>
-    </div>
+      <div class="flex gap-2">
+        <el-button @click="load">刷新</el-button>
+        <el-button v-if="canManage" type="primary" :icon="'Plus'" @click="openCreate">新增模型</el-button>
+      </div>
+    </DataTableToolbar>
 
-    <div class="app-card p-1">
-      <el-table v-loading="loading" :data="models" style="width: 100%">
+    <DataTable :data="models" :loading="loading" empty-text="暂无生图模型配置">
         <el-table-column label="名称" min-width="120" prop="name" show-overflow-tooltip />
         <el-table-column label="协议" min-width="150" show-overflow-tooltip>
           <template #default="{ row }"><span class="text-xs text-ink-soft">{{ protocolLabel(row.provider) }}</span></template>
@@ -387,9 +386,7 @@ onMounted(load)
             </div>
           </template>
         </el-table-column>
-        <template #empty><el-empty description="暂无生图模型配置" /></template>
-      </el-table>
-    </div>
+    </DataTable>
 
     <el-dialog v-model="visible" :title="editingId ? '编辑生图模型' : '新增生图模型'" width="680px" top="6vh">
       <el-form label-position="top" :disabled="saving">

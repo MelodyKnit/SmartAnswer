@@ -27,8 +27,9 @@ const keyword = ref('')
 const openGroups = ref<string[]>([])
 const createVisible = ref(false)
 const editVisible = ref(false)
-const createForm = reactive({ role_id: '', name: '', description: '' })
-const editForm = reactive({ name: '', description: '' })
+const createForm = reactive({ role_id: '', name: '', description: '', color: '#64748B' })
+const editForm = reactive({ name: '', description: '', color: '#64748B' })
+const editColorOnly = ref(false)
 
 const canEditAnyRole = computed(() => auth.hasPermission('roles:write'))
 const canManageRoleLifecycle = computed(() => auth.isSuperAdmin)
@@ -52,6 +53,7 @@ const canEditActiveRole = computed(() => {
 const canEditActiveMetadata = computed(
   () => Boolean(activeRole.value && !activeRole.value.is_system && canEditActiveRole.value),
 )
+const canEditActiveColor = computed(() => canEditActiveRole.value)
 const canDeleteActiveRole = computed(
   () => Boolean(activeRole.value && !activeRole.value.is_system && canManageRoleLifecycle.value),
 )
@@ -178,6 +180,7 @@ function openCreateDialog() {
   createForm.role_id = ''
   createForm.name = ''
   createForm.description = ''
+  createForm.color = '#64748B'
   createVisible.value = true
 }
 
@@ -189,6 +192,7 @@ async function createRole() {
       name: createForm.name,
       description: createForm.description,
       permissions: [],
+      color: createForm.color,
     })
     createVisible.value = false
     ElMessage.success('角色已创建')
@@ -204,6 +208,15 @@ function openEditDialog() {
   if (!activeRole.value) return
   editForm.name = activeRole.value.name
   editForm.description = activeRole.value.description
+  editForm.color = activeRole.value.color || '#64748B'
+  editColorOnly.value = false
+  editVisible.value = true
+}
+
+function openColorDialog() {
+  if (!activeRole.value || !canEditActiveColor.value) return
+  editForm.color = activeRole.value.color || '#64748B'
+  editColorOnly.value = true
   editVisible.value = true
 }
 
@@ -211,12 +224,14 @@ async function saveRoleMetadata() {
   if (!activeRole.value) return
   saving.value = true
   try {
-    await roleApi.update(activeRole.value.role_id, {
-      name: editForm.name,
-      description: editForm.description,
-    })
+    await roleApi.update(
+      activeRole.value.role_id,
+      editColorOnly.value
+        ? { color: editForm.color }
+        : { name: editForm.name, description: editForm.description, color: editForm.color },
+    )
     editVisible.value = false
-    ElMessage.success('角色信息已更新')
+    ElMessage.success(editColorOnly.value ? '角色颜色已更新' : '角色信息已更新')
     await load(activeRole.value.role_id)
   } catch (error) {
     ElMessage.error(error instanceof ApiException ? error.message : '保存失败')
@@ -286,7 +301,10 @@ onMounted(load)
             <div class="flex items-start justify-between gap-3">
               <div class="min-w-0">
                 <div class="flex items-center gap-2">
-                  <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-100 text-brand-600">
+                  <span
+                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white"
+                    :style="{ backgroundColor: role.color || '#64748B' }"
+                  >
                     <el-icon><UserFilled /></el-icon>
                   </span>
                   <span class="truncate font-semibold text-ink">{{ role.name }}</span>
@@ -314,8 +332,9 @@ onMounted(load)
               </div>
               <p v-if="activeRole.description" class="mt-1 text-sm text-ink-soft">{{ activeRole.description }}</p>
             </div>
-            <div class="flex items-center gap-2">
+            <div class="flex flex-wrap items-center gap-2">
               <el-button v-if="canEditActiveMetadata" @click="openEditDialog">编辑信息</el-button>
+              <el-button v-if="canEditActiveColor" @click="openColorDialog">角色颜色</el-button>
               <el-button v-if="canDeleteActiveRole" type="danger" plain @click="deleteActiveRole">删除角色</el-button>
               <span class="text-sm text-ink-muted">已开启 {{ activePermissionSet.size }} / {{ permissionCatalog.length }} 项</span>
             </div>
@@ -386,6 +405,13 @@ onMounted(load)
         <el-form-item label="角色说明">
           <el-input v-model="createForm.description" maxlength="120" show-word-limit type="textarea" :rows="3" placeholder="可选，用于说明该角色的职责" />
         </el-form-item>
+        <el-form-item label="角色颜色">
+          <div class="flex items-center gap-3">
+            <el-color-picker v-model="createForm.color" :show-alpha="false" color-format="hex" />
+            <span class="role-color-preview" :style="{ backgroundColor: createForm.color }" />
+            <code class="text-xs text-ink-muted">{{ createForm.color }}</code>
+          </div>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="createVisible = false">取消</el-button>
@@ -393,10 +419,24 @@ onMounted(load)
       </template>
     </el-dialog>
 
-    <el-dialog v-model="editVisible" title="编辑角色信息" width="440px" destroy-on-close>
+    <el-dialog
+      v-model="editVisible"
+      :title="editColorOnly ? '编辑角色颜色' : '编辑角色信息'"
+      width="440px"
+      destroy-on-close
+    >
       <el-form label-position="top">
-        <el-form-item label="角色名称"><el-input v-model="editForm.name" /></el-form-item>
-        <el-form-item label="角色说明"><el-input v-model="editForm.description" maxlength="120" show-word-limit type="textarea" :rows="3" /></el-form-item>
+        <template v-if="!editColorOnly">
+          <el-form-item label="角色名称"><el-input v-model="editForm.name" /></el-form-item>
+          <el-form-item label="角色说明"><el-input v-model="editForm.description" maxlength="120" show-word-limit type="textarea" :rows="3" /></el-form-item>
+        </template>
+        <el-form-item label="角色颜色">
+          <div class="flex items-center gap-3">
+            <el-color-picker v-model="editForm.color" :show-alpha="false" color-format="hex" />
+            <span class="role-color-preview" :style="{ backgroundColor: editForm.color }" />
+            <code class="text-xs text-ink-muted">{{ editForm.color }}</code>
+          </div>
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="editVisible = false">取消</el-button>
@@ -418,4 +458,5 @@ onMounted(load)
 .permission-action { cursor: pointer; color: var(--c-brand-600); transition: color 150ms ease; }
 .permission-action:hover { color: var(--c-brand-700); }
 .permission-action:disabled { cursor: not-allowed; color: var(--c-ink-muted); }
+.role-color-preview { width: 22px; height: 22px; border: 1px solid var(--c-line-strong); border-radius: 6px; }
 </style>

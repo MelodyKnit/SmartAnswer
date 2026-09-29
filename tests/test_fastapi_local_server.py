@@ -32,6 +32,9 @@ from study_qb_assistant.questions.models import (  # noqa: E402
     QuestionQuery,
 )  # noqa: E402
 from study_qb_assistant.platform.container import PlatformServices  # noqa: E402
+from study_qb_assistant.platform.permissions.service import (  # noqa: E402
+    ROLE_COLOR_DEFAULTS_MIGRATION_KEY,
+)
 from study_qb_assistant.platform.wallet.records import WalletOrderRecord  # noqa: E402
 from study_qb_assistant.llm.http_client import HttpClientError  # noqa: E402
 from study_qb_assistant.llm.providers import OpenAICompatibleProvider  # noqa: E402
@@ -2581,6 +2584,7 @@ class FastAPILocalServerTests(unittest.TestCase):
                     "name": "题库阅览员",
                     "description": "查看题库",
                     "permissions": ["dashboard:self", "questions:read"],
+                    "color": "#18a058",
                 },
                 headers=owner_headers,
             )
@@ -2633,8 +2637,13 @@ class FastAPILocalServerTests(unittest.TestCase):
             )
             delegated_update = client.patch(
                 "/api/v1/roles/question_reader",
-                json={"permissions": ["dashboard:self"]},
+                json={"permissions": ["dashboard:self"], "color": "#0ea5e9"},
                 headers=editor_headers,
+            )
+            invalid_role_color = client.patch(
+                "/api/v1/roles/question_reader",
+                json={"color": "red"},
+                headers=owner_headers,
             )
             delegated_escalation = client.patch(
                 "/api/v1/roles/question_reader",
@@ -2646,6 +2655,13 @@ class FastAPILocalServerTests(unittest.TestCase):
                 json={"permissions": ["dashboard:self"]},
                 headers=editor_headers,
             )
+            delegated_system_color = client.patch(
+                "/api/v1/roles/user",
+                json={"color": "#123456"},
+                headers=editor_headers,
+            )
+            reader_profile = client.get("/api/v1/users/me", headers=reader_headers)
+            managed_users = client.get("/api/v1/users", headers=owner_headers)
             in_use_delete = client.delete("/api/v1/roles/question_reader", headers=owner_headers)
             restore_reader = client.patch(
                 "/api/v1/users/reader", json={"role": "user"}, headers=owner_headers
@@ -2663,10 +2679,16 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertTrue(system_roles["superadmin"]["is_system"])
         self.assertTrue(system_roles["admin"]["is_system"])
         self.assertTrue(system_roles["user"]["is_system"])
+        self.assertEqual(
+            len({system_roles[role_id]["color"] for role_id in ("superadmin", "admin", "user")}),
+            3,
+        )
         self.assertEqual(create_reader.status_code, 201)
+        self.assertEqual(create_reader.json()["role"]["color"], "#18A058")
         self.assertEqual(create_editor.status_code, 201)
         self.assertEqual(assign_reader.status_code, 200)
         self.assertEqual(assign_reader.json()["user"]["role_name"], "题库阅览员")
+        self.assertEqual(assign_reader.json()["user"]["role_color"], "#18A058")
         self.assertEqual(assign_editor.status_code, 200)
         self.assertEqual(reader_questions.status_code, 200)
         self.assertEqual(reader_system.status_code, 403)
@@ -2682,9 +2704,18 @@ class FastAPILocalServerTests(unittest.TestCase):
         )
         self.assertEqual(unknown_audience.status_code, 400)
         self.assertEqual(delegated_update.status_code, 200)
+        self.assertEqual(delegated_update.json()["role"]["color"], "#0EA5E9")
+        self.assertEqual(invalid_role_color.status_code, 400)
+        self.assertEqual(invalid_role_color.json()["error"]["code"], "INVALID_INPUT")
         self.assertEqual(delegated_escalation.status_code, 403)
         self.assertEqual(delegated_escalation.json()["error"]["code"], "ROLE_PERMISSION_ESCALATION")
         self.assertEqual(delegated_system_update.status_code, 403)
+        self.assertEqual(delegated_system_color.status_code, 403)
+        self.assertEqual(reader_profile.json()["user"]["role_color"], "#0EA5E9")
+        reader_managed = next(
+            item for item in managed_users.json()["users"] if item["username"] == "reader"
+        )
+        self.assertEqual(reader_managed["role_color"], "#0EA5E9")
         self.assertEqual(in_use_delete.status_code, 409)
         self.assertEqual(in_use_delete.json()["error"]["code"], "ROLE_IN_USE")
         self.assertEqual(restore_reader.status_code, 200)
@@ -2725,7 +2756,7 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(disable.json()["error"]["code"], "LAST_SUPERADMIN_PROTECTED")
 
     def test_system_role_initialization_preserves_legacy_permission_override(self) -> None:
-        """旧 role_permissions 配置只在首次角色初始化时作为系统角色权限来源。"""
+        """角色首次初始化迁移旧权限与默认颜色，后续启动保留管理员自定义颜色。"""
 
         with tempfile.TemporaryDirectory() as directory:
             database_path = self._runtime_database_path(directory)
@@ -2734,13 +2765,35 @@ class FastAPILocalServerTests(unittest.TestCase):
                 "role_permissions",
                 {"admin": json.dumps({"permissions": ["questions:read"]})},
             )
-            platform = PlatformServices(database_path)
-            roles = {item["role_id"]: item for item in platform.permissions.list_roles()}
+            PlatformServices(database_path)
+            with get_session_factory(database_path)() as session:
+                session.execute(text("UPDATE roles SET color = '#64748B'"))
+                session.commit()
+            settings.delete_settings(
+                "permission_migrations", keys={ROLE_COLOR_DEFAULTS_MIGRATION_KEY}
+            )
+            migrated_platform = PlatformServices(database_path)
+            roles = {
+                item["role_id"]: item for item in migrated_platform.permissions.list_roles()
+            }
+            migrated_platform.permissions.update_role(
+                "admin",
+                color="#aB12cD",
+                actor_role_id="superadmin",
+                actor_permissions=set(),
+            )
+            restarted_platform = PlatformServices(database_path)
+            restarted_roles = {
+                item["role_id"]: item for item in restarted_platform.permissions.list_roles()
+            }
 
         self.assertEqual(roles["admin"]["name"], "管理员")
         self.assertTrue(roles["admin"]["is_system"])
         self.assertIn("questions:read", roles["admin"]["permissions"])
         self.assertNotIn("dashboard:all", roles["admin"]["permissions"])
+        self.assertEqual(roles["superadmin"]["color"], "#E6A23C")
+        self.assertEqual(roles["user"]["color"], "#67C23A")
+        self.assertEqual(restarted_roles["admin"]["color"], "#AB12CD")
 
     def test_redeem_code_expiry_contract(self) -> None:
         """兑换码创建支持可选有效期，并拒绝创建已过期兑换码。"""
@@ -4176,6 +4229,51 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertIn("days", columns_by_table["redeem_codes"])
         self.assertIn("title", columns_by_table["redeem_codes"])
         self.assertIn("days_delta", columns_by_table["wallet_orders"])
+
+    def test_legacy_roles_table_gets_color_compat_column(self) -> None:
+        """旧角色表升级后提供中性色字段，内置角色颜色由权限服务一次性初始化。"""
+
+        engine = create_engine("sqlite:///:memory:", future=True)
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """
+                    CREATE TABLE roles (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        role_id VARCHAR(64) UNIQUE,
+                        name VARCHAR(64),
+                        description VARCHAR(255),
+                        permissions_json TEXT DEFAULT '[]',
+                        is_system INTEGER DEFAULT 0,
+                        created_at FLOAT,
+                        updated_at FLOAT
+                    )
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    INSERT INTO roles (
+                        role_id, name, description, permissions_json, is_system, created_at, updated_at
+                    ) VALUES ('user', '普通用户', '', '[]', 1, 1.0, 1.0)
+                    """
+                )
+            )
+
+        database_module.ensure_sqlite_compat_columns(engine)
+        with engine.connect() as connection:
+            columns = {
+                row[1]
+                for row in connection.execute(text("PRAGMA table_info(roles)")).fetchall()
+            }
+            color = connection.execute(
+                text("SELECT color FROM roles WHERE role_id = 'user'")
+            ).scalar_one()
+        engine.dispose()
+
+        self.assertIn("color", columns)
+        self.assertEqual(color, "#64748B")
 
     def test_dashboard_rankings_user_isolation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

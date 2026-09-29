@@ -13,12 +13,14 @@ from .catalog import (
     SYSTEM_ROLE_DEFINITIONS,
     SYSTEM_ROLE_IDS,
 )
-from .records import RoleRecord
+from .records import DEFAULT_ROLE_COLOR, RoleRecord
 
 ROLE_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{2,31}$")
 RESERVED_ROLE_IDS = frozenset((*SYSTEM_ROLE_IDS, "all"))
 IMAGE_GENERATION_PERMISSION_MIGRATION_KEY = "image_generation_default_granted_v1"
 ADMIN_SYSTEM_CONFIG_PERMISSION_MIGRATION_KEY = "admin_system_config_permission_v1"
+ROLE_COLOR_DEFAULTS_MIGRATION_KEY = "role_color_defaults_v1"
+ROLE_COLOR_PATTERN = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 class PermissionService(PlatformDomainService):
@@ -30,11 +32,28 @@ class PermissionService(PlatformDomainService):
         with self.lock:
             existing = {role.role_id: role for role in self.repository.list_roles()}
             legacy_overrides = self.repository.legacy_role_permission_overrides()
+            migration = self.repository.settings.get_settings(
+                "permission_migrations", keys={ROLE_COLOR_DEFAULTS_MIGRATION_KEY}
+            )
+            apply_color_defaults = migration.get(ROLE_COLOR_DEFAULTS_MIGRATION_KEY) != "true"
             now = time.time()
             for definition in SYSTEM_ROLE_DEFINITIONS:
                 current = existing.get(definition.role_id)
                 if current is not None:
                     if current.is_system:
+                        if apply_color_defaults:
+                            self.repository.save_role(
+                                RoleRecord(
+                                    role_id=current.role_id,
+                                    name=current.name,
+                                    description=current.description,
+                                    permissions=current.permissions,
+                                    is_system=True,
+                                    created_at=current.created_at or now,
+                                    updated_at=now,
+                                    color=definition.color,
+                                )
+                            )
                         continue
                     self.repository.save_role(
                         RoleRecord(
@@ -45,6 +64,7 @@ class PermissionService(PlatformDomainService):
                             is_system=True,
                             created_at=current.created_at or now,
                             updated_at=now,
+                            color=definition.color if apply_color_defaults else current.color,
                         )
                     )
                     continue
@@ -60,7 +80,12 @@ class PermissionService(PlatformDomainService):
                         is_system=True,
                         created_at=now,
                         updated_at=now,
+                        color=definition.color,
                     )
+                )
+            if apply_color_defaults:
+                self.repository.settings.set_settings(
+                    "permission_migrations", {ROLE_COLOR_DEFAULTS_MIGRATION_KEY: "true"}
                 )
 
     def ensure_admin_system_config_permission(self) -> None:
@@ -83,6 +108,7 @@ class PermissionService(PlatformDomainService):
                         is_system=admin.is_system,
                         created_at=admin.created_at,
                         updated_at=time.time(),
+                        color=admin.color,
                     )
                 )
             self.repository.settings.set_settings(
@@ -112,6 +138,7 @@ class PermissionService(PlatformDomainService):
                         is_system=role.is_system,
                         created_at=role.created_at,
                         updated_at=now,
+                        color=role.color,
                     )
                 )
             self.repository.settings.set_settings(
@@ -179,6 +206,7 @@ class PermissionService(PlatformDomainService):
         name: str,
         description: str,
         permissions: tuple[str, ...],
+        color: str | None = None,
     ) -> dict:
         """创建一个默认无继承关系的自定义角色。"""
 
@@ -201,6 +229,7 @@ class PermissionService(PlatformDomainService):
                     is_system=False,
                     created_at=now,
                     updated_at=now,
+                    color=self.normalize_color(color or DEFAULT_ROLE_COLOR),
                 )
             )
         return self.get_role(normalized_role_id)
@@ -212,6 +241,7 @@ class PermissionService(PlatformDomainService):
         name: str | None = None,
         description: str | None = None,
         permissions: tuple[str, ...] | None = None,
+        color: str | None = None,
         actor_role_id: str,
         actor_permissions: set[str],
     ) -> dict:
@@ -248,6 +278,7 @@ class PermissionService(PlatformDomainService):
             is_system=target.is_system,
             created_at=target.created_at,
             updated_at=time.time(),
+            color=target.color if color is None else self.normalize_color(color),
         )
         with self.lock:
             self.repository.save_role(updated)
@@ -325,6 +356,15 @@ class PermissionService(PlatformDomainService):
         if len(normalized) > 120:
             raise AuthError("INVALID_INPUT", "角色说明不能超过 120 个字符", http_status=400)
         return normalized
+
+    @staticmethod
+    def normalize_color(color: str) -> str:
+        """接受可安全用于界面样式的六位十六进制颜色。"""
+
+        normalized = str(color or "").strip()
+        if not ROLE_COLOR_PATTERN.fullmatch(normalized):
+            raise AuthError("INVALID_INPUT", "角色颜色必须是 #RRGGBB 格式", http_status=400)
+        return normalized.upper()
 
     @staticmethod
     def normalize_permissions(permissions: tuple[str, ...]) -> tuple[str, ...]:

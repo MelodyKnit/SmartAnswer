@@ -16,6 +16,8 @@ import {
   questionTypeLabel,
 } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
+import DataTable from '@/components/data-table/DataTable.vue'
+import DataTableToolbar from '@/components/data-table/DataTableToolbar.vue'
 import FeedbackSubmitDialog from '@/components/FeedbackSubmitDialog.vue'
 import { DEFAULT_PAGE_SIZE } from '@/config/constants'
 
@@ -291,7 +293,8 @@ onMounted(() => {
       <h3 class="px-1 pt-1 text-base font-semibold text-ink">我的反馈记录</h3>
     </template>
 
-    <section class="app-card p-4">
+    <div class="flex flex-col gap-3">
+      <DataTableToolbar>
       <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
         <el-select v-model="filters.status" placeholder="全部状态" clearable @change="search">
           <el-option
@@ -319,10 +322,18 @@ onMounted(() => {
         />
         <el-button type="primary" :icon="'Search'" @click="search">查询</el-button>
       </div>
-    </section>
+    </DataTableToolbar>
 
-    <section class="app-card p-1">
-      <el-table v-loading="loading" :data="list" style="width: 100%">
+    <DataTable
+      :data="list"
+      :loading="loading"
+      show-pagination
+      :total="total"
+      :current-page="page"
+      :page-size="pageSize"
+      :empty-text="canManageFeedback ? '暂无待处理反馈' : '你还没有提交过反馈'"
+      @page-change="onPageChange"
+    >
         <el-table-column label="类型" width="110">
           <template #default="{ row }">
             <el-tag size="small" effect="plain">{{ feedbackCategoryLabel(row.category) }}</el-tag>
@@ -375,21 +386,7 @@ onMounted(() => {
             </el-button>
           </template>
         </el-table-column>
-        <template #empty>
-          <el-empty :description="canManageFeedback ? '暂无待处理反馈' : '你还没有提交过反馈'" />
-        </template>
-      </el-table>
-    </section>
-
-    <div v-if="total > 0" class="flex justify-end">
-      <el-pagination
-        layout="total, prev, pager, next, jumper"
-        :total="total"
-        :current-page="page"
-        :page-size="pageSize"
-        background
-        @current-change="onPageChange"
-      />
+      </DataTable>
     </div>
 
     <FeedbackSubmitDialog

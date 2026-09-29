@@ -530,11 +530,17 @@ export const roleApi = {
       `/roles/${encodeURIComponent(roleId)}/permissions`,
       { permissions },
     ),
-  create: (body: { role_id: string; name: string; description: string; permissions: string[] }) =>
+  create: (body: {
+    role_id: string
+    name: string
+    description: string
+    permissions: string[]
+    color?: string
+  }) =>
     api.post<{ ok: true; role: RolePermission }>('/roles', body),
   update: (
     roleId: string,
-    body: { name?: string; description?: string; permissions?: string[] },
+    body: { name?: string; description?: string; permissions?: string[]; color?: string },
   ) => api.patch<{ ok: true; role: RolePermission }>(`/roles/${encodeURIComponent(roleId)}`, body),
   remove: (roleId: string) =>
     api.delete<{ ok: true; role_id: string; deleted: boolean }>(

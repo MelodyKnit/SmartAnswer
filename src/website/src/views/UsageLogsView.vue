@@ -14,6 +14,8 @@ import {
 } from '@/utils/format'
 import { Picture } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
+import DataTable from '@/components/data-table/DataTable.vue'
+import DataTableToolbar from '@/components/data-table/DataTableToolbar.vue'
 import { DEFAULT_PAGE_SIZE } from '@/config/constants'
 import { useAuthStore } from '@/stores/auth'
 
@@ -280,7 +282,7 @@ onUnmounted(revokeImagePreviewUrls)
   <div class="flex h-full flex-col min-h-0">
     <PageHeader title="使用记录" description="查看答题调用流水、命中方式与积分消耗。" />
 
-    <div class="app-card mb-3 shrink-0 flex flex-wrap items-center gap-3 p-4">
+    <DataTableToolbar class="mb-3 flex flex-wrap items-center gap-3">
       <el-input
         v-if="canViewAllUsage"
         v-model="filters.username"
@@ -330,11 +332,19 @@ onUnmounted(revokeImagePreviewUrls)
         <el-option :value="100" label="每页 100 条" />
       </el-select>
       <el-button type="primary" :icon="'Search'" @click="search">查询</el-button>
-    </div>
+    </DataTableToolbar>
 
-    <div class="app-card min-h-0 flex-1 flex flex-col p-1">
-      <div class="min-h-0 flex-1">
-        <el-table v-loading="loading" :data="logs" height="100%" style="width: 100%">
+    <DataTable
+      :data="logs"
+      :loading="loading"
+      fill-height
+      show-pagination
+      :total="total"
+      :current-page="page"
+      :page-size="filters.limit"
+      empty-text="暂无使用记录"
+      @page-change="onPageChange"
+    >
           <el-table-column label="题目" min-width="240" show-overflow-tooltip>
             <template #default="{ row }">
             <span class="text-ink truncate block">{{ row.title || '—' }}</span>
@@ -394,23 +404,7 @@ onUnmounted(revokeImagePreviewUrls)
               <el-button link type="primary" @click="openFeedback(row)">反馈</el-button>
             </template>
           </el-table-column>
-          <template #empty>
-            <el-empty description="暂无使用记录" />
-          </template>
-        </el-table>
-      </div>
-
-      <div v-if="total > 0" class="shrink-0 flex justify-end border-t border-line px-4 py-3">
-        <el-pagination
-          layout="total, prev, pager, next, jumper"
-          :total="total"
-          :current-page="page"
-          :page-size="filters.limit"
-          background
-          @current-change="onPageChange"
-        />
-      </div>
-    </div>
+    </DataTable>
 
     <!-- 明细抽屉 -->
     <el-drawer v-model="detailVisible" title="搜题明细" size="420px">

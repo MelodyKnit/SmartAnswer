@@ -12,6 +12,8 @@ import type {
   AnnouncementStatus,
 } from '@/api/types'
 import PageHeader from '@/components/PageHeader.vue'
+import DataTable from '@/components/data-table/DataTable.vue'
+import DataTableToolbar from '@/components/data-table/DataTableToolbar.vue'
 import { DEFAULT_PAGE_SIZE } from '@/config/constants'
 import { formatDateTime } from '@/utils/format'
 
@@ -161,6 +163,11 @@ function search() {
   load()
 }
 
+function onPageChange(nextPage: number) {
+  page.value = nextPage
+  load()
+}
+
 function resetFilters() {
   filters.keyword = ''
   filters.status = ''
@@ -234,8 +241,8 @@ onMounted(load)
       </template>
     </PageHeader>
 
-    <section class="app-card mb-4">
-      <div class="grid gap-3 lg:grid-cols-[1fr_150px_150px_170px_auto]">
+    <DataTableToolbar class="mb-3">
+      <div class="grid gap-3 lg:grid-cols-2 2xl:grid-cols-[minmax(0,1fr)_150px_150px_170px_128px_auto]">
         <el-input
           v-model="filters.keyword"
           clearable
@@ -253,15 +260,29 @@ onMounted(load)
         <el-select v-model="filters.audience" clearable placeholder="全部范围">
           <el-option v-for="item in audienceOptions" :key="item.value" :label="item.label" :value="item.value" />
         </el-select>
+        <el-select v-model="filters.limit" @change="search">
+          <el-option :value="10" label="每页 10 条" />
+          <el-option :value="20" label="每页 20 条" />
+          <el-option :value="50" label="每页 50 条" />
+          <el-option :value="100" label="每页 100 条" />
+        </el-select>
         <div class="flex gap-2">
           <el-button type="primary" @click="search">搜索</el-button>
           <el-button @click="resetFilters">重置</el-button>
         </div>
       </div>
-    </section>
+    </DataTableToolbar>
 
-    <section class="app-card overflow-hidden !p-0">
-      <el-table v-loading="loading" :data="announcements" class="w-full">
+    <DataTable
+      :data="announcements"
+      :loading="loading"
+      show-pagination
+      :total="total"
+      :current-page="page"
+      :page-size="filters.limit"
+      empty-text="暂无公告"
+      @page-change="onPageChange"
+    >
         <el-table-column label="标题" min-width="280">
           <template #default="{ row }">
             <div class="min-w-0">
@@ -305,18 +326,7 @@ onMounted(load)
             </el-button>
           </template>
         </el-table-column>
-      </el-table>
-      <div class="flex items-center justify-between border-t border-line px-4 py-3">
-        <span class="text-sm text-ink-muted">共 {{ total }} 条</span>
-        <el-pagination
-          v-model:current-page="page"
-          :page-size="filters.limit"
-          layout="prev, pager, next"
-          :total="total"
-          @current-change="load"
-        />
-      </div>
-    </section>
+    </DataTable>
 
     <el-drawer v-model="drawerVisible" :title="drawerTitle" size="640px" class="app-drawer">
       <div class="space-y-5">

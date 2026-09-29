@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .records import DEFAULT_ROLE_COLOR
+
 
 @dataclass(frozen=True, slots=True)
 class PermissionDefinition:
@@ -70,6 +72,7 @@ class SystemRoleDefinition:
     name: str
     description: str
     permissions: tuple[str, ...]
+    color: str = DEFAULT_ROLE_COLOR
 
 
 SYSTEM_ROLE_DEFINITIONS: tuple[SystemRoleDefinition, ...] = (
@@ -78,6 +81,7 @@ SYSTEM_ROLE_DEFINITIONS: tuple[SystemRoleDefinition, ...] = (
         "超级管理员",
         "平台最高权限，可维护系统与角色归属",
         tuple(item.key for item in PERMISSION_CATALOG),
+        "#E6A23C",
     ),
     SystemRoleDefinition(
         "admin",
@@ -101,12 +105,14 @@ SYSTEM_ROLE_DEFINITIONS: tuple[SystemRoleDefinition, ...] = (
             "feedback:manage",
             "image-generation:use",
         ),
+        "#409EFF",
     ),
     SystemRoleDefinition(
         "user",
         "普通用户",
         "基础学习、令牌与反馈能力",
         ("dashboard:self", "tokens:self", "feedback:self", "image-generation:use"),
+        "#67C23A",
     ),
 )
 

@@ -16,6 +16,7 @@ class RoleCreatePayload(BaseModel):
     name: str = ""
     description: str = ""
     permissions: list[str] | tuple[str, ...] = ()
+    color: str | None = None
 
 
 class RoleUpdatePayload(BaseModel):
@@ -25,3 +26,4 @@ class RoleUpdatePayload(BaseModel):
     name: str | None = None
     description: str | None = None
     permissions: list[str] | tuple[str, ...] | None = None
+    color: str | None = None

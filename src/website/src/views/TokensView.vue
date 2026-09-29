@@ -7,6 +7,7 @@ import type { ApiToken, OcsConfig } from '@/api/types'
 import { ApiException } from '@/api/http'
 import { formatDateTime } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
+import DataTable from '@/components/data-table/DataTable.vue'
 import OcsConfigCopyDialog from '@/components/OcsConfigCopyDialog.vue'
 
 const loading = ref(false)
@@ -229,8 +230,7 @@ onMounted(load)
       </el-alert>
     </div>
 
-    <div class="app-card p-1">
-      <el-table v-loading="loading" :data="tokens" style="width: 100%">
+    <DataTable :data="tokens" :loading="loading" empty-text="暂无 API Key，点击右上角创建">
         <el-table-column label="名称" min-width="160">
           <template #default="{ row }">
             <span class="font-medium text-ink">{{ row.description || '未命名令牌' }}</span>
@@ -319,11 +319,7 @@ onMounted(load)
             </div>
           </template>
         </el-table-column>
-        <template #empty>
-          <el-empty description="暂无 API Key，点击右上角创建" />
-        </template>
-      </el-table>
-    </div>
+    </DataTable>
 
     <!-- 创建弹窗 -->
     <el-dialog v-model="createVisible" title="创建 API Key" width="440px">

@@ -9,6 +9,8 @@ import type { QuestionRecord } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
 import { formatDateTime } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
+import DataTable from '@/components/data-table/DataTable.vue'
+import DataTableToolbar from '@/components/data-table/DataTableToolbar.vue'
 import { DEFAULT_PAGE_SIZE } from '@/config/constants'
 
 const route = useRoute()
@@ -353,14 +355,14 @@ onMounted(() => {
       </template>
     </PageHeader>
 
-    <div class="space-y-4">
+    <div class="flex flex-col gap-3">
       <!-- 搜索过滤条 -->
-      <div class="question-filter-card app-card p-4">
+      <DataTableToolbar>
         <el-form
           :model="filter"
-          class="question-filter-form grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(260px,1fr)_150px_190px_160px_300px_auto] xl:items-end"
+          class="question-filter-form grid grid-cols-1 gap-3 md:grid-cols-2 2xl:grid-cols-[minmax(260px,1fr)_150px_190px_160px_260px_128px_auto] 2xl:items-end"
         >
-          <el-form-item label="关键字" class="mb-0">
+          <el-form-item class="mb-0">
             <el-input
               v-model="filter.keyword"
               placeholder="搜索题干/选项/解析..."
@@ -369,7 +371,7 @@ onMounted(() => {
               @keyup.enter="handleSearch"
             />
           </el-form-item>
-          <el-form-item label="题型" class="mb-0">
+          <el-form-item class="mb-0">
             <el-select v-model="filter.type" placeholder="全部题型" clearable class="w-full">
               <el-option value="single" label="单选题" />
               <el-option value="multiple" label="多选题" />
@@ -378,12 +380,12 @@ onMounted(() => {
               <el-option value="unknown" label="其它题型" />
             </el-select>
           </el-form-item>
-          <el-form-item label="数据源" class="mb-0">
+          <el-form-item class="mb-0">
             <el-select v-model="filter.source" placeholder="全部来源" clearable class="w-full">
               <el-option v-for="src in allSources" :key="src" :value="src" :label="src" />
             </el-select>
           </el-form-item>
-          <el-form-item label="状态" class="mb-0">
+          <el-form-item class="mb-0">
             <el-select v-model="filter.status" placeholder="全部状态" clearable class="w-full">
               <el-option value="active" label="基础题库" />
               <el-option value="trusted" label="可信 AI" />
@@ -393,7 +395,7 @@ onMounted(() => {
               <el-option value="non_reusable" label="开放题留痕" />
             </el-select>
           </el-form-item>
-          <el-form-item label="修改时间" class="mb-0">
+          <el-form-item class="mb-0">
             <el-date-picker
               v-model="filter.updatedDateRange"
               type="daterange"
@@ -407,6 +409,14 @@ onMounted(() => {
             />
           </el-form-item>
           <el-form-item class="mb-0">
+            <el-select v-model="filter.limit" placeholder="每页条数" class="w-full" @change="handleLimitChange">
+              <el-option :value="10" label="10 条" />
+              <el-option :value="20" label="20 条" />
+              <el-option :value="50" label="50 条" />
+              <el-option :value="100" label="100 条" />
+            </el-select>
+          </el-form-item>
+          <el-form-item class="mb-0">
             <div class="flex w-full gap-2 xl:justify-end">
               <el-button type="primary" class="flex-1 xl:flex-none" @click="handleSearch">
                 <el-icon class="mr-1"><Search /></el-icon>
@@ -416,11 +426,20 @@ onMounted(() => {
             </div>
           </el-form-item>
         </el-form>
-      </div>
+      </DataTableToolbar>
 
       <!-- 题目列表表格 -->
-      <div class="app-card overflow-hidden" v-loading="loading">
-        <el-table :data="questions" style="width: 100%" row-key="question_id" stripe>
+      <DataTable
+        :data="questions"
+        :loading="loading"
+        row-key="question_id"
+        show-pagination
+        :total="total"
+        :current-page="filter.page"
+        :page-size="filter.limit"
+        empty-text="暂无题目"
+        @page-change="handlePageChange"
+      >
           <!-- 题型 -->
           <el-table-column label="题型" width="100" align="center">
             <template #default="{ row }">
@@ -498,21 +517,7 @@ onMounted(() => {
               </div>
             </template>
           </el-table-column>
-        </el-table>
-
-        <!-- 分页 -->
-        <div class="flex justify-end p-4 bg-surface-muted border-t border-layout">
-          <el-pagination
-            v-model:current-page="filter.page"
-            v-model:page-size="filter.limit"
-            :page-sizes="[10, 20, 50, 100]"
-            layout="total, sizes, prev, pager, next, jumper"
-            :total="total"
-            @size-change="handleLimitChange"
-            @current-change="handlePageChange"
-          />
-        </div>
-      </div>
+      </DataTable>
     </div>
 
     <!-- 编辑题目的对话框 -->
@@ -672,25 +677,12 @@ onMounted(() => {
   margin-right: 0 !important;
 }
 
-.question-filter-card {
-  display: flex;
-  min-height: 96px;
-  align-items: center;
-}
-
 .question-filter-form {
   width: 100%;
 }
 
 .question-filter-form :deep(.el-form-item) {
   margin-bottom: 0;
-  align-items: center;
-}
-
-.question-filter-form :deep(.el-form-item__label) {
-  height: 38px;
-  margin-bottom: 0;
-  line-height: 38px;
 }
 
 .question-filter-form :deep(.el-form-item__content) {

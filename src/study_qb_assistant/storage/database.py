@@ -108,6 +108,9 @@ def ensure_sqlite_compat_columns(engine: Engine) -> None:
         "wallet_orders": {
             "days_delta": "INTEGER DEFAULT 0",
         },
+        "roles": {
+            "color": "VARCHAR(7) DEFAULT '#64748B'",
+        },
         "api_tokens": {
             "token_raw": "TEXT DEFAULT ''",
             "quota_used": "INTEGER DEFAULT 0",
@@ -235,6 +238,9 @@ def ensure_sql_compat_columns(engine: Engine) -> None:
         },
         "wallet_orders": {
             "days_delta": "INTEGER DEFAULT 0",
+        },
+        "roles": {
+            "color": "VARCHAR(7) DEFAULT '#64748B'",
         },
         "api_tokens": {
             "token_raw": "VARCHAR(255) DEFAULT ''",

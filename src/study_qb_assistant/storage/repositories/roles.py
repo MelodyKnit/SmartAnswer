@@ -6,7 +6,7 @@ import json
 
 from sqlalchemy import func, select
 
-from ...platform.permissions.records import RoleRecord
+from ...platform.permissions.records import DEFAULT_ROLE_COLOR, RoleRecord
 from ..orm import RoleEntity, UserEntity
 from .base import SqlAlchemyRepository
 from .settings import SettingsRepository
@@ -45,6 +45,7 @@ class RoleRepository(SqlAlchemyRepository):
                 session.add(entity)
             entity.name = record.name
             entity.description = record.description
+            entity.color = record.color
             entity.permissions_json = json.dumps(list(record.permissions), ensure_ascii=False)
             entity.is_system = 1 if record.is_system else 0
             entity.created_at = record.created_at
@@ -100,4 +101,5 @@ class RoleRepository(SqlAlchemyRepository):
             is_system=bool(entity.is_system),
             created_at=float(entity.created_at or 0.0),
             updated_at=float(entity.updated_at or 0.0),
+            color=str(getattr(entity, "color", DEFAULT_ROLE_COLOR) or DEFAULT_ROLE_COLOR),
         )

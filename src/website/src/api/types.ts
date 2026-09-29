@@ -11,6 +11,7 @@ export interface User {
   role: Role
   role_name?: string
   role_is_system?: boolean
+  role_color?: string
   permissions?: string[]
   status: string
   email: string | null
@@ -258,6 +259,7 @@ export interface RolePermission {
   role_id: string
   name: string
   description: string
+  color: string
   permissions: string[]
   is_system: boolean
   created_at: number

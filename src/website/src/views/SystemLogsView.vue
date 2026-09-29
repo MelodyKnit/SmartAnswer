@@ -8,6 +8,8 @@ import { SYSTEM_DEFAULTS } from '@/config/constants'
 import { ElMessage } from 'element-plus'
 
 import PageHeader from '@/components/PageHeader.vue'
+import DataTablePagination from '@/components/data-table/DataTablePagination.vue'
+import DataTableToolbar from '@/components/data-table/DataTableToolbar.vue'
 
 const activeTab = ref<'events' | 'console'>('events')
 const loading = ref(false)
@@ -105,6 +107,11 @@ function scrollToBottom() {
   if (terminalBodyRef.value) {
     terminalBodyRef.value.scrollTop = terminalBodyRef.value.scrollHeight
   }
+}
+
+function onEventDateRangeChange() {
+  page.value = 1
+  load()
 }
 
 function openEventDrawer(ev: RuntimeEvent) {
@@ -252,9 +259,8 @@ onUnmounted(() => {
       <el-tabs v-model="activeTab" class="app-tabs">
         <!-- Tab 1: 业务调用日志 -->
         <el-tab-pane label="业务调用日志" name="events">
-          <div class="app-card p-5 mt-2">
-            <!-- 过滤条 -->
-            <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div class="mt-2 flex flex-col gap-3">
+            <DataTableToolbar class="flex flex-wrap items-center justify-between gap-3">
               <div class="flex flex-wrap items-center gap-2">
                 <el-select v-model="eventTypeFilter" placeholder="全部事件类型" clearable style="width: 140px">
                   <el-option v-for="(v, k) in EVENT_META" :key="k" :value="k" :label="v.label" />
@@ -265,6 +271,11 @@ onUnmounted(() => {
                   clearable
                   style="width: 220px"
                 />
+                <el-select v-model="pageSize" style="width: 140px" @change="page = 1">
+                  <el-option :value="20" label="每页 20 条" />
+                  <el-option :value="50" label="每页 50 条" />
+                  <el-option :value="100" label="每页 100 条" />
+                </el-select>
               </div>
               <!-- 时间段选择器 -->
               <el-date-picker
@@ -276,55 +287,53 @@ onUnmounted(() => {
                 value-format="YYYY-MM-DD"
                 :clearable="false"
                 class="system-log-date-range"
-                @change="load"
+                @change="onEventDateRangeChange"
               />
-            </div>
+            </DataTableToolbar>
 
-            <div v-if="filteredEvents.length === 0" class="py-12 text-center text-sm text-ink-muted">
-              该时间区间内暂无符合条件的业务调用事件
-            </div>
+            <section class="app-card min-w-0 overflow-hidden p-1">
+              <div v-if="filteredEvents.length === 0" class="py-12 text-center text-sm text-ink-muted">
+                该时间区间内暂无符合条件的业务调用事件
+              </div>
 
-            <!-- 事件列表（非折叠，点击抽屉查看，极度丝滑） -->
-            <div v-else class="space-y-2.5">
-              <div
-                v-for="(ev, idx) in paginatedEvents"
-                :key="`${ev.ts}-${ev.event}-${idx}`"
-                class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-line bg-card-soft p-3.5 transition hover:border-brand-500/40 hover:bg-card hover:shadow-subtle cursor-pointer"
-                @click="openEventDrawer(ev)"
-              >
-                <div class="flex items-start sm:items-center gap-3 min-w-0 flex-1">
-                  <div
-                    class="mt-0.5 sm:mt-0 h-2.5 w-2.5 shrink-0 rounded-full"
-                    :class="{
-                      'bg-success': eventType(ev.event) === 'success',
-                      'bg-danger': eventType(ev.event) === 'danger',
-                      'bg-brand-500': eventType(ev.event) === 'primary',
-                      'bg-ink-muted': eventType(ev.event) === 'info',
-                    }"
-                  />
-                  <el-tag size="small" :type="(eventType(ev.event) as any)">{{ eventLabel(ev.event) }}</el-tag>
-                  <span class="truncate text-sm font-medium text-ink" :title="String(ev.title || ev.event)">
-                    {{ ev.title || (isErrorEvent(ev) ? (ev.error || ev.error_message || '发生错误') : '系统操作') }}
-                  </span>
-                </div>
-                <div class="flex items-center gap-4 shrink-0 text-xs text-ink-muted">
-                  <span class="font-mono">{{ ev.ts }}</span>
-                  <el-button link type="primary" size="small">查看详情 &gt;</el-button>
+              <!-- 事件流保留卡片行，只共享管理列表的筛选卡和分页外壳。 -->
+              <div v-else class="space-y-2.5 p-3">
+                <div
+                  v-for="(ev, idx) in paginatedEvents"
+                  :key="`${ev.ts}-${ev.event}-${idx}`"
+                  class="flex cursor-pointer flex-col justify-between gap-3 rounded-xl border border-line bg-card-soft p-3.5 transition hover:border-brand-500/40 hover:bg-card hover:shadow-subtle sm:flex-row sm:items-center"
+                  @click="openEventDrawer(ev)"
+                >
+                  <div class="flex min-w-0 flex-1 items-start gap-3 sm:items-center">
+                    <div
+                      class="mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full sm:mt-0"
+                      :class="{
+                        'bg-success': eventType(ev.event) === 'success',
+                        'bg-danger': eventType(ev.event) === 'danger',
+                        'bg-brand-500': eventType(ev.event) === 'primary',
+                        'bg-ink-muted': eventType(ev.event) === 'info',
+                      }"
+                    />
+                    <el-tag size="small" :type="(eventType(ev.event) as any)">{{ eventLabel(ev.event) }}</el-tag>
+                    <span class="truncate text-sm font-medium text-ink" :title="String(ev.title || ev.event)">
+                      {{ ev.title || (isErrorEvent(ev) ? (ev.error || ev.error_message || '发生错误') : '系统操作') }}
+                    </span>
+                  </div>
+                  <div class="flex shrink-0 items-center gap-4 text-xs text-ink-muted">
+                    <span class="font-mono">{{ ev.ts }}</span>
+                    <el-button link type="primary" size="small">查看详情 &gt;</el-button>
+                  </div>
                 </div>
               </div>
 
-              <!-- 分页器 -->
-              <div class="mt-5 flex justify-end">
-                <el-pagination
-                  v-model:current-page="page"
-                  v-model:page-size="pageSize"
-                  :page-sizes="[20, 50, 100]"
-                  layout="total, sizes, prev, pager, next"
-                  :total="filteredEvents.length"
-                  background
-                />
-              </div>
-            </div>
+              <DataTablePagination
+                v-if="filteredEvents.length > 0"
+                :total="filteredEvents.length"
+                :current-page="page"
+                :page-size="pageSize"
+                @page-change="page = $event"
+              />
+            </section>
           </div>
         </el-tab-pane>
 

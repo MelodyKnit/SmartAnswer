@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+DEFAULT_ROLE_COLOR = "#64748B"
+
 
 @dataclass(frozen=True, slots=True)
 class RoleRecord:
@@ -16,6 +18,7 @@ class RoleRecord:
     is_system: bool
     created_at: float
     updated_at: float
+    color: str = DEFAULT_ROLE_COLOR
 
     def to_dict(self) -> dict:
         """转换为 API 响应。"""
@@ -24,6 +27,7 @@ class RoleRecord:
             "role_id": self.role_id,
             "name": self.name,
             "description": self.description,
+            "color": self.color,
             "permissions": list(self.permissions),
             "is_system": self.is_system,
             "created_at": self.created_at,

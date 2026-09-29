@@ -9,6 +9,8 @@ import { useAuthStore } from '@/stores/auth'
 import { ApiException } from '@/api/http'
 import { formatDateTime, walletSourceLabel } from '@/utils/format'
 import PageHeader from '@/components/PageHeader.vue'
+import DataTable from '@/components/data-table/DataTable.vue'
+import DataTableToolbar from '@/components/data-table/DataTableToolbar.vue'
 import { DEFAULT_PAGE_SIZE } from '@/config/constants'
 
 const auth = useAuthStore()
@@ -126,9 +128,19 @@ onMounted(load)
       </div>
     </div>
 
-    <div class="app-card p-1">
-      <div class="px-4 pt-4 text-base font-semibold text-ink">权益变更流水</div>
-      <el-table :data="orders" style="width: 100%">
+    <DataTableToolbar class="mb-3">
+      <div class="text-base font-semibold text-ink">权益变更流水</div>
+    </DataTableToolbar>
+    <DataTable
+      :data="orders"
+      :loading="loading"
+      show-pagination
+      :total="total"
+      :current-page="page"
+      :page-size="pageSize"
+      empty-text="暂无权益变更记录"
+      @page-change="onPageChange"
+    >
         <el-table-column label="类型" width="120" align="center">
           <template #default="{ row }">
             <el-tag size="small" :type="row.kind === 'days' ? 'warning' : 'success'" effect="light">
@@ -149,20 +161,6 @@ onMounted(load)
         <el-table-column label="时间" min-width="170" align="right">
           <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
         </el-table-column>
-        <template #empty>
-          <el-empty description="暂无权益变更记录" />
-        </template>
-      </el-table>
-      <div v-if="total > 0" class="mt-4 flex justify-end">
-        <el-pagination
-          layout="total, prev, pager, next"
-          :total="total"
-          :current-page="page"
-          :page-size="pageSize"
-          background
-          @current-change="onPageChange"
-        />
-      </div>
-    </div>
+    </DataTable>
   </div>
 </template>

@@ -10,6 +10,7 @@ from starlette.responses import JSONResponse
 
 from ..auth import AuthError
 from ..config import get_global_config
+from ..platform.permissions.records import DEFAULT_ROLE_COLOR
 from .dependencies import (
     PermissionServiceDep,
     get_auth_service,
@@ -46,11 +47,13 @@ def current_user(request: Request) -> dict | None:
         role = permission_service.get_role(role_id)
         user["role_name"] = str(role["name"])
         user["role_is_system"] = bool(role["is_system"])
+        user["role_color"] = str(role.get("color") or DEFAULT_ROLE_COLOR)
         user["permissions"] = list(role["permissions"])
     except AuthError:
         # 旧数据中可能存在已不存在的角色；保留身份但拒绝其权限访问。
         user["role_name"] = role_id or "未知角色"
         user["role_is_system"] = False
+        user["role_color"] = DEFAULT_ROLE_COLOR
         user["permissions"] = (
             sorted(permission_service.allowed_role_permissions())
             if role_id == "superadmin"

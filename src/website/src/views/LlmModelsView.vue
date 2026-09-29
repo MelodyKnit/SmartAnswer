@@ -19,6 +19,9 @@ import type {
 import { useAuthStore } from '@/stores/auth'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
+import DataTable from '@/components/data-table/DataTable.vue'
+import DataTablePagination from '@/components/data-table/DataTablePagination.vue'
+import DataTableToolbar from '@/components/data-table/DataTableToolbar.vue'
 import LlmCallStatsTable from '@/components/llm/LlmCallStatsTable.vue'
 import LlmTraceDetailDrawer from '@/components/llm/LlmTraceDetailDrawer.vue'
 import LlmTraceTable from '@/components/llm/LlmTraceTable.vue'
@@ -742,27 +745,26 @@ onMounted(async () => {
 
       <!-- 联网搜索配置 Tab -->
       <el-tab-pane label="联网搜索" name="websearch">
-        <div class="space-y-4" v-loading="runtimeLoading">
-          <div class="app-card p-6">
-            <div class="flex items-center justify-between mb-4">
-              <div>
-                <h3 class="text-base font-semibold text-ink">搜索引擎列表</h3>
-                <p class="text-xs text-ink-muted mt-1">
-                  可以配置多个搜索引擎进行协同搜索，答题时会并行请求所有启用的引擎。
-                </p>
-              </div>
-              <el-button
-                v-if="canManageLlm"
-                type="primary"
-                size="small"
-                icon="Plus"
-                @click="openCreateSearch"
-              >
-                添加搜索引擎
-              </el-button>
+        <div class="flex flex-col gap-3" v-loading="runtimeLoading">
+          <DataTableToolbar class="flex items-center justify-between gap-3">
+            <div>
+              <h3 class="text-base font-semibold text-ink">搜索引擎列表</h3>
+              <p class="mt-1 text-xs text-ink-muted">
+                可以配置多个搜索引擎进行协同搜索，答题时会并行请求所有启用的引擎。
+              </p>
             </div>
+            <el-button
+              v-if="canManageLlm"
+              type="primary"
+              size="small"
+              icon="Plus"
+              @click="openCreateSearch"
+            >
+              添加搜索引擎
+            </el-button>
+          </DataTableToolbar>
 
-            <el-table :data="visibleSearchConfigs" style="width: 100%">
+          <DataTable :data="visibleSearchConfigs">
               <el-table-column label="显示名称" min-width="120">
                 <template #default="{ row }">
                   <span class="font-medium text-ink">{{ row.name }}</span>
@@ -831,8 +833,7 @@ onMounted(async () => {
                   </template>
                 </template>
               </el-table-column>
-            </el-table>
-          </div>
+          </DataTable>
 
           <!-- 全局搜索设置 -->
           <div class="app-card p-6">
@@ -851,8 +852,7 @@ onMounted(async () => {
       </el-tab-pane>
 
       <el-tab-pane label="模型配置" name="models">
-        <div class="app-card p-1">
-          <el-table v-loading="modelsLoading" :data="models" style="width: 100%">
+        <DataTable :data="models" :loading="modelsLoading" empty-text="暂无模型配置">
             <el-table-column label="名称" min-width="160" show-overflow-tooltip>
               <template #default="{ row }">
                 <span class="font-medium text-ink">{{ row.name }}</span>
@@ -889,11 +889,7 @@ onMounted(async () => {
                 <el-button link type="danger" @click="removeModel(row)">删除</el-button>
               </template>
             </el-table-column>
-            <template #empty>
-              <el-empty description="暂无模型配置" />
-            </template>
-          </el-table>
-        </div>
+        </DataTable>
       </el-tab-pane>
 
       <el-tab-pane label="生图模型" name="image-models">
@@ -901,16 +897,14 @@ onMounted(async () => {
       </el-tab-pane>
 
       <el-tab-pane label="调用统计" name="stats">
-        <div class="mb-3 flex justify-end">
+        <DataTableToolbar class="mb-3 flex justify-end">
           <el-button :icon="'Refresh'" @click="loadStats">刷新统计</el-button>
-        </div>
-        <div class="app-card p-1">
-          <LlmCallStatsTable :loading="statsLoading" :stats="stats" />
-        </div>
+        </DataTableToolbar>
+        <LlmCallStatsTable :loading="statsLoading" :stats="stats" />
       </el-tab-pane>
 
       <el-tab-pane label="调用追溯" name="traces">
-        <div class="app-card mb-4 flex flex-wrap items-center gap-3 p-4">
+        <DataTableToolbar class="mb-3 flex flex-wrap items-center gap-3">
           <el-input
             v-model="traceFilters.request_id"
             placeholder="按关联 ID 筛选"
@@ -943,36 +937,37 @@ onMounted(async () => {
               <el-radio-button value="flow">链路拓扑</el-radio-button>
             </el-radio-group>
           </div>
-        </div>
+        </DataTableToolbar>
 
-        <div class="app-card p-1">
-          <LlmTraceTable
-            v-if="traceViewMode === 'table'"
-            :loading="tracesLoading"
-            :traces="traces"
-            @detail="openTraceDetail"
-            @filter-request="filterByRequest"
-          />
-          <LlmTraceFlow
-            v-else
-            :loading="tracesLoading"
-            :traces="traces"
-            :request-id-filter="traceFilters.request_id"
-            @detail="openTraceDetail"
-            @clear-filter="() => { traceFilters.request_id = ''; traceViewMode = 'table'; searchTraces() }"
-          />
-        </div>
-
-        <div v-if="traceTotal > 0" class="mt-4 flex justify-end">
-          <el-pagination
-            layout="total, prev, pager, next, jumper"
+        <LlmTraceTable
+          v-if="traceViewMode === 'table'"
+          :loading="tracesLoading"
+          :traces="traces"
+          :total="traceTotal"
+          :current-page="tracePage"
+          :page-size="traceFilters.limit"
+          @detail="openTraceDetail"
+          @filter-request="filterByRequest"
+          @page-change="onTracePageChange"
+        />
+        <template v-else>
+          <div class="app-card min-w-0 overflow-hidden p-1">
+            <LlmTraceFlow
+              :loading="tracesLoading"
+              :traces="traces"
+              :request-id-filter="traceFilters.request_id"
+              @detail="openTraceDetail"
+              @clear-filter="() => { traceFilters.request_id = ''; traceViewMode = 'table'; searchTraces() }"
+            />
+          </div>
+          <DataTablePagination
+            v-if="traceTotal > 0"
             :total="traceTotal"
             :current-page="tracePage"
             :page-size="traceFilters.limit"
-            background
-            @current-change="onTracePageChange"
+            @page-change="onTracePageChange"
           />
-        </div>
+        </template>
       </el-tab-pane>
 
       <el-tab-pane label="生图调用" name="image-traces">

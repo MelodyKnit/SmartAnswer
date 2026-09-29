@@ -78,6 +78,7 @@ def build_permission_router() -> APIRouter:
                 name=payload.name,
                 description=payload.description,
                 permissions=tuple(payload.permissions),
+                color=payload.color,
             )
         except AuthError as exc:
             return auth_error_response(exc)
@@ -100,6 +101,7 @@ def build_permission_router() -> APIRouter:
                 name=payload.name,
                 description=payload.description,
                 permissions=tuple(payload.permissions) if payload.permissions is not None else None,
+                color=payload.color,
                 actor_role_id=str(actor.get("role") or ""),
                 actor_permissions=set(actor.get("permissions") or ()),
             )

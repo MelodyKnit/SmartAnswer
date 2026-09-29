@@ -56,4 +56,4 @@
 
 `UserUpdatePayload` 字段：`role?: string`、`points?: integer`、`status?: string`、`unlimited_expires_at?: number`。`UsersDeletePayload` 字段：`usernames: string[]`。
 
-用户管理接口返回用户集合或更新后的用户资源；不存在用户返回 `404 USER_NOT_FOUND`，禁止删除受保护的内置用户时返回业务错误。
+用户管理接口返回用户集合或更新后的用户资源，其中包含角色名称、`role_is_system` 和 `role_color` 展示摘要；颜色来源于角色权限配置。不存在用户返回 `404 USER_NOT_FOUND`，禁止删除受保护的内置用户时返回业务错误。

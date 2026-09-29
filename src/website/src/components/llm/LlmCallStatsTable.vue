@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { LlmCallStat } from '@/api/types'
+import DataTable from '@/components/data-table/DataTable.vue'
 
 defineProps<{
   loading: boolean
@@ -8,7 +9,7 @@ defineProps<{
 </script>
 
 <template>
-  <el-table v-loading="loading" :data="stats" style="width: 100%">
+  <DataTable :data="stats" :loading="loading" empty-text="暂无调用统计">
     <el-table-column label="模型" min-width="180">
       <template #default="{ row }">
         <span class="text-ink">{{ row.model_name || row.model_id || '（未关联模型）' }}</span>
@@ -30,8 +31,5 @@ defineProps<{
     <el-table-column label="平均耗时" width="120" align="center">
       <template #default="{ row }">{{ (row.avg_elapsed_ms / 1000).toFixed(2) }}s</template>
     </el-table-column>
-    <template #empty>
-      <el-empty description="暂无调用统计" />
-    </template>
-  </el-table>
+  </DataTable>
 </template>

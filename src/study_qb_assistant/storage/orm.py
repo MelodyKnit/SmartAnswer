@@ -41,6 +41,7 @@ class RoleEntity(Base):
     role_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(64))
     description: Mapped[str] = mapped_column(String(255), default="")
+    color: Mapped[str] = mapped_column(String(7), default="#64748B")
     permissions_json: Mapped[str] = mapped_column(Text, default="[]")
     is_system: Mapped[int] = mapped_column(Integer, default=0, index=True)
     created_at: Mapped[float] = mapped_column(Float, index=True)

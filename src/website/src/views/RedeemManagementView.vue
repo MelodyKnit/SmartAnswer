@@ -9,6 +9,8 @@ import { ApiException } from '@/api/http'
 import { formatDateTime, walletSourceLabel } from '@/utils/format'
 import { buildRedeemShareUrl } from '@/utils/redeem-share'
 import PageHeader from '@/components/PageHeader.vue'
+import DataTable from '@/components/data-table/DataTable.vue'
+import DataTableToolbar from '@/components/data-table/DataTableToolbar.vue'
 import { DEFAULT_PAGE_SIZE } from '@/config/constants'
 
 const loading = ref(false)
@@ -345,28 +347,32 @@ onMounted(load)
 
     <el-tabs v-model="activeTab" class="mt-2">
       <el-tab-pane label="兑换码管理" name="codes">
-        <div class="space-y-4 pt-3">
-          <section class="app-card p-1">
-            <div class="flex items-center justify-between px-4 pt-4 pb-2">
-              <div>
-                <div class="text-base font-semibold text-ink">兑换码列表</div>
-                <div class="mt-1 text-sm text-ink-soft">支持积分类型与天数类型兑换码的生成与维护。</div>
-              </div>
-              <div class="flex items-center gap-2">
-                <el-button
-                  v-if="selectedCodes.length"
-                  type="danger"
-                  plain
-                  :loading="batchDeleting"
-                  :icon="'Delete'"
-                  @click="batchDeleteCodes"
-                >
-                  批量删除 ({{ selectedCodes.length }})
-                </el-button>
-                <el-button type="primary" :icon="'Plus'" @click="codeVisible = true">创建兑换码</el-button>
-              </div>
+        <div class="flex flex-col gap-3 pt-3">
+          <DataTableToolbar class="flex items-center justify-between gap-3">
+            <div>
+              <div class="text-base font-semibold text-ink">兑换码列表</div>
+              <div class="mt-1 text-sm text-ink-soft">支持积分类型与天数类型兑换码的生成与维护。</div>
             </div>
-            <el-table v-loading="codesLoading" :data="codes" style="width: 100%" @selection-change="handleCodeSelectionChange">
+            <div class="flex flex-wrap items-center justify-end gap-2">
+              <el-button
+                v-if="selectedCodes.length"
+                type="danger"
+                plain
+                :loading="batchDeleting"
+                :icon="'Delete'"
+                @click="batchDeleteCodes"
+              >
+                批量删除 ({{ selectedCodes.length }})
+              </el-button>
+              <el-button type="primary" :icon="'Plus'" @click="codeVisible = true">创建兑换码</el-button>
+            </div>
+          </DataTableToolbar>
+          <DataTable
+            :data="codes"
+            :loading="codesLoading"
+            empty-text="暂无兑换码"
+            @selection-change="handleCodeSelectionChange"
+          >
               <el-table-column type="selection" width="45" align="center" />
               <el-table-column label="兑换码标题" min-width="150" show-overflow-tooltip>
                 <template #default="{ row }">{{ row.title || '—' }}</template>
@@ -423,15 +429,13 @@ onMounted(load)
                   <el-button link type="danger" size="small" @click="deleteCode(row)">删除</el-button>
                 </template>
               </el-table-column>
-              <template #empty><el-empty description="暂无兑换码" /></template>
-            </el-table>
-          </section>
+          </DataTable>
         </div>
       </el-tab-pane>
 
       <el-tab-pane label="兑换记录" name="orders">
-        <div class="space-y-4 pt-3">
-          <section class="app-card p-4">
+        <div class="flex flex-col gap-3 pt-3">
+          <DataTableToolbar>
             <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-5">
               <el-input
                 v-model="filters.username"
@@ -457,11 +461,18 @@ onMounted(load)
               <el-button @click="resetFilters">重置筛选</el-button>
               <el-button type="primary" :icon="'Search'" @click="search">查询</el-button>
             </div>
-          </section>
+          </DataTableToolbar>
 
-          <section class="app-card p-1">
-            <div class="px-4 pt-4 pb-2 text-base font-semibold text-ink">兑换与权益变更记录</div>
-            <el-table v-loading="loading" :data="orders" style="width: 100%">
+          <DataTable
+            :data="orders"
+            :loading="loading"
+            show-pagination
+            :total="total"
+            :current-page="page"
+            :page-size="filters.limit"
+            empty-text="暂无兑换记录"
+            @page-change="onPageChange"
+          >
               <el-table-column label="用户" min-width="120" prop="username" />
               <el-table-column label="类型" width="110" align="center">
                 <template #default="{ row }">
@@ -492,20 +503,7 @@ onMounted(load)
               <el-table-column label="时间" min-width="170" align="right">
                 <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
               </el-table-column>
-              <template #empty><el-empty description="暂无兑换记录" /></template>
-            </el-table>
-          </section>
-
-          <div v-if="total > 0" class="flex justify-end pt-2">
-            <el-pagination
-              layout="total, prev, pager, next, jumper"
-              :total="total"
-              :current-page="page"
-              :page-size="filters.limit"
-              background
-              @current-change="onPageChange"
-            />
-          </div>
+          </DataTable>
         </div>
       </el-tab-pane>
     </el-tabs>

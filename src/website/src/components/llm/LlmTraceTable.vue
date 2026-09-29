@@ -1,21 +1,35 @@
 <script setup lang="ts">
 import type { LlmCallTrace } from '@/api/types'
+import DataTable from '@/components/data-table/DataTable.vue'
 import { formatDateTime } from '@/utils/format'
 import { phaseLabel, traceOutputLabel, traceResultLabel, traceResultType } from './traceDisplay'
 
 defineProps<{
   loading: boolean
   traces: LlmCallTrace[]
+  total: number
+  currentPage: number
+  pageSize: number
 }>()
 
 const emit = defineEmits<{
   detail: [trace: LlmCallTrace]
   filterRequest: [requestId: string]
+  pageChange: [page: number]
 }>()
 </script>
 
 <template>
-  <el-table v-loading="loading" :data="traces" style="width: 100%">
+  <DataTable
+    :data="traces"
+    :loading="loading"
+    show-pagination
+    :total="total"
+    :current-page="currentPage"
+    :page-size="pageSize"
+    empty-text="暂无调用追溯"
+    @page-change="emit('pageChange', $event)"
+  >
     <el-table-column label="时间" width="170">
       <template #default="{ row }">{{ formatDateTime(row.created_at) }}</template>
     </el-table-column>
@@ -57,8 +71,5 @@ const emit = defineEmits<{
         </el-button>
       </template>
     </el-table-column>
-    <template #empty>
-      <el-empty description="暂无调用追溯" />
-    </template>
-  </el-table>
+  </DataTable>
 </template>
