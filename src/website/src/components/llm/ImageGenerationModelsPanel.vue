@@ -366,23 +366,25 @@ onMounted(load)
         </el-table-column>
         <el-table-column v-if="canManage" label="操作" width="190" align="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-dropdown trigger="click" @command="testOperation(row, $event)">
-              <el-button link type="warning" :loading="testingId.startsWith(`${row.model_id}:`)">测试</el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item
-                    v-for="item in modelTestOperations"
-                    :key="item.value"
-                    :command="item.value"
-                    :disabled="row.provider === 'openai-chat-image' && item.value !== 'text_to_image'"
-                  >
-                    {{ item.label }}
-                  </el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-            <el-button link type="danger" @click="remove(row)">删除</el-button>
+            <div class="flex items-center justify-end gap-2">
+              <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+              <el-dropdown trigger="click" @command="testOperation(row, $event)">
+                <el-button link type="warning" :loading="testingId.startsWith(`${row.model_id}:`)">测试</el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item
+                      v-for="item in modelTestOperations"
+                      :key="item.value"
+                      :command="item.value"
+                      :disabled="row.provider === 'openai-chat-image' && item.value !== 'text_to_image'"
+                    >
+                      {{ item.label }}
+                    </el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+              <el-button link type="danger" @click="remove(row)">删除</el-button>
+            </div>
           </template>
         </el-table-column>
         <template #empty><el-empty description="暂无生图模型配置" /></template>

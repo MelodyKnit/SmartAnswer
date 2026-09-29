@@ -245,6 +245,13 @@ def test_redeem_code_custom_and_bulk(temp_db_dir):
     assert res_dup.status_code == 400
     assert "已存在" in res_dup.json()["error"]["message"]
 
+    oversized_title = client.post(
+        "/api/v1/wallet/redeem-codes",
+        json={"title": "x" * 256, "kind": "points", "points": 1},
+        headers=headers,
+    )
+    assert oversized_title.status_code == 422
+
     # 3. 测试批量随机创建兑换码 (如 5 个 1000 积分兑换码)
     res_bulk = client.post(
         "/api/v1/wallet/redeem-codes",
