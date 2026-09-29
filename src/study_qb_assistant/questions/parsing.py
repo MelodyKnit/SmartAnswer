@@ -36,6 +36,14 @@ OPTION_LINE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+ORPHAN_OPTION_LABEL_PATTERN = re.compile(
+    r"^\s*(?:[（(]\s*([A-Za-z])\s*[）)]|([A-Za-z])\s*[.．、:：)）]?)\s*$"
+)
+OPTION_VALUE_PATTERN = re.compile(
+    r"^\s*(?:(?:[（(]\s*([A-Za-z])\s*[）)])|"
+    r"(?:([A-Za-z])\s*[.．、:：)）]))\s*(\S.*)\s*$"
+)
+
 QUESTION_TYPE_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("multiple", ("多选", "multiple-choice", "multiple choice", "multi-choice")),
     ("single", ("单选", "single-choice", "single choice")),
@@ -250,7 +258,56 @@ def split_options(value: str) -> tuple[str, ...]:
     if not value:
         return ()
     parts = value.splitlines() if "\n" in value else value.split("#")
-    return tuple(part.strip() for part in parts if is_real_option(part))
+    raw_items = [part.strip() for part in parts if is_real_option(part)]
+    return _normalize_option_items(raw_items)
+
+
+def _normalize_option_items(items: list[str]) -> tuple[str, ...]:
+    """合并 OCS 展平字段，并仅去除带标签的重复选项。"""
+
+    merged_items = _merge_orphan_option_labels(items)
+    seen_labeled: set[tuple[str, str]] = set()
+    normalized: list[str] = []
+    for item in merged_items:
+        key = _labeled_option_key(item)
+        if key is not None:
+            if key in seen_labeled:
+                continue
+            seen_labeled.add(key)
+        normalized.append(item)
+    return tuple(normalized)
+
+
+def _merge_orphan_option_labels(items: list[str]) -> list[str]:
+    """合并孤立的选项序号行（如单独一行的 'A.' 或 'A'）与紧随其后的选项内容。"""
+    if not items:
+        return []
+    merged: list[str] = []
+    i = 0
+    n = len(items)
+    while i < n:
+        curr = items[i]
+        if ORPHAN_OPTION_LABEL_PATTERN.match(curr) and i + 1 < n:
+            nxt = items[i + 1]
+            if not ORPHAN_OPTION_LABEL_PATTERN.match(nxt):
+                label = curr.rstrip(".．、:： \t")
+                merged.append(f"{label}. {nxt}")
+                i += 2
+                continue
+        merged.append(curr)
+        i += 1
+    return merged
+
+
+def _labeled_option_key(value: str) -> tuple[str, str] | None:
+    """返回带标签选项的去重键；无标签选项保持原样。"""
+
+    match = OPTION_VALUE_PATTERN.match(value)
+    if match is None:
+        return None
+    label = (match.group(1) or match.group(2) or "").upper()
+    content = re.sub(r"^[.．、:：)）]\s*", "", match.group(3)).casefold()
+    return label, content
 
 
 def split_raw_values(value: str) -> tuple[str, ...]:

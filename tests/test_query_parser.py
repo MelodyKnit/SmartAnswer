@@ -16,6 +16,7 @@ from study_qb_assistant.questions.parsing import (  # noqa: E402
     build_query_from_payload,
     parse_pasted_question_text,
 )
+from study_qb_assistant.adapters.ocs.request import parse_ocs_request  # noqa: E402
 from study_qb_assistant.api.contracts.query import QueryPayload  # noqa: E402
 from study_qb_assistant.media.inputs import (  # noqa: E402
     normalize_image_data_urls,
@@ -25,6 +26,44 @@ from study_qb_assistant.media.inputs import (  # noqa: E402
 
 class QueryParserTests(unittest.TestCase):
     """验证查询输入解析、图片上下文与清洗行为。"""
+
+    def test_ocs_payload_normalizes_repeated_label_content_pairs(self) -> None:
+        """OCS 展平标签与内容后重复传递时，应还原为四个完整选项。"""
+
+        options = (
+            "A.\n15%\nA.\n15%\nB.\n20%\nB.\n20%\n"
+            "C.\n5%\nC.\n5%\nD.\n10%\nD.\n10%"
+        )
+        for raw_options in (options, options.splitlines()):
+            with self.subTest(options_type=type(raw_options).__name__):
+                query = parse_ocs_request(
+                    {
+                        "title": "精确工作电流规定了动作阻抗误差不超过（ ）。",
+                        "options": raw_options,
+                        "type": "single",
+                    }
+                )
+
+                self.assertEqual(
+                    query.options,
+                    ("A. 15%", "B. 20%", "C. 5%", "D. 10%"),
+                )
+
+    def test_structured_query_options_keep_individual_values(self) -> None:
+        """通用结构化 API 不应用 OCS 标签拆分修复。"""
+
+        query = build_query_from_payload(
+            QueryPayload(
+                title="示例题",
+                options=["A", "选项 A 的内容", "B", "选项 B 的内容"],
+                type="single",
+            )
+        )
+
+        self.assertEqual(
+            query.options,
+            ("A", "选项 A 的内容", "B", "选项 B 的内容"),
+        )
 
     def test_raw_text_extracts_terminal_labeled_options(self) -> None:
         """单输入框应从末尾连续标准选项行中提取题干与选项。"""

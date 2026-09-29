@@ -242,6 +242,51 @@ class ProviderParsingTests(unittest.TestCase):
         # 验证过滤逻辑是否只保留了“真实选项”，去除了垃圾脚本与辅助元素
         self.assertEqual(options, ("真实选项",))
 
+    def test_split_options_merges_orphan_labels_and_deduplicates(self) -> None:
+        """测试孤立选项序号换行错位并重复采集的情况能正确合并与去重。"""
+        raw_options = "A.\n15%\nA.\n15%\nB.\n20%\nB.\n20%\nC.\n5%\nC.\n5%\nD.\n10%\nD.\n10%"
+        options = split_options(raw_options)
+        self.assertEqual(
+            options,
+            ("A. 15%", "B. 20%", "C. 5%", "D. 10%"),
+        )
+        parenthesized = split_options("(A)\n15%\n(A)\n15%\n(B)\n20%\n(B)\n20%")
+        self.assertEqual(parenthesized, ("(A). 15%", "(B). 20%"))
+
+    def test_split_options_preserves_standard_options(self) -> None:
+        """测试常规单选与多选项换行和#号分隔保持正常。"""
+        options_newline = split_options("A. 苹果\nB. 香蕉\nC. 橙子")
+        self.assertEqual(options_newline, ("A. 苹果", "B. 香蕉", "C. 橙子"))
+
+        options_hash = split_options("苹果#香蕉#橙子")
+        self.assertEqual(options_hash, ("苹果", "香蕉", "橙子"))
+
+    def test_split_options_handles_judgement_and_special_cases(self) -> None:
+        """测试判断题、无序选项、以及末尾孤立字母等边界情况。"""
+        # 1. 判断题常见 options: 对\n错 或 对#错
+        self.assertEqual(split_options("对\n错"), ("对", "错"))
+        self.assertEqual(split_options("正确#错误"), ("正确", "错误"))
+        self.assertEqual(split_options("A. 正确\nB. 错误"), ("A. 正确", "B. 错误"))
+
+        # 2. 连续孤立字母序号（如 A\nB\nC 没有具体内容的情况）
+        self.assertEqual(split_options("A\nB\nC\nD"), ("A", "B", "C", "D"))
+
+        # 3. 选项内容自身包含字母或符号（如 C语言\nD型高阶函数）不应误伤
+        self.assertEqual(
+            split_options("A. C语言基础\nB. D型高阶滤波"),
+            ("A. C语言基础", "B. D型高阶滤波"),
+        )
+
+        # 4. 多选题带括号或空格形式
+        raw_multi = "(A)\n选项一\n(B)\n选项二\n(C)\n选项三"
+        self.assertEqual(
+            split_options(raw_multi),
+            ("(A). 选项一", "(B). 选项二", "(C). 选项三"),
+        )
+
+        # 无标签选项的重复值不应被当作 OCS 标签重复而删除。
+        self.assertEqual(split_options("相同内容#相同内容"), ("相同内容", "相同内容"))
+
     def test_completion_array_answer_is_encoded_for_multi_blank_ocs(self) -> None:
         """测试多空填空答案会被编码成 OCS 可拆分的 JSON 数组字符串。"""
         provider = OpenAICompatibleProvider(base_url="http://example.test/v1", model="mock")
