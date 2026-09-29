@@ -2844,6 +2844,31 @@ class FastAPILocalServerTests(unittest.TestCase):
                 headers=headers,
             )
             code_list = client.get("/api/v1/wallet/redeem-codes", headers=headers)
+            page_one = client.get(
+                "/api/v1/wallet/redeem-codes",
+                params={"page": 1, "limit": 1},
+                headers=headers,
+            )
+            page_two = client.get(
+                "/api/v1/wallet/redeem-codes",
+                params={"page": 2, "limit": 1},
+                headers=headers,
+            )
+            page_beyond_total = client.get(
+                "/api/v1/wallet/redeem-codes",
+                params={"page": 3, "limit": 1},
+                headers=headers,
+            )
+            invalid_page = client.get(
+                "/api/v1/wallet/redeem-codes",
+                params={"page": 0, "limit": 1},
+                headers=headers,
+            )
+            oversized_page = client.get(
+                "/api/v1/wallet/redeem-codes",
+                params={"page": 1, "limit": 101},
+                headers=headers,
+            )
 
             engine = create_engine(f"sqlite:///{database_path}")
             with engine.begin() as connection:
@@ -2867,6 +2892,11 @@ class FastAPILocalServerTests(unittest.TestCase):
                 json={"code": limited.json()["redeem_code"]["code"]},
                 headers=headers,
             )
+            summary_after_expiry = client.get(
+                "/api/v1/wallet/redeem-codes",
+                params={"page": 1, "limit": 20},
+                headers=headers,
+            )
             # 删除兑换码与批量删除兑换码验证
             del_res = client.delete(
                 f"/api/v1/wallet/redeem-codes/{limited.json()['redeem_code']['code_id']}",
@@ -2883,6 +2913,11 @@ class FastAPILocalServerTests(unittest.TestCase):
                 headers=headers,
             )
             codes_after_del = client.get("/api/v1/wallet/redeem-codes", headers=headers)
+            paged_empty = client.get(
+                "/api/v1/wallet/redeem-codes",
+                params={"page": 1, "limit": 20},
+                headers=headers,
+            )
 
         self.assertEqual(permanent.status_code, 200)
         self.assertEqual(permanent.json()["redeem_code"]["expires_at"], 0.0)
@@ -2891,6 +2926,47 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(batch_del_res.json()["deleted_count"], 1)
         self.assertEqual(empty_batch_del.status_code, 422)
         self.assertEqual(len(codes_after_del.json()["redeem_codes"]), 0)
+        self.assertEqual(len(code_list.json()["redeem_codes"]), 2)
+        self.assertNotIn("total", code_list.json())
+        self.assertEqual(page_one.status_code, 200)
+        self.assertEqual(page_two.status_code, 200)
+        self.assertEqual(page_one.json()["total"], 2)
+        self.assertEqual(page_one.json()["page"], 1)
+        self.assertEqual(page_one.json()["limit"], 1)
+        self.assertEqual(len(page_one.json()["redeem_codes"]), 1)
+        self.assertEqual(len(page_two.json()["redeem_codes"]), 1)
+        self.assertNotEqual(
+            page_one.json()["redeem_codes"][0]["code_id"],
+            page_two.json()["redeem_codes"][0]["code_id"],
+        )
+        self.assertEqual(page_beyond_total.status_code, 200)
+        self.assertEqual(page_beyond_total.json()["total"], 2)
+        self.assertEqual(page_beyond_total.json()["redeem_codes"], [])
+        self.assertEqual(
+            page_one.json()["summary"],
+            {
+                "total_codes": 2,
+                "usable_codes": 2,
+                "exhausted_codes": 0,
+                "used_uses": 0,
+                "max_uses": 3,
+            },
+        )
+        self.assertEqual(invalid_page.status_code, 422)
+        self.assertEqual(oversized_page.status_code, 422)
+        self.assertEqual(summary_after_expiry.json()["summary"]["total_codes"], 2)
+        self.assertEqual(summary_after_expiry.json()["summary"]["usable_codes"], 1)
+        self.assertEqual(paged_empty.json()["total"], 0)
+        self.assertEqual(
+            paged_empty.json()["summary"],
+            {
+                "total_codes": 0,
+                "usable_codes": 0,
+                "exhausted_codes": 0,
+                "used_uses": 0,
+                "max_uses": 0,
+            },
+        )
         self.assertEqual(limited.status_code, 200)
         self.assertAlmostEqual(
             limited.json()["redeem_code"]["expires_at"], future_expires_at, delta=1

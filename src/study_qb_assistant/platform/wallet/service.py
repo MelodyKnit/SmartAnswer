@@ -126,6 +126,16 @@ class WalletService(PlatformDomainService):
         with self.lock:
             return [item.to_dict() for item in self.repository.list_redeem_codes()]
 
+    def list_redeem_codes_page(
+        self, *, page: int, limit: int
+    ) -> tuple[list[dict], dict[str, int]]:
+        """List one redemption-code page and aggregate totals under the wallet lock."""
+
+        with self.lock:
+            records = self.repository.list_redeem_codes(page=page, limit=limit)
+            summary = self.repository.redeem_code_summary(now=time.time())
+        return [item.to_dict() for item in records], summary
+
     def delete_redeem_code(self, code_id: str) -> bool:
         """删除单条兑换码。"""
         with self.lock:

@@ -25,7 +25,7 @@
 
 | 方法 | 路径 | 权限 | 请求参数 | 成功响应 |
 | --- | --- | --- | --- | --- |
-| `GET` | `/api/v1/wallet/redeem-codes` | `wallet:changes:write` | 无 | `{ok,redeem_codes}` |
+| `GET` | `/api/v1/wallet/redeem-codes` | `wallet:changes:write` | Query：`page?`、`limit?` | 传分页参数时返回 `{ok,redeem_codes,total,page,limit,summary}`；不传时兼容旧行为，返回完整 `redeem_codes` 列表 |
 | `POST` | `/api/v1/wallet/redeem-codes` | `wallet:changes:write` | JSON：见 `RedeemCodePayload` | `{ok,redeem_code}` |
 | `DELETE` | `/api/v1/wallet/redeem-codes/{code_id}` | `wallet:changes:write` | Path：`code_id` | `{ok,message}` |
 | `POST` | `/api/v1/wallet/redeem-codes/batch-delete` | `wallet:changes:write` | JSON：`{code_ids: string[]}` | `{ok,deleted_count}` |
@@ -44,6 +44,8 @@
 | `count` | `integer` | 否 | `1` | 批量生成数量 |
 
 标题仅用于兑换码管理列表识别，不参与兑换码唯一性校验，也不改变兑换流程。随机批量创建时，该批所有兑换码共用请求中的标题。
+
+兑换码管理列表支持服务端分页：`page` 最小值为 `1`，`limit` 范围为 `1-100`，只传一个参数时另一项默认 `1/20`。分页响应中的 `summary` 始终基于全量兑换码统计，字段为 `total_codes`、`usable_codes`、`exhausted_codes`、`used_uses` 和 `max_uses`，不随当前页变化。为兼容旧调用方，不带分页参数时仍返回全量列表及原响应结构。
 
 ## 计费策略
 

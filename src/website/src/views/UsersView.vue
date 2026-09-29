@@ -21,12 +21,8 @@ const canReadBillingPolicy = computed(() => auth.hasPermission('billing:read'))
 
 function roleTagStyle(rawColor?: string) {
   const color = /^#[\da-f]{6}$/i.test(rawColor || '') ? rawColor! : '#64748B'
-  const red = Number.parseInt(color.slice(1, 3), 16)
-  const green = Number.parseInt(color.slice(3, 5), 16)
-  const blue = Number.parseInt(color.slice(5, 7), 16)
-  const textColor = (red * 299 + green * 587 + blue * 114) / 1000 > 160 ? '#273449' : color
   return {
-    color: textColor,
+    color: `color-mix(in srgb, var(--c-ink) 78%, ${color})`,
     borderColor: color,
     backgroundColor: `${color}20`,
   }

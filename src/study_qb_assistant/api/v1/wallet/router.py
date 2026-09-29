@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from starlette.responses import JSONResponse
 
 from ....auth import AuthError
@@ -159,13 +159,34 @@ def build_wallet_router() -> APIRouter:
 
     # --- 兑换码管理 ---
     @router.get("/wallet/redeem-codes")
-    def wallet_redeem_codes(request: Request) -> JSONResponse:
+    def wallet_redeem_codes(
+        request: Request,
+        page: int | None = Query(default=None, ge=1),
+        limit: int | None = Query(default=None, ge=1, le=100),
+    ) -> JSONResponse:
         denied = require_permissions(request, {"wallet:changes:write"})
         if denied:
             return denied
         wallet_service = get_wallet_service(request)
+        if page is None and limit is None:
+            return JSONResponse(
+                {"ok": True, "redeem_codes": wallet_service.list_redeem_codes()}
+            )
+        current_page = page or 1
+        page_limit = limit or 20
+        redeem_codes, summary = wallet_service.list_redeem_codes_page(
+            page=current_page,
+            limit=page_limit,
+        )
         return JSONResponse(
-            {"ok": True, "redeem_codes": wallet_service.list_redeem_codes()}
+            {
+                "ok": True,
+                "redeem_codes": redeem_codes,
+                "total": summary["total_codes"],
+                "page": current_page,
+                "limit": page_limit,
+                "summary": summary,
+            }
         )
 
     @router.post("/wallet/redeem-codes")

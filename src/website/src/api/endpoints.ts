@@ -41,6 +41,7 @@ import type {
   QuestionRecord,
   RankingItem,
   RedeemCode,
+  RedeemCodeSummary,
   RolePermission,
   RuntimeEvent,
   SiteConfig,
@@ -471,7 +472,15 @@ export const walletApi = {
     points?: number
     days?: number
   }) => api.post<{ ok: true; order: WalletOrder }>('/wallet/grants', body),
-  redeemCodes: () => api.get<{ ok: true; redeem_codes: RedeemCode[] }>('/wallet/redeem-codes'),
+  redeemCodes: (params?: { page?: number; limit?: number }) =>
+    api.get<{
+      ok: true
+      redeem_codes: RedeemCode[]
+      total?: number
+      page?: number
+      limit?: number
+      summary?: RedeemCodeSummary
+    }>('/wallet/redeem-codes', params),
   createRedeemCode: (body: {
     title?: string
     kind: 'points' | 'days'

@@ -4,7 +4,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { QuestionFilled } from '@element-plus/icons-vue'
 import { billingApi, walletApi } from '@/api/endpoints'
-import type { RedeemCode, WalletOrder } from '@/api/types'
+import type { RedeemCode, RedeemCodeSummary, WalletOrder } from '@/api/types'
 import { ApiException } from '@/api/http'
 import { formatDateTime, walletSourceLabel } from '@/utils/format'
 import { buildRedeemShareUrl } from '@/utils/redeem-share'
@@ -19,6 +19,16 @@ const orders = ref<WalletOrder[]>([])
 const codes = ref<RedeemCode[]>([])
 const selectedCodes = ref<RedeemCode[]>([])
 const batchDeleting = ref(false)
+const codePage = ref(1)
+const codePageSize = ref(DEFAULT_PAGE_SIZE.REDEEM)
+const codeTotal = ref(0)
+const codeSummary = ref<RedeemCodeSummary>({
+  total_codes: 0,
+  usable_codes: 0,
+  exhausted_codes: 0,
+  used_uses: 0,
+  max_uses: 0,
+})
 const page = ref(1)
 const total = ref(0)
 
@@ -69,16 +79,11 @@ const sourceOptions = [
 
 const summaryCards = computed(() => {
   if (activeTab.value === 'codes') {
-    const totalCodes = codes.value.length
-    const activeCodes = codes.value.filter(isRedeemCodeUsable).length
-    const fullyUsedCodes = codes.value.filter((c) => (c.used_uses || 0) >= (c.max_uses || 0)).length
-    const totalUses = codes.value.reduce((sum, c) => sum + (c.used_uses || 0), 0)
-    const limitUses = codes.value.reduce((sum, c) => sum + (c.max_uses || 0), 0)
     return [
-      { label: '兑换码总数', value: totalCodes, unit: '个', color: 'text-brand-600' },
-      { label: '可用兑换码', value: activeCodes, unit: '个', color: 'text-success' },
-      { label: '已用完兑换码', value: fullyUsedCodes, unit: '个', color: 'text-ink-muted' },
-      { label: '使用次数 / 限制次数', value: `${totalUses} / ${limitUses}`, unit: '次', color: 'text-warning' },
+      { label: '兑换码总数', value: codeSummary.value.total_codes, unit: '个', color: 'text-brand-600' },
+      { label: '可用兑换码', value: codeSummary.value.usable_codes, unit: '个', color: 'text-success' },
+      { label: '已用完兑换码', value: codeSummary.value.exhausted_codes, unit: '个', color: 'text-ink-muted' },
+      { label: '使用次数 / 限制次数', value: `${codeSummary.value.used_uses} / ${codeSummary.value.max_uses}`, unit: '次', color: 'text-warning' },
     ]
   } else {
     const uniqueUsers = new Set(orders.value.map((item) => item.username).filter(Boolean))
@@ -114,8 +119,14 @@ function redeemCodeStatus(code: RedeemCode): { label: string; type: 'success' | 
   return { label: '可用', type: 'success' }
 }
 
-function isRedeemCodeUsable(code: RedeemCode) {
-  return redeemCodeStatus(code).label === '可用'
+function summarizeRedeemCodes(rows: RedeemCode[]): RedeemCodeSummary {
+  return {
+    total_codes: rows.length,
+    usable_codes: rows.filter((code) => redeemCodeStatus(code).label === '可用').length,
+    exhausted_codes: rows.filter(isRedeemCodeExhausted).length,
+    used_uses: rows.reduce((sum, code) => sum + Number(code.used_uses || 0), 0),
+    max_uses: rows.reduce((sum, code) => sum + Number(code.max_uses || 0), 0),
+  }
 }
 
 function codeExpiryTimestamp() {
@@ -183,8 +194,25 @@ async function loadCodes() {
   codesLoading.value = true
   selectedCodes.value = []
   try {
-    const res = await walletApi.redeemCodes()
+    let res = await walletApi.redeemCodes({ page: codePage.value, limit: codePageSize.value })
+    if (res.total === undefined) {
+      const allCodes = res.redeem_codes
+      codeTotal.value = allCodes.length
+      codeSummary.value = summarizeRedeemCodes(allCodes)
+      const lastPage = Math.max(1, Math.ceil(allCodes.length / codePageSize.value))
+      codePage.value = Math.min(codePage.value, lastPage)
+      const start = (codePage.value - 1) * codePageSize.value
+      codes.value = allCodes.slice(start, start + codePageSize.value)
+      return
+    }
+
+    if (res.redeem_codes.length === 0 && codePage.value > 1 && res.total > 0) {
+      codePage.value = Math.max(1, Math.ceil(res.total / codePageSize.value))
+      res = await walletApi.redeemCodes({ page: codePage.value, limit: codePageSize.value })
+    }
     codes.value = res.redeem_codes
+    codeTotal.value = res.total ?? res.redeem_codes.length
+    codeSummary.value = res.summary ?? summarizeRedeemCodes(res.redeem_codes)
   } catch (error) {
     ElMessage.error(error instanceof ApiException ? error.message : '加载兑换码失败')
   } finally {
@@ -234,6 +262,16 @@ function search() {
 function onPageChange(next: number) {
   page.value = next
   loadOrders()
+}
+
+function onCodePageChange(next: number) {
+  codePage.value = next
+  loadCodes()
+}
+
+function onCodePageSizeChange() {
+  codePage.value = 1
+  loadCodes()
 }
 
 function resetFilters() {
@@ -297,6 +335,7 @@ async function submitCode() {
     codeForm.code = ''
     codeForm.count = 1
     codeForm.mode = 'random'
+    codePage.value = 1
     await loadCodes()
   } catch (error) {
     ElMessage.error(error instanceof ApiException ? error.message : '创建失败')
@@ -354,6 +393,12 @@ onMounted(load)
               <div class="mt-1 text-sm text-ink-soft">支持积分类型与天数类型兑换码的生成与维护。</div>
             </div>
             <div class="flex flex-wrap items-center justify-end gap-2">
+              <el-select v-model="codePageSize" class="!w-32" @change="onCodePageSizeChange">
+                <el-option :value="10" label="每页 10 条" />
+                <el-option :value="20" label="每页 20 条" />
+                <el-option :value="50" label="每页 50 条" />
+                <el-option :value="100" label="每页 100 条" />
+              </el-select>
               <el-button
                 v-if="selectedCodes.length"
                 type="danger"
@@ -364,13 +409,17 @@ onMounted(load)
               >
                 批量删除 ({{ selectedCodes.length }})
               </el-button>
-              <el-button type="primary" :icon="'Plus'" @click="codeVisible = true">创建兑换码</el-button>
             </div>
           </DataTableToolbar>
           <DataTable
             :data="codes"
             :loading="codesLoading"
+            show-pagination
+            :total="codeTotal"
+            :current-page="codePage"
+            :page-size="codePageSize"
             empty-text="暂无兑换码"
+            @page-change="onCodePageChange"
             @selection-change="handleCodeSelectionChange"
           >
               <el-table-column type="selection" width="45" align="center" />

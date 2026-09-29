@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from collections.abc import Sequence
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, case, func, or_, select
 
 from ...platform.wallet.errors import WalletOperationError
 from ...platform.wallet.records import RedeemCodeRecord, WalletOrderRecord
@@ -27,12 +27,53 @@ class WalletRepository(SqlAlchemyRepository):
             self._apply_redeem_code(entity, record)
             session.commit()
 
-    def list_redeem_codes(self) -> list[RedeemCodeRecord]:
+    def list_redeem_codes(
+        self, *, page: int | None = None, limit: int | None = None
+    ) -> list[RedeemCodeRecord]:
         with self.session_factory() as session:
-            entities = session.scalars(
-                select(RedeemCodeEntity).order_by(RedeemCodeEntity.created_at.desc())
-            ).all()
+            statement = select(RedeemCodeEntity).order_by(
+                RedeemCodeEntity.created_at.desc(), RedeemCodeEntity.id.desc()
+            )
+            if page is not None and limit is not None:
+                statement = statement.offset(max(0, page - 1) * limit).limit(limit)
+            entities = session.scalars(statement).all()
             return [self._redeem_code_record(entity) for entity in entities]
+
+    def redeem_code_summary(self, *, now: float) -> dict[str, int]:
+        """Return whole-table redemption totals without loading every code."""
+
+        is_usable = case(
+            (
+                and_(
+                    RedeemCodeEntity.status == "active",
+                    or_(RedeemCodeEntity.expires_at == 0, RedeemCodeEntity.expires_at > now),
+                    RedeemCodeEntity.used_uses < RedeemCodeEntity.max_uses,
+                ),
+                1,
+            ),
+            else_=0,
+        )
+        is_exhausted = case(
+            (RedeemCodeEntity.used_uses >= RedeemCodeEntity.max_uses, 1),
+            else_=0,
+        )
+        with self.session_factory() as session:
+            row = session.execute(
+                select(
+                    func.count(RedeemCodeEntity.id),
+                    func.coalesce(func.sum(is_usable), 0),
+                    func.coalesce(func.sum(is_exhausted), 0),
+                    func.coalesce(func.sum(RedeemCodeEntity.used_uses), 0),
+                    func.coalesce(func.sum(RedeemCodeEntity.max_uses), 0),
+                )
+            ).one()
+        return {
+            "total_codes": int(row[0] or 0),
+            "usable_codes": int(row[1] or 0),
+            "exhausted_codes": int(row[2] or 0),
+            "used_uses": int(row[3] or 0),
+            "max_uses": int(row[4] or 0),
+        }
 
     def find_redeem_code_by_code(self, code: str) -> RedeemCodeRecord | None:
         with self.session_factory() as session:

@@ -228,6 +228,14 @@ export interface RedeemCode {
   expires_at: number
 }
 
+export interface RedeemCodeSummary {
+  total_codes: number
+  usable_codes: number
+  exhausted_codes: number
+  used_uses: number
+  max_uses: number
+}
+
 export interface ImportScript {
   script_id: string
   name: string
