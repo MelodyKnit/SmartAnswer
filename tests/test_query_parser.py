@@ -49,6 +49,27 @@ class QueryParserTests(unittest.TestCase):
                     ("A. 15%", "B. 20%", "C. 5%", "D. 10%"),
                 )
 
+    def test_ocs_post_payload_preserves_image_data_fields(self) -> None:
+        """OCS v2 POST 配置提交的图片字段应进入统一查询模型。"""
+
+        query = parse_ocs_request(
+            {
+                "title": "[图片1]所示内容",
+                "options": "A. [图片2]\nB. 其他选项",
+                "type": "single",
+                "image_data_urls": [
+                    "data:image/png;base64,AA==",
+                    "data:image/png;base64,BB==",
+                ],
+            }
+        )
+
+        self.assertEqual(
+            query.image_data_urls,
+            ("data:image/png;base64,AA==", "data:image/png;base64,BB=="),
+        )
+        self.assertEqual(query.title, "[图片1]所示内容")
+
     def test_structured_query_options_keep_individual_values(self) -> None:
         """通用结构化 API 不应用 OCS 标签拆分修复。"""
 

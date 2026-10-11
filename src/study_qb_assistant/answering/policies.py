@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from study_qb_assistant.media.inputs import normalize_image_data_urls, normalize_image_urls
+from study_qb_assistant.media.inputs import (
+    has_numbered_image_references,
+    normalize_image_data_urls,
+    normalize_image_urls,
+)
 from ..media import is_ocs_image_url
 from study_qb_assistant.questions.models import QuestionQuery
 
@@ -10,7 +14,11 @@ from study_qb_assistant.questions.models import QuestionQuery
 def is_image_context_without_text_snapshot(query: QuestionQuery) -> bool:
     """图片题没有 OCR 文本快照时，不把 URL 题干沉淀为可复用题。"""
 
-    if not normalize_image_urls(query.image_urls, (query.title,)):
+    if has_numbered_image_references(query):
+        return True
+    if not normalize_image_urls(query.image_urls, (query.title,)) and not normalize_image_data_urls(
+        query.image_data_urls, query.option_image_data_urls.values()
+    ):
         return False
     return not str(query.title or "").strip() or bool(normalize_image_urls((query.title,)))
 

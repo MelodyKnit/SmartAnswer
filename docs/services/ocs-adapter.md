@@ -37,28 +37,7 @@ http://127.0.0.1:8765/api/v1/configs/ocs-local-study-bank.json
 手动修改 [configs/ocs-local-study-bank.json](../../configs/ocs-local-study-bank.json) 中的 base URL
 ```
 
-配置内容：
-
-```json
-[
-  {
-    "name": "当前平台名称",
-    "homepage": "http://127.0.0.1:8765/api/v1/healthz",
-    "url": "http://127.0.0.1:8765/ocs/query",
-    "method": "get",
-    "type": "GM_xmlhttpRequest",
-    "contentType": "json",
-    "data": {
-      "title": "${title}",
-      "options": "${options}",
-      "type": "${type}"
-    },
-    "handler": "return (res)=>res.code === 0 ? [res.data.question, res.data.answer] : [res.message || (res.data && res.data.question) || '未找到答案', undefined]"
-  }
-]
-```
-
-OCS 期望 handler 的返回值将答案放在第二个位置。因此，本地配置在请求成功时返回 `[question, answer]`。
+默认配置使用 v2 POST 和图片字段处理器。完整配置统一取自上述配置文件或平台「复制 OCS 配置」入口；字段映射与输入约束见[查询与诊断 API](../architecture/apis/query.md)。旧客户端配置必须重新复制并覆盖后才能启用图片题优化。
 
 运行时配置接口会读取系统 `site_title` 作为题库名称；经 API Key 页面复制时，会追加该 Key 的名称，格式为 `平台名称 · API Key 名称`。名称为空时只追加掩码末尾四位，避免泄露密钥。
 

@@ -62,23 +62,7 @@ http://127.0.0.1:8765/api/v1/query?title=...&options=A.xxx#B.xxx#C.xxx#D.xxx&typ
 
 ## 7. OCS 风格源配置结构
 
-对于本地学习和审核场景，后端设计为可轻松被以下结构的源配置调用：
-
-```json
-{
-  "name": "Local Study Question Bank",
-  "homepage": "http://127.0.0.1:8765/api/v1/healthz",
-  "url": "http://127.0.0.1:8765/ocs/query",
-  "method": "get",
-  "type": "GM_xmlhttpRequest",
-  "contentType": "json",
-  "data": {
-    "title": "${title}",
-    "options": "${options}",
-    "type": "${type}"
-  }
-}
-```
+OCS 接入使用平台生成的 v2 POST 配置；字段处理器保留图片数组并兼容普通文本查询。请求/响应与图片字段约束统一维护于[查询与诊断 API](../architecture/apis/query.md)，本节只说明配置获取方式。
 
 开箱即用的本地配置产物是 [ocs-local-study-bank.json](../../configs/ocs-local-study-bank.json)。
 

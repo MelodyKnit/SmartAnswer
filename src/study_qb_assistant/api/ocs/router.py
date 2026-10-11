@@ -16,6 +16,7 @@ from ..dependencies import (
 from ..contracts.query import QueryPayload
 from ..query_execution import run_lookup
 from ..security import guard_protected_request
+from ...questions.parsing import QueryInputError
 
 
 def build_ocs_router() -> APIRouter:
@@ -35,15 +36,18 @@ def build_ocs_router() -> APIRouter:
         denied = guard_protected_request(request)
         if denied:
             return denied
-        query = get_ocs_integration(request).parse_request(
-            {
-                "title": title,
-                "options": options,
-                "type": question_type,
-                "request_id": request_id,
-                "image_urls": image_urls,
-            }
-        )
+        try:
+            query = get_ocs_integration(request).parse_request(
+                {
+                    "title": title,
+                    "options": options,
+                    "type": question_type,
+                    "request_id": request_id,
+                    "image_urls": image_urls,
+                }
+            )
+        except QueryInputError as exc:
+            return ocs_input_error_response(exc)
         return run_lookup(
             get_lookup_service(request),
             get_usage_service(request),
@@ -64,7 +68,10 @@ def build_ocs_router() -> APIRouter:
         denied = guard_protected_request(request)
         if denied:
             return denied
-        query = get_ocs_integration(request).parse_request(payload.model_dump())
+        try:
+            query = get_ocs_integration(request).parse_request(payload.model_dump())
+        except QueryInputError as exc:
+            return ocs_input_error_response(exc)
         return run_lookup(
             get_lookup_service(request),
             get_usage_service(request),
@@ -78,3 +85,16 @@ def build_ocs_router() -> APIRouter:
         )
 
     return router
+
+
+def ocs_input_error_response(error: QueryInputError) -> JSONResponse:
+    """为 GET/POST 输入校验失败返回相同的 OCS 兼容错误。"""
+
+    return JSONResponse(
+        {
+            "code": 1,
+            "message": str(error),
+            "data": {"answer": None, "ai": {"error_code": "INVALID_INPUT"}},
+        },
+        status_code=400,
+    )

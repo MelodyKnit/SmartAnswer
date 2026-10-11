@@ -557,7 +557,12 @@ class FastAPILocalServerTests(unittest.TestCase):
         self.assertEqual(ambiguous_query.json()["error"]["code"], "INVALID_INPUT")
         self.assertEqual(ocs_get.json()["code"], 0)
         self.assertEqual(ocs_get.json()["data"]["answer"], "A")
-        self.assertEqual(config.json()[0]["data"]["title"], "${title}")
+        config_item = config.json()[0]
+        self.assertEqual(config_item["v"], 2)
+        self.assertEqual(config_item["method"], "post")
+        self.assertIn("suggestion_title", config_item["data"]["title"]["handler"])
+        self.assertIn("suggestion_options", config_item["data"]["options"]["handler"])
+        self.assertIn("images", config_item["data"]["image_data_urls"]["handler"])
 
     def test_client_ip_extraction_from_proxies(self) -> None:
         """测试从 Request header 中提取和记录最真实的客户端 IP。"""

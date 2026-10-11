@@ -36,7 +36,7 @@
 - OCS 题库配置是一个数据源定义的数组。
 - 数据源定义可以包括 `url`、`method`、`contentType`、`data` 和 `handler`。
 - `url` 和 `data` 支持占位符替换。
-- 支持的已文档化占位符包括 `${title}`、`${type}` 和 `${options}`。
+- 支持的占位符包括 `${title}`、`${type}`、`${options}`、`${images}`、`${suggestion_title}` 和 `${suggestion_options}`；图片题优化配置使用 POST，并通过字段处理器提交图片数组。
 - `handler` 用于将响应映射为 OCS 所期望的答案结构。
 - `data` 内部的第一级字段可以使用基于自定义 handler 的解析。
 - 文档中还提到了一个全域名开发版本，用于支持广泛的跨域请求。

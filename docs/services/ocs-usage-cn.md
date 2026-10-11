@@ -148,28 +148,7 @@ Ollama 只是可选方案，不是项目依赖。
 
 ## 6. OCS 配置
 
-本地服务运行后，可以直接使用这个配置：
-
-```json
-[
-  {
-    "name": "Local Study Question Bank",
-    "homepage": "http://127.0.0.1:8765/api/v1/healthz",
-    "url": "http://127.0.0.1:8765/ocs/query",
-    "method": "get",
-    "type": "GM_xmlhttpRequest",
-    "contentType": "json",
-    "data": {
-      "title": "${title}",
-      "options": "${options}",
-      "type": "${type}"
-    },
-    "handler": "return (res)=>res.code === 0 ? [res.data.question, res.data.answer] : [res.message || (res.data && res.data.question) || '未找到答案', undefined]"
-  }
-]
-```
-
-注意：OCS 的 handler 返回值第二项才是答案，所以成功时返回 `[question, answer]`。
+本地服务运行后，在 API Key 页面复制最新 OCS 配置并覆盖客户端原配置。默认配置使用 v2 POST，图片题优化开启时提交图片数组及替换后的题干/选项；普通题使用原文本。字段定义和限制见[查询与诊断 API](../architecture/apis/query.md)。
 
 同一份配置也在项目文件中：
 

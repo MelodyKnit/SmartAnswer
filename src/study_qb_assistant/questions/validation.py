@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from study_qb_assistant.media.inputs import is_image_url, normalize_image_urls
+from study_qb_assistant.media.inputs import is_image_url, normalize_image_data_urls, normalize_image_urls
 from .models import QuestionQuery
 
 CHOICE_TYPES = {"single", "multiple", "单选", "单选题", "多选", "多选题"}
@@ -67,7 +67,11 @@ def analyze_query_input(query: QuestionQuery) -> InputAnomaly | None:
         flags.append("placeholder_options")
     if query.options and not placeholder_options:
         return None
-    if image_urls or not choice_stem_requires_options(query.title):
+    if (
+        image_urls
+        or normalize_image_data_urls(query.image_data_urls, query.option_image_data_urls.values())
+        or not choice_stem_requires_options(query.title)
+    ):
         return None
 
     flags.append("missing_options_for_choice")

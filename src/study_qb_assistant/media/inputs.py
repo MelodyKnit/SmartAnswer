@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from study_qb_assistant.questions.models import QuestionQuery
 
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
+NUMBERED_IMAGE_PATTERN = re.compile(r"\[图片(\d+)\]")
 DATA_URL_PATTERN = re.compile(r"^data:image/[-+.\w]+;base64,[A-Za-z0-9+/=\s]+$", re.I)
 EMBEDDED_IMAGE_URL_PATTERN = re.compile(
     r"https?://[^\s\u3000\"'<>]+?\.(?:png|jpg|jpeg|webp|gif|bmp)(?:\?[^\s\u3000\"'<>]*)?",
@@ -82,6 +83,12 @@ def legacy_image_url_only(query: QuestionQuery) -> bool:
     return bool(normalize_image_urls(query.image_urls, (query.title,))) and not bool(
         normalize_image_data_urls(query.image_data_urls, query.option_image_data_urls.values())
     )
+
+
+def has_numbered_image_references(query: QuestionQuery) -> bool:
+    """识别依赖图片编号的题干或选项；编号文本本身不能作为可复用题目。"""
+
+    return any(NUMBERED_IMAGE_PATTERN.search(text) for text in (query.title, *query.options))
 
 
 def strip_embedded_image_urls(title: str, *groups: object) -> str:

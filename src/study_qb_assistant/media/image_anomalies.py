@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
-from .inputs import normalize_image_urls
+from .inputs import has_numbered_image_references, normalize_image_data_urls, normalize_image_urls
 from study_qb_assistant.questions.models import ModelAnswer, QuestionQuery
 
 
 def model_answer_indicates_unreadable_image(query: QuestionQuery, answer: ModelAnswer) -> bool:
     """识别模型实际没有读到图片却返回了低置信度占位文本的情况。"""
 
-    if not normalize_image_urls(query.image_urls, (query.title,)):
+    if not (
+        normalize_image_urls(query.image_urls, (query.title,), query.option_image_urls.values())
+        or normalize_image_data_urls(query.image_data_urls, query.option_image_data_urls.values())
+        or has_numbered_image_references(query)
+    ):
         return False
     combined = " ".join(
         value
@@ -30,7 +34,11 @@ def model_answer_indicates_unreadable_image(query: QuestionQuery, answer: ModelA
 def provider_error_indicates_unreadable_image(query: QuestionQuery, error: Exception) -> bool:
     """识别图片题在模型请求阶段就因图片不可读而失败的异常。"""
 
-    if not normalize_image_urls(query.image_urls, (query.title,)):
+    if not (
+        normalize_image_urls(query.image_urls, (query.title,), query.option_image_urls.values())
+        or normalize_image_data_urls(query.image_data_urls, query.option_image_data_urls.values())
+        or has_numbered_image_references(query)
+    ):
         return False
     combined = str(error or "").casefold()
     unreadable_markers = (

@@ -56,7 +56,8 @@ def build_token_router() -> APIRouter:
             token_description=str(token_info["description"]),
             token_key_mask=str(token_info["key_mask"]),
         )
-        token_config[0]["headers"] = {"Authorization": f"Bearer {raw_token}"}
+        for item in token_config:
+            item.setdefault("headers", {})["Authorization"] = f"Bearer {raw_token}"
         return JSONResponse(
             {"ok": True, "token": raw_token, "token_info": token_info, "ocs_config": token_config},
             headers={"Cache-Control": "no-store", "Pragma": "no-cache"},

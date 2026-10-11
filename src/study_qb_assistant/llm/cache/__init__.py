@@ -25,7 +25,11 @@ from .support import (
     optional_string,
 )
 from study_qb_assistant.answering.reuse import record_should_be_indexable_by_reuse_policy, decide_answer_reuse
-from study_qb_assistant.media.inputs import normalize_image_urls
+from study_qb_assistant.media.inputs import (
+    has_numbered_image_references,
+    normalize_image_data_urls,
+    normalize_image_urls,
+)
 from study_qb_assistant.questions.models import CanonicalQuestionRecord, ModelAnswer, QuestionQuery
 from study_qb_assistant.questions.normalization import normalize_options, normalize_text
 from study_qb_assistant.questions.labels import canonicalize_label_answer
@@ -415,7 +419,11 @@ def cache_key(query: QuestionQuery) -> str:
 def cache_query_has_image_context(query: QuestionQuery) -> bool:
     """图片 URL 题不进入 AI 缓存，避免历史图片答案被重复复用。"""
 
-    return bool(normalize_image_urls(query.image_urls, (query.title,)))
+    return (
+        has_numbered_image_references(query)
+        or bool(normalize_image_urls(query.image_urls, (query.title,), query.option_image_urls.values()))
+        or bool(normalize_image_data_urls(query.image_data_urls, query.option_image_data_urls.values()))
+    )
 
 
 # 兼容局部旧调用时保留的私有别名。

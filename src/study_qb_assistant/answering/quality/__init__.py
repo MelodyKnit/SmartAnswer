@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from study_qb_assistant.media.inputs import has_numbered_image_references
 from study_qb_assistant.questions.models import ModelAnswer, QuestionQuery
 from .rules import (
     compact_text as compact_text,
@@ -41,6 +42,9 @@ def direct_known_answer(query: QuestionQuery) -> ModelAnswer | None:
     Returns:
         ModelAnswer | None: 命中的已知答案，若未命中则返回 None。
     """
+    # 图片内容是本次题目的一部分，固定文本规则不能替代视觉判断或覆盖视觉结果。
+    if has_numbered_image_references(query):
+        return None
     # 优先匹配填空题已知规则
     completion_answer = known_completion_answer(query)
     if completion_answer is not None:

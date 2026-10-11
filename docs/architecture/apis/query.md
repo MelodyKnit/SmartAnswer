@@ -78,7 +78,16 @@
 
 ## 3. OCS 兼容查询
 
-OCS 路由不使用 `/api/v1` 前缀，响应转换为 OCS 兼容的 `code/data` 结构。
+OCS 路由不使用 `/api/v1` 前缀，响应转换为 OCS 兼容的 `code/data` 结构。默认配置为 `v: 2`、`method: post`，请求头包含 `Content-Type: application/json`。配置由包内模板统一生成，静态示例见 [ocs-local-study-bank.json](../../../configs/ocs-local-study-bank.json)。
+
+| OCS 环境字段 | POST 字段 | 回退行为 |
+| --- | --- | --- |
+| `suggestion_title` | `title` | 无图片优化结果时使用 `title` |
+| `suggestion_options` | `options` | 无图片选项优化结果时使用 `options` |
+| `images` | `image_data_urls` | 以数组传递；缺省为 `[]` |
+| `type` | `type` | 保持 OCS 原题型 |
+
+图片字段使用 OCS `data.<field>.handler` 获取环境值，保留数组类型。旧 GET 配置仍可用于文本查询；已导入配置需要重新复制并覆盖，服务器升级不会改写 OCS 客户端本地配置。
 
 ### `GET /ocs/query`
 
@@ -93,6 +102,14 @@ OCS 路由不使用 `/api/v1` 前缀，响应转换为 OCS 兼容的 `code/data`
 ### `POST /ocs/query`
 
 `Content-Type: application/json`，请求体复用 `QueryPayload`。OCS 适配层负责字段解析和响应格式化。
+
+图片编号 `[图片N]` 对应上传数组第 N 项（从 `1` 开始）。相同图片内容去重时同步重映射题干和选项编号；最多接受 6 张不同图片。图片数据损坏、编号越界、缺少对应图片、仍含未转换图片 URL 或超过上限时返回 `400`，不执行答题、不扣费：
+
+```json
+{"code":1,"message":"图片编号缺少对应的图片数据，请重新获取图片","data":{"answer":null,"ai":{"error_code":"INVALID_INPUT"}}}
+```
+
+含图片编号的查询只依赖本次图片上下文，不按占位文本命中本地库或 AI 缓存，不将占位答案沉淀为可复用题目；完整 OCR 文本快照仍按现有规则处理。
 
 成功示例：
 

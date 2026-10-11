@@ -7,6 +7,9 @@
 from __future__ import annotations
 
 import sys
+import json
+import shutil
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -18,6 +21,8 @@ if str(SRC_ROOT) not in sys.path:
 
 from study_qb_assistant.adapters import build_ocs_config  # noqa: E402
 from study_qb_assistant.adapters.ocs.config import build_ocs_config_name  # noqa: E402
+from study_qb_assistant.adapters.ocs.request import parse_ocs_request  # noqa: E402
+from study_qb_assistant.api.contracts.query import QueryPayload  # noqa: E402
 
 
 class OcsConfigTests(unittest.TestCase):
@@ -32,8 +37,13 @@ class OcsConfigTests(unittest.TestCase):
         self.assertEqual(item["name"], "AI题库")
         self.assertEqual(item["homepage"], "http://127.0.0.1:8765/api/v1/healthz")
         self.assertEqual(item["url"], "http://127.0.0.1:8765/ocs/query")
+        self.assertEqual(item["v"], 2)
+        self.assertEqual(item["method"], "post")
         self.assertEqual(item["type"], "GM_xmlhttpRequest")
-        self.assertEqual(item["data"]["title"], "${title}")
+        self.assertEqual(item["headers"]["Content-Type"], "application/json")
+        self.assertIn("suggestion_title", item["data"]["title"]["handler"])
+        self.assertIn("suggestion_options", item["data"]["options"]["handler"])
+        self.assertIn("images", item["data"]["image_data_urls"]["handler"])
         self.assertIn("[res.data.question, res.data.answer", item["handler"])
         self.assertNotIn("[res.data.answer, res.data.question", item["handler"])
 
@@ -49,6 +59,66 @@ class OcsConfigTests(unittest.TestCase):
             static_config,
             build_ocs_config("http://127.0.0.1:8765", platform_name="AI题库"),
         )
+
+    @unittest.skipUnless(shutil.which("node"), "OCS JavaScript field handlers require Node.js")
+    def test_field_handlers_execute_for_text_stem_and_option_images(self) -> None:
+        """执行配置中的真实 JavaScript，再用 API 模型解析 OCS 构造的 JSON 请求。"""
+
+        cases = [
+            {"title": "文本题", "options": "A. 正确\nB. 错误", "type": "single"},
+            {
+                "title": "原图题干",
+                "suggestion_title": "[图片1]",
+                "options": "A. 正确\nB. 错误",
+                "type": "single",
+                "images": ["data:image/png;base64,AA=="],
+            },
+            {
+                "title": "选项图片题",
+                "suggestion_title": "选项图片题",
+                "options": "原图选项",
+                "suggestion_options": "A. [图片1]\nB. [图片2]",
+                "type": "single",
+                "images": ["data:image/png;base64,AA==", "data:image/png;base64,AQ=="],
+            },
+            {
+                "title": "填空题",
+                "options": "",
+                "type": "completion",
+                "images": [],
+            },
+        ]
+        config = build_ocs_config("https://study.example.test", platform_name="AI题库")[0]
+        # 与 OCS 字段处理协议相同：处理器先构造函数，再以 env 调用；图片数组保持数组类型。
+        script = """
+const {config, cases} = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
+const payloads = cases.map(env => Object.fromEntries(Object.entries(config.data).map(([key, value]) => [
+  key, typeof value === 'object' && value.handler
+    ? Function(value.handler)()(env)
+    : value.replace(/\\$\\{(.*?)\\}/g, (_, name) => env[name] ?? '')
+])));
+process.stdout.write(JSON.stringify(payloads));
+"""
+        completed = subprocess.run(
+            [shutil.which("node"), "-e", script],
+            input=json.dumps({"config": config, "cases": cases}),
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=True,
+            timeout=10,
+        )
+        payloads = json.loads(completed.stdout)
+        for env, payload in zip(cases, payloads, strict=True):
+            with self.subTest(title=env["title"]):
+                self.assertEqual(payload["title"], env.get("suggestion_title") or env["title"])
+                self.assertEqual(
+                    payload["options"], env.get("suggestion_options") or env["options"]
+                )
+                self.assertEqual(payload["image_data_urls"], env.get("images", []))
+                query = parse_ocs_request(QueryPayload(**payload).model_dump())
+                self.assertEqual(query.title, payload["title"])
+                self.assertEqual(query.image_data_urls, tuple(payload["image_data_urls"]))
 
     def test_config_name_uses_platform_and_token_context(self) -> None:
         """有令牌上下文的配置使用平台标题与 API Key 名称。"""

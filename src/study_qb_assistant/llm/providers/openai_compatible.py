@@ -12,7 +12,11 @@ from dataclasses import dataclass
 
 from study_qb_assistant.llm.http_client import HttpClientError, normalize_container_loopback_url, request_text
 from study_qb_assistant.media.question_context import build_ocr_query
-from study_qb_assistant.media.inputs import normalize_image_data_urls, normalize_image_urls
+from study_qb_assistant.media.inputs import (
+    has_numbered_image_references,
+    normalize_image_data_urls,
+    normalize_image_urls,
+)
 from ...media.image_anomalies import model_answer_indicates_unreadable_image
 from study_qb_assistant.questions.models import ModelAnswer, QuestionQuery
 from ...logger import log_event
@@ -559,7 +563,9 @@ class OpenAICompatibleProvider(BaseModelProvider):
         if not image_refs:
             return prompt
         content: list[dict] = [{"type": "text", "text": prompt}]
-        for item in image_refs[:6]:
+        for number, item in enumerate(image_refs[:6], start=1):
+            if has_numbered_image_references(query):
+                content.append({"type": "text", "text": f"[图片{number}]"})
             content.append({"type": "image_url", "image_url": {"url": item}})
         return content
 

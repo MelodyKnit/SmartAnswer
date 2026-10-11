@@ -11,16 +11,25 @@
       "name": "{{CONFIG_NAME}}",
       "homepage": "{{BASE_URL}}/api/v1/healthz",
       "url": "{{BASE_URL}}/ocs/query",
-      "method": "get",
+      "v": 2,
+      "method": "post",
       "type": "GM_xmlhttpRequest",
       "contentType": "json",
       "headers": {
-        "Authorization": "Bearer {{TOKEN}}"
+        "Authorization": "Bearer {{TOKEN}}",
+        "Content-Type": "application/json"
       },
       "data": {
-        "title": "${title}",
-        "options": "${options}",
-        "type": "${type}"
+        "title": {
+          "handler": "return (env) => env.suggestion_title || env.title || ''"
+        },
+        "options": {
+          "handler": "return (env) => env.suggestion_options || env.options || ''"
+        },
+        "type": "${type}",
+        "image_data_urls": {
+          "handler": "return (env) => env.images || []"
+        }
       },
       "handler": "return (res)=>res.code === 0 ? [res.data.question, res.data.answer, {ai: res.data.ai, answer_text: res.data.answer_text}] : [res.message || (res.data && res.data.question) || '未找到答案', undefined]"
     }

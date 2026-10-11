@@ -80,7 +80,9 @@ class AnswerService:
             if local_result.error_code != "NOT_FOUND":
                 return local_result
 
-        direct_answer = direct_known_answer(query) if self.allow_known_rules else None
+        direct_answer = (
+            direct_known_answer(query) if self.allow_known_rules and not image_only_query else None
+        )
         if direct_answer is not None:
             return self._result_from_direct_answer(query, direct_answer)
 
@@ -180,7 +182,11 @@ class AnswerService:
         """本地未命中的情况下降级请求大模型获取答案，并记录缓存。"""
 
         assert self.model_provider is not None
-        direct_answer = direct_known_answer(query) if self.allow_known_rules else None
+        direct_answer = (
+            direct_known_answer(query)
+            if self.allow_known_rules and not is_image_context_without_text_snapshot(query)
+            else None
+        )
         if direct_answer is not None:
             return self._result_from_direct_answer(query, direct_answer)
 
