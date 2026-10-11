@@ -17,11 +17,13 @@ def parse_ocs_request(payload: Mapping[str, Any]) -> QuestionQuery:
     for field_name in ("image_urls", "image_data_urls"):
         if isinstance(normalized.get(field_name), str):
             normalized[field_name] = split_raw_values(str(normalized[field_name]))
-    normalize_ocs_image_payload(normalized)
+    original_image_numbers = normalize_ocs_image_payload(normalized)
     if isinstance(normalized.get("options"), str):
         normalized["options"] = split_options(str(normalized["options"]))
     elif isinstance(normalized.get("options"), (list, tuple)):
         normalized["options"] = split_options(
             "\n".join(str(option or "") for option in normalized["options"])
         )
-    return build_query_from_payload(normalized)
+    query = build_query_from_payload(normalized)
+    query.ocs_image_numbers = original_image_numbers
+    return query

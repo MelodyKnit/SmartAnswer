@@ -137,6 +137,7 @@ class QuestionQuery:
         option_image_urls: 选项标签到图片链接的映射，仅作为答题上下文。
         option_image_data_urls: 选项标签到图片 data URL 的映射，仅用于本次识图。
         service_base_url: 当前服务对外基础地址，用于生成模型可访问的本地图床 URL。
+        ocs_image_numbers: 去重后的图片到 OCS 客户端原编号的映射，仅用于响应还原。
     """
 
     title: str
@@ -151,6 +152,7 @@ class QuestionQuery:
     option_image_urls: dict[str, str] = field(default_factory=dict)
     option_image_data_urls: dict[str, str] = field(default_factory=dict)
     service_base_url: str | None = None
+    ocs_image_numbers: tuple[int, ...] = ()
 
 
 @dataclass(slots=True)

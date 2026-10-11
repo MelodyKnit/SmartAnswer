@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from study_qb_assistant.questions.models import QueryResult
 from .registry import OcsQuestionTypeRegistry
+from .images import restore_ocs_image_numbers
 
 DEFAULT_QUESTION_TYPE_REGISTRY = OcsQuestionTypeRegistry.with_defaults()
 
@@ -20,7 +21,7 @@ def to_ocs_response(
             "code": 1,
             "message": result.error_message or "query failed",
             "data": {
-                "question": result.query.title,
+                "question": restore_ocs_image_numbers(result.query.title, result.query),
                 "answer": None,
                 "ai": {
                     "review_required": True,
@@ -45,11 +46,11 @@ def to_ocs_response(
         "code": 0,
         "message": "ok",
         "data": {
-            "question": result.query.title,
-            "answer": formatted.answer,
-            "answer_raw": result.candidate_answer,
-            "answer_text": result.answer_text,
-            "explanation": result.explanation,
+            "question": restore_ocs_image_numbers(result.query.title, result.query),
+            "answer": restore_ocs_image_numbers(formatted.answer, result.query),
+            "answer_raw": restore_ocs_image_numbers(result.candidate_answer, result.query),
+            "answer_text": restore_ocs_image_numbers(result.answer_text, result.query),
+            "explanation": restore_ocs_image_numbers(result.explanation, result.query),
             "ai": {
                 "review_required": result.review_required,
                 "confidence": result.confidence,
@@ -69,11 +70,11 @@ def to_ocs_low_confidence_response(result: QueryResult, *, threshold: float) -> 
         "code": 1,
         "message": "低信任度答案未作答",
         "data": {
-            "question": result.query.title,
+            "question": restore_ocs_image_numbers(result.query.title, result.query),
             "answer": None,
-            "answer_raw": result.candidate_answer,
-            "answer_text": result.answer_text,
-            "explanation": result.explanation,
+            "answer_raw": restore_ocs_image_numbers(result.candidate_answer, result.query),
+            "answer_text": restore_ocs_image_numbers(result.answer_text, result.query),
+            "explanation": restore_ocs_image_numbers(result.explanation, result.query),
             "ai": {
                 "review_required": True,
                 "confidence": result.confidence,

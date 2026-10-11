@@ -8,6 +8,7 @@
   `BaseOcsQuestionTypeHandler` 并注册即可。
 - `resources/` 保存随 Python 包发布的 OCS v2 POST 配置模板，Token、公开配置、分享页和管理模板统一使用它。
 - `images.py` 在通用解析前校验图片编号与内联数据，去重图片时同步重映射题干/选项编号；错误输入由路由返回 `400 INVALID_INPUT`。
+- 请求内部保留去重后图片到原编号的映射，OCS 响应恢复客户端原编号，以兼容客户端将答案图片占位符还原为 URL 的行为。
 
 官方题型 `single`、`multiple`、`judgement`、`completion` 具有专用答案格式。
 `reader`、`line` 等平台私有题型会保留原始类型并标记为 `unsupported`，不会被错误映射。

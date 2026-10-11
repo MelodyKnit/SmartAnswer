@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import io
+import re
 import sys
 import tempfile
 import unittest
@@ -21,6 +22,10 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from study_qb_assistant.adapters.ocs.request import parse_ocs_request  # noqa: E402
+from study_qb_assistant.adapters.ocs.response import (  # noqa: E402
+    to_ocs_low_confidence_response,
+    to_ocs_response,
+)
 from study_qb_assistant.answering import AnswerService  # noqa: E402
 from study_qb_assistant.api.contracts.query import QueryPayload  # noqa: E402
 from study_qb_assistant.llm.cache import LlmAnswerCache  # noqa: E402
@@ -376,6 +381,86 @@ class OcsImageImportTests(unittest.TestCase):
                     title=f"比较 [图片1] 和 https://cdn.example.test/missing.{extension}",
                     image_data_urls=[self.image_a],
                 )
+
+    def test_completion_response_restores_client_numbers_and_original_urls(self) -> None:
+        """图片去重的填空答案返回客户端原编号，客户端 URL 还原仍指向正确图片。"""
+
+        provider = ImageAnswerProvider()
+        service, _repository, _cache = self.make_service(provider)
+        query = imported_query(
+            title="填空题：与 [图片3] 同样的标识是 ____。",
+            type="completion",
+            image_data_urls=[self.image_a, self.image_a, self.image_b],
+        )
+        self.assertEqual(query.ocs_image_numbers, (1, 3))
+        self.assertIn("[图片2]", query.title)
+        with patch.object(
+            provider,
+            "answer",
+            return_value=ModelAnswer("[图片2]", "[图片2]", "根据 [图片2] 判断。", 0.99),
+        ) as answer:
+            result = service.query(query)
+
+        self.assertTrue(result.ok)
+        model_query = answer.call_args.args[0]
+        self.assertIn("[图片2]", model_query.title)
+        self.assertEqual(model_query.image_data_urls, (self.image_a, self.image_b))
+        response = to_ocs_response(result)
+        self.assertEqual(response["code"], 0)
+        self.assertIn("[图片3]", response["data"]["question"])
+        for field in ("answer", "answer_raw", "answer_text"):
+            self.assertEqual(response["data"][field], "[图片3]")
+        self.assertEqual(response["data"]["explanation"], "根据 [图片3] 判断。")
+
+        original_urls = (
+            "https://cdn.example.test/a.png",
+            "https://cdn.example.test/a-copy.png",
+            "https://cdn.example.test/b.png",
+        )
+        # 对应 OCS createCommonAnswerer 的原始 imageUrls 数组还原逻辑。
+        restored = re.sub(
+            r"\[图片(\d+)\]",
+            lambda match: original_urls[int(match.group(1)) - 1],
+            response["data"]["answer"],
+        )
+        self.assertEqual(restored, original_urls[2])
+
+        rejected = to_ocs_low_confidence_response(replace(result, confidence=0.7), threshold=0.95)
+        self.assertEqual(rejected["code"], 1)
+        self.assertIsNone(rejected["data"]["answer"])
+        self.assertIn("[图片3]", rejected["data"]["question"])
+        for field in ("answer_raw", "answer_text"):
+            self.assertEqual(rejected["data"][field], "[图片3]")
+        self.assertEqual(rejected["data"]["explanation"], "根据 [图片3] 判断。")
+
+    def test_choice_response_preserves_letters_and_restores_image_text(self) -> None:
+        """编号逆向映射只改变图片引用，不改变单选或多选答案标签。"""
+
+        provider = ImageAnswerProvider()
+        service, _repository, _cache = self.make_service(provider)
+        for question_type, candidate in (("single", "B"), ("multiple", "A#B")):
+            with self.subTest(question_type=question_type):
+                query = imported_query(
+                    title="请选择 [图片3] 对应的图片。",
+                    options="A. [图片1]\nB. [图片3]",
+                    type=question_type,
+                    image_data_urls=[self.image_a, self.image_a, self.image_b],
+                )
+                with patch.object(
+                    provider,
+                    "answer",
+                    return_value=ModelAnswer(
+                        candidate, "[图片2]", "根据 [图片2] 判断。", 0.99
+                    ),
+                ):
+                    result = service.query(query)
+
+                self.assertTrue(result.ok)
+                response = to_ocs_response(result)
+                self.assertEqual(response["data"]["answer"], candidate)
+                self.assertEqual(response["data"]["answer_raw"], candidate)
+                self.assertEqual(response["data"]["answer_text"], "[图片3]")
+                self.assertEqual(response["data"]["explanation"], "根据 [图片3] 判断。")
 
 
 if __name__ == "__main__":
