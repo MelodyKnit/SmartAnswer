@@ -10,7 +10,19 @@ readonly DEFAULT_HEALTH_URL="http://127.0.0.1:3003"
 readonly DEFAULT_DOCKER_CONTEXT="rootless"
 readonly DEFAULT_PLATFORM="linux/amd64"
 readonly DEFAULT_SOURCE_FALLBACK="true"
+readonly DEFAULT_RELEASE_BACKUP_KEEP="2"
+readonly DEFAULT_RELEASE_IMAGE_KEEP="2"
 
+cleanup_only=false
+cleanup_preview=false
+if [[ "${1:-}" == "--cleanup-only" ]]; then
+  cleanup_only=true
+  shift
+elif [[ "${1:-}" == "--cleanup-preview" ]]; then
+  cleanup_only=true
+  cleanup_preview=true
+  shift
+fi
 config_file="${1:-${STQB_UPDATE_CONFIG:-}}"
 project_dir=""
 source_repository=""
@@ -24,6 +36,15 @@ release_tag=""
 github_token_file=""
 ghcr_username=""
 ghcr_token_file=""
+release_backup_keep=""
+release_image_keep=""
+release_image_repository=""
+current_runtime_image_ref=""
+current_release_image_ref=""
+current_version=""
+current_image_ref=""
+previous_runtime_image_ref=""
+previous_release_image_ref=""
 stage_dir=""
 auth_header_file=""
 lock_file=""
@@ -42,7 +63,10 @@ require_command() {
 }
 
 if [[ -z "$config_file" || ! -f "$config_file" ]]; then
-  fail "an update config file is required; pass it as the first argument"
+  fail "an update config file is required; pass it as the first argument (after --cleanup-only when used)"
+fi
+if [[ "$cleanup_only" == true && "$#" -gt 1 ]]; then
+  fail "cleanup-only accepts exactly one update config file"
 fi
 
 # The config is an operator-owned local file and is never downloaded from GitHub.
@@ -61,8 +85,10 @@ release_tag="${STQB_RELEASE_TAG:-}"
 github_token_file="${STQB_GITHUB_TOKEN_FILE:-}"
 ghcr_username="${STQB_GHCR_USERNAME:-}"
 ghcr_token_file="${STQB_GHCR_TOKEN_FILE:-}"
+release_backup_keep="${STQB_RELEASE_BACKUP_KEEP:-$DEFAULT_RELEASE_BACKUP_KEEP}"
+release_image_keep="${STQB_RELEASE_IMAGE_KEEP:-$DEFAULT_RELEASE_IMAGE_KEEP}"
 
-[[ -n "$project_dir" && -d "$project_dir" ]] || fail "STQB_PROJECT_DIR must point to an existing project directory"
+[[ "$project_dir" =~ ^/[A-Za-z0-9._/-]+$ && "$project_dir" != "/" && -d "$project_dir" ]] || fail "STQB_PROJECT_DIR must point to an existing absolute project directory"
 [[ "$source_repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || fail "invalid STQB_SOURCE_REPOSITORY"
 [[ "$github_api_url" =~ ^https://[A-Za-z0-9.-]+(/[A-Za-z0-9._/-]+)?$ ]] || fail "invalid STQB_GITHUB_API_URL"
 github_api_url="${github_api_url%/}"
@@ -71,24 +97,220 @@ github_api_url="${github_api_url%/}"
 [[ "$platform" =~ ^[A-Za-z0-9._/-]+$ ]] || fail "invalid STQB_PLATFORM"
 [[ "$allow_downgrade" == "true" || "$allow_downgrade" == "false" ]] || fail "STQB_ALLOW_DOWNGRADE must be true or false"
 [[ "$allow_source_fallback" == "true" || "$allow_source_fallback" == "false" ]] || fail "STQB_ALLOW_SOURCE_FALLBACK must be true or false"
+[[ "$release_backup_keep" =~ ^[0-9]{1,3}$ ]] || fail "STQB_RELEASE_BACKUP_KEEP must be between 1 and 100"
+release_backup_keep_number=$((10#$release_backup_keep))
+(( release_backup_keep_number >= 1 && release_backup_keep_number <= 100 )) || fail "STQB_RELEASE_BACKUP_KEEP must be between 1 and 100"
+release_backup_keep="$release_backup_keep_number"
+[[ "$release_image_keep" =~ ^[0-9]{1,2}$ ]] || fail "STQB_RELEASE_IMAGE_KEEP must be between 2 and 20"
+release_image_keep_number=$((10#$release_image_keep))
+(( release_image_keep_number >= 2 && release_image_keep_number <= 20 )) || fail "STQB_RELEASE_IMAGE_KEEP must be between 2 and 20"
+release_image_keep="$release_image_keep_number"
 if [[ -n "$release_tag" ]]; then
   [[ "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "invalid STQB_RELEASE_TAG"
 fi
 
 require_command bash
-require_command curl
 require_command docker
 require_command flock
 require_command python3
-require_command tar
+require_command find
+require_command sort
+require_command du
 
-if [[ -n "$github_token_file" ]]; then
+if [[ "$cleanup_only" != true && -n "$github_token_file" ]]; then
   [[ -r "$github_token_file" ]] || fail "STQB_GITHUB_TOKEN_FILE is not readable"
 fi
-if [[ -n "$ghcr_token_file" ]]; then
+if [[ "$cleanup_only" != true && -n "$ghcr_token_file" ]]; then
   [[ -r "$ghcr_token_file" ]] || fail "STQB_GHCR_TOKEN_FILE is not readable"
   [[ -n "$ghcr_username" ]] || fail "STQB_GHCR_USERNAME is required with STQB_GHCR_TOKEN_FILE"
 fi
+
+load_current_release() {
+  local current_env="$project_dir/.env.release"
+  local previous_env="$project_dir/.env.release.previous"
+
+  [[ -f "$current_env" ]] || return 0
+  current_version="$(awk -F= '$1 == "STQB_RELEASE_VERSION" { print $2; exit }' "$current_env" | tr -d '\r')"
+  current_runtime_image_ref="$(awk -F= '$1 == "STQB_IMAGE_REF" { print $2; exit }' "$current_env" | tr -d '\r')"
+  current_release_image_ref="$(awk -F= '$1 == "STQB_RELEASE_IMAGE_REF" { print $2; exit }' "$current_env" | tr -d '\r')"
+  current_image_ref="$current_release_image_ref"
+  [[ -n "$current_image_ref" ]] || current_image_ref="$current_runtime_image_ref"
+  if [[ -f "$previous_env" ]]; then
+    previous_runtime_image_ref="$(awk -F= '$1 == "STQB_IMAGE_REF" { print $2; exit }' "$previous_env" | tr -d '\r')"
+    previous_release_image_ref="$(awk -F= '$1 == "STQB_RELEASE_IMAGE_REF" { print $2; exit }' "$previous_env" | tr -d '\r')"
+  fi
+}
+
+cleanup_release_backups() {
+  local backup_root="$project_dir/deploy-data/backups/releases"
+  local project_real backup_root_real name backup_path size_line size_kb listing
+  local retained_count deleted_count=0 index freed_kb=0
+  local -a candidates=()
+
+  [[ -d "$backup_root" ]] || {
+    log "release backup cleanup: no snapshots found"
+    return 0
+  }
+  for backup_path in "$project_dir/deploy-data" "$project_dir/deploy-data/backups" "$backup_root"; do
+    [[ ! -L "$backup_path" ]] || { log "release backup cleanup refused: symlink in backup path"; return 1; }
+  done
+  project_real="$(cd "$project_dir" && pwd -P)" || return 1
+  backup_root_real="$(cd "$backup_root" 2>/dev/null && pwd -P)" || {
+    log "release backup cleanup failed: backup directory is unavailable"
+    return 1
+  }
+  if [[ "$backup_root_real" != "$project_real/deploy-data/backups/releases" ]]; then
+    log "release backup cleanup refused: resolved path differs from the configured release directory"
+    return 1
+  fi
+
+  listing="$(find "$backup_root_real" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | LC_ALL=C sort -r)" || return 1
+  while IFS= read -r name; do
+    [[ "$name" =~ ^[0-9]{8}T[0-9]{6}Z-v?[0-9]+\.[0-9]+\.[0-9]+(-manual)?$ ]] || continue
+    [[ ! -e "$backup_root_real/$name/.incomplete" ]] || continue
+    [[ -n "$(find "$backup_root_real/$name" -maxdepth 1 -type f -size +0c \( -name '*.sqlite3' -o -name '*.sqlite' -o -name '*.db' \) -print -quit)" ]] || continue
+    candidates+=("$name")
+  done <<< "$listing"
+
+  retained_count=${#candidates[@]}
+  (( retained_count <= release_backup_keep )) || retained_count="$release_backup_keep"
+  for ((index = retained_count; index < ${#candidates[@]}; index++)); do
+    name="${candidates[$index]}"
+    backup_path="$backup_root_real/$name"
+    [[ -d "$backup_path" && ! -L "$backup_path" ]] || continue
+    size_line="$(du -sk -- "$backup_path" 2>/dev/null)" || {
+      log "release backup cleanup failed: unable to measure snapshot $name"
+      return 1
+    }
+    size_kb="${size_line%%[[:space:]]*}"
+    [[ "$size_kb" =~ ^[0-9]+$ ]] || {
+      log "release backup cleanup failed: invalid size for snapshot $name"
+      return 1
+    }
+    if [[ "$cleanup_preview" == true ]]; then
+      log "would remove release snapshot: $name size_mb=$((size_kb / 1024))"
+    elif ! rm -rf --one-file-system -- "$backup_path"; then
+      log "release backup cleanup failed while removing snapshot $name"
+      return 1
+    fi
+    freed_kb=$((freed_kb + size_kb))
+    deleted_count=$((deleted_count + 1))
+  done
+  log "release backup cleanup: kept=$retained_count removed_or_planned=$deleted_count size_mb=$((freed_kb / 1024)) preview=$cleanup_preview"
+}
+
+cleanup_release_images() {
+  local image_listing active_image_id current_ref_id image_id repository tag digest image_ref row containers used source
+  local id removed=0 skipped=0
+  local -a rows=() ordered_ids=()
+  local -A refs_by_id=() seen_ids=() keep_ids=() excluded_ids=() rollback_ids=()
+
+  image_listing="$(docker image ls --digests --no-trunc --format '{{.Repository}} {{.Tag}} {{.Digest}} {{.ID}}')" || {
+    log "release image cleanup skipped: Docker image listing failed"
+    return 1
+  }
+  active_image_id="$(docker inspect --format '{{.Image}}' study-qb-assistant 2>/dev/null || true)"
+  containers="$(docker container ls -aq)" || return 1
+  if [[ -n "$containers" ]]; then
+    local -a container_ids=()
+    mapfile -t container_ids <<< "$containers"
+    used="$(docker inspect --format '{{.Image}}' "${container_ids[@]}")" || return 1
+    while IFS= read -r id; do
+      [[ "$id" =~ ^sha256:[a-f0-9]{64}$ ]] || return 1
+      keep_ids["$id"]=1
+    done <<< "$used"
+  fi
+  mapfile -t rows <<< "$image_listing"
+
+  for row in "${rows[@]}"; do
+    read -r repository tag digest image_id <<< "$row"
+    [[ -n "$repository" && "$image_id" =~ ^sha256:[a-f0-9]{64}$ ]] || continue
+    if [[ "$repository" == "$release_image_repository" ]]; then
+      if [[ "$tag" != "<none>" && ! "$tag" =~ ^(v?[0-9]+\.[0-9]+\.[0-9]+|stable)$ ]]; then
+        excluded_ids["$image_id"]=1
+        continue
+      fi
+      if [[ "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+        image_ref="$repository@$digest"
+      elif [[ "$tag" =~ ^(v?[0-9]+\.[0-9]+\.[0-9]+|stable)$ ]]; then
+        image_ref="$repository:$tag"
+      else
+        continue
+      fi
+    elif [[ "$repository" == "stqb-local/smartanswer" && "$tag" =~ ^release-[0-9]+\.[0-9]+\.[0-9]+-[a-f0-9]{12}$ ]]; then
+      source="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.source"}}' "$image_id")" || return 1
+      if [[ "${source,,}" != "https://github.com/${source_repository,,}" ]]; then
+        excluded_ids["$image_id"]=1
+        continue
+      fi
+      image_ref="$repository:$tag"
+    else
+      excluded_ids["$image_id"]=1
+      continue
+    fi
+    if [[ -n "${refs_by_id[$image_id]+present}" ]]; then
+      refs_by_id["$image_id"]+=$'\n'"$image_ref"
+    else
+      refs_by_id["$image_id"]="$image_ref"
+      ordered_ids+=("$image_id")
+    fi
+    if [[ "$repository" == "$release_image_repository" && "$tag" != "<none>" ]]; then
+      refs_by_id["$image_id"]+=$'\n'"$repository:$tag"
+    fi
+  done
+
+  if [[ -n "$active_image_id" && -n "${refs_by_id[$active_image_id]+present}" ]]; then
+    keep_ids["$active_image_id"]=1
+    rollback_ids["$active_image_id"]=1
+  fi
+  for image_ref in "$current_runtime_image_ref" "$current_release_image_ref" "$previous_runtime_image_ref" "$previous_release_image_ref"; do
+    [[ -n "$image_ref" ]] || continue
+    current_ref_id="$(docker image inspect --format '{{.Id}}' "$image_ref" 2>/dev/null || true)"
+    if [[ -n "$current_ref_id" && -n "${refs_by_id[$current_ref_id]+present}" ]]; then
+      keep_ids["$current_ref_id"]=1
+      rollback_ids["$current_ref_id"]=1
+    fi
+  done
+  local retained=0 window_count=0
+  for id in "${ordered_ids[@]}"; do
+    [[ -z "${rollback_ids[$id]+present}" ]] || window_count=$((window_count + 1))
+  done
+  if ((${#ordered_ids[@]} > 0 && window_count == 0)); then
+    log "release image cleanup refused: current application image cannot be identified"
+    return 1
+  fi
+  for id in "${ordered_ids[@]}"; do
+    [[ -n "${seen_ids[$id]+present}" ]] && continue
+    seen_ids["$id"]=1
+    [[ -n "${keep_ids[$id]+present}" ]] && continue
+    if ((window_count < release_image_keep)); then
+      keep_ids["$id"]=1
+      rollback_ids["$id"]=1
+      window_count=$((window_count + 1))
+    fi
+  done
+
+  for id in "${ordered_ids[@]}"; do
+    if [[ -n "${keep_ids[$id]+present}" || -n "${excluded_ids[$id]+present}" ]]; then
+      retained=$((retained + 1))
+      continue
+    fi
+    while IFS= read -r image_ref; do
+      [[ -n "$image_ref" ]] || continue
+      if [[ "$cleanup_preview" == true ]]; then
+        log "would remove image reference: $image_ref"
+        continue
+      fi
+      if docker image rm "$image_ref" >/dev/null 2>&1; then
+        removed=$((removed + 1))
+      else
+        skipped=$((skipped + 1))
+        log "release image cleanup could not remove $image_ref; it may still be in use"
+      fi
+    done <<< "${refs_by_id[$id]}"
+  done
+  log "release image cleanup: retained=$retained removed_refs=$removed skipped_refs=$skipped"
+}
 
 mkdir -p "$project_dir/deploy"
 lock_file="${STQB_UPDATE_LOCK_FILE:-$project_dir/deploy/.update.lock}"
@@ -97,6 +319,23 @@ flock -n 9 || {
   log "another update is already running; skipping"
   exit 0
 }
+
+actual_docker_context="$(docker context show 2>/dev/null || true)"
+[[ "$actual_docker_context" == "$docker_context" ]] || fail "Docker context must be $docker_context, got ${actual_docker_context:-none}"
+load_current_release
+release_image_repository="ghcr.io/${source_repository,,}"
+free_bytes_before="$(python3 -c 'import shutil, sys; print(shutil.disk_usage(sys.argv[1]).free)' "$project_dir")"
+cleanup_release_backups || fail "release backup cleanup failed; update stopped before image pull"
+cleanup_release_images || fail "release image cleanup failed; update stopped before image pull"
+free_bytes_after="$(python3 -c 'import shutil, sys; print(shutil.disk_usage(sys.argv[1]).free)' "$project_dir")"
+log "storage after cleanup: free_mb=$((free_bytes_after / 1048576)) change_mb=$(((free_bytes_after - free_bytes_before) / 1048576))"
+if [[ "$cleanup_only" == true ]]; then
+  log "storage maintenance completed (preview=$cleanup_preview)"
+  exit 0
+fi
+
+require_command curl
+require_command tar
 
 stage_dir="$(mktemp -d "${TMPDIR:-/tmp}/stqb-update.XXXXXX")"
 cleanup() {
@@ -226,17 +465,6 @@ PY
 IFS=$'\t' read -r version image digest build_sha <<< "$manifest_values"
 image_ref="$image@$digest"
 
-current_env="$project_dir/.env.release"
-current_version=""
-current_image_ref=""
-if [[ -f "$current_env" ]]; then
-  current_version="$(awk -F= '$1 == "STQB_RELEASE_VERSION" { print $2; exit }' "$current_env" | tr -d '\r')"
-  current_image_ref="$(awk -F= '$1 == "STQB_RELEASE_IMAGE_REF" { print $2; exit }' "$current_env" | tr -d '\r')"
-  if [[ -z "$current_image_ref" ]]; then
-    current_image_ref="$(awk -F= '$1 == "STQB_IMAGE_REF" { print $2; exit }' "$current_env" | tr -d '\r')"
-  fi
-fi
-
 release_decision="$(python3 - "$current_version" "$current_image_ref" "$version" "$image_ref" "$allow_downgrade" <<'PY'
 import re
 import sys
@@ -342,9 +570,10 @@ candidate_build="$(docker run --rm --entrypoint python "$candidate_image_ref" -c
 candidate_compose_target="$project_dir/deploy/docker-compose.release.yaml"
 install_atomic "$candidate_compose" "$candidate_compose_target" 0644
 export STQB_DEPLOY_DOCKER_CONTEXT="$docker_context"
+export STQB_RELEASE_BACKUP_KEEP="$release_backup_keep"
 
 log "applying $resolved_release_tag ($digest)"
-if ! bash "$candidate_apply" "$project_dir" "$candidate_image_ref" "$version" "$build_sha" "$health_url" "$image_ref"; then
+if ! bash "$candidate_apply" "$project_dir" "$candidate_image_ref" "$version" "$build_sha" "$health_url" "$image_ref" "$release_backup_keep"; then
   # apply-release.sh installs its own cleanup trap after argument validation;
   # remove the candidate here too when validation fails before that trap exists.
   rm -f "$candidate_compose_target"
@@ -353,4 +582,7 @@ fi
 
 install_atomic "$candidate_apply" "$project_dir/deploy/apply-release.sh" 0700
 install_atomic "$candidate_updater" "$project_dir/deploy/update-from-github.sh" 0700
+load_current_release
+cleanup_release_backups || log "warning: backup retention cleanup after deployment was incomplete"
+cleanup_release_images || log "warning: image retention cleanup after deployment was incomplete"
 log "release $version deployed successfully"

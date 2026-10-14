@@ -123,6 +123,35 @@ class ApplyReleaseScriptTests(unittest.TestCase):
             docker_commands.index(self.bash_path(image_override)),
         )
         self.assertNotIn("login", docker_commands)
+        previous_environment = (self.project_dir / ".env.release.previous").read_text(encoding="utf-8")
+        self.assertIn(OLD_IMAGE, previous_environment)
+        self.assertIn("old-release", (self.deploy_dir / "docker-compose.previous.yaml").read_text(encoding="utf-8"))
+
+    def test_backup_failure_restores_release_metadata_without_restarting_service(self) -> None:
+        """快照缺失或磁盘写入失败不能让发布元数据提前指向未启动的版本。"""
+
+        completed = self.run_release(
+            health_version=OLD_VERSION, running_database_path="/app/data/runtime/missing.sqlite3",
+        )
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("SQLite backup failed", completed.stderr)
+        self.assertIn(OLD_IMAGE, (self.project_dir / ".env.release").read_text(encoding="utf-8"))
+        self.assertFalse(self.up_counter.exists())
+
+    def test_partial_backup_failure_is_not_treated_as_a_complete_snapshot(self) -> None:
+        """备份命令即使留下文件，失败仍必须阻止部署并保留 incomplete 标记。"""
+
+        source = self.project_dir / "deploy-data/runtime/study-qb.sqlite3"
+        source.parent.mkdir(parents=True)
+        self.write_text(source, "live database")
+        completed = self.run_release(
+            health_version=OLD_VERSION, running_database_path="/app/data/runtime/study-qb.sqlite3",
+            backup_fails=True,
+        )
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertFalse(self.up_counter.exists())
+        self.assertIn(OLD_IMAGE, (self.project_dir / ".env.release").read_text(encoding="utf-8"))
+        self.assertEqual(len(list((self.project_dir / "deploy-data/backups/releases").rglob(".incomplete"))), 1)
 
     def test_local_fallback_image_preserves_release_digest_identity(self) -> None:
         """本地构建镜像运行时仍保存远程 Release digest，便于后续幂等检查。"""
@@ -168,6 +197,55 @@ class ApplyReleaseScriptTests(unittest.TestCase):
         backups = list((self.project_dir / "deploy-data" / "backups" / "releases").rglob("custom.sqlite3"))
         self.assertEqual(len(backups), 1)
         self.assertEqual(backups[0].read_text(encoding="utf-8"), "database snapshot source")
+
+    def test_success_keeps_only_the_configured_release_backup_count(self) -> None:
+        """健康检查成功后按保留数清理旧快照，未知目录保持不动。"""
+
+        database_path = self.project_dir / "deploy-data" / "runtime" / "study-qb.sqlite3"
+        database_path.parent.mkdir(parents=True)
+        self.write_text(database_path, "current database")
+        backup_root = self.project_dir / "deploy-data" / "backups" / "releases"
+        for index in range(4):
+            backup = backup_root / f"2026100{index + 1}T000000Z-0.19.{index}"
+            backup.mkdir(parents=True)
+            self.write_text(backup / "study-qb.sqlite3", f"old snapshot {index}")
+        unrelated = backup_root / "manual-export"
+        unrelated.mkdir()
+        self.write_text(unrelated / "note.txt", "operator-managed")
+
+        completed = self.run_release(health_version=NEW_VERSION, backup_keep=2)
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        retained = sorted(
+            path.name
+            for path in backup_root.iterdir()
+            if path.is_dir() and path.name != "manual-export"
+        )
+        self.assertEqual(len(retained), 2)
+        self.assertTrue((backup_root / "manual-export" / "note.txt").is_file())
+
+    def test_failed_release_does_not_delete_existing_rollback_backups(self) -> None:
+        """只有新版本健康后才清理旧回滚快照。"""
+
+        database_path = self.project_dir / "deploy-data" / "runtime" / "study-qb.sqlite3"
+        database_path.parent.mkdir(parents=True)
+        self.write_text(database_path, "current database")
+        backup_root = self.project_dir / "deploy-data" / "backups" / "releases"
+        backups = []
+        for index in range(3):
+            backup = backup_root / f"2026100{index + 1}T000000Z-0.19.{index}"
+            backup.mkdir(parents=True)
+            self.write_text(backup / "study-qb.sqlite3", "old rollback")
+            backups.append(backup)
+
+        completed = self.run_release(
+            health_version=OLD_VERSION,
+            fail_first_up=True,
+            backup_keep=1,
+        )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertTrue(all(path.is_dir() for path in backups))
 
     def test_external_database_skips_sqlite_snapshot_without_failing(self) -> None:
         """外部数据库不应因 SQLite 文件不存在而阻断镜像发布。"""
@@ -285,6 +363,8 @@ class ApplyReleaseScriptTests(unittest.TestCase):
         docker_context: str = "rootless",
         image_ref: str = NEW_IMAGE,
         release_image_ref: str = NEW_IMAGE,
+        backup_keep: int = 2,
+        backup_fails: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         """通过伪造外部命令执行完整发布流程。"""
 
@@ -303,6 +383,8 @@ class ApplyReleaseScriptTests(unittest.TestCase):
             "FAKE_RUNNING_VERSION": running_version,
             "FAKE_RUNNING_SHA": "c" * 40,
             "FAKE_DOCKER_CONTEXT": docker_context,
+            "STQB_RELEASE_BACKUP_KEEP": str(backup_keep),
+            "FAKE_BACKUP_FAILS": "1" if backup_fails else "0",
         }
         command = [
             str(self.bash),
@@ -411,6 +493,7 @@ case "$command" in
       target_path="$FAKE_PROJECT_DIR/deploy-data${target_path#/app/data}"
       mkdir -p "$(dirname "$target_path")"
       cp "$source_path" "$target_path"
+      if [[ "${FAKE_BACKUP_FAILS:-0}" == "1" ]]; then exit 1; fi
     fi
     ;;
   run)

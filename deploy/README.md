@@ -17,6 +17,8 @@ GitHub 仓库。
   的结果一致。
 - `STQB_ALLOW_SOURCE_FALLBACK`：默认启用。GHCR 镜像不可读时，从 manifest 指定的 Release
   commit 下载源码并在本机带版本元数据构建；可设为 `false` 强制只使用镜像。
+- `STQB_RELEASE_BACKUP_KEEP`：保留的 SQLite 发布快照数，默认 `2`，范围 `1-100`。更新器在每次检查时以及拉取候选镜像前清理更旧的、命名格式正确的发布快照。
+- `STQB_RELEASE_IMAGE_KEEP`：保留的本项目镜像数，默认 `2`，范围 `2-20`。当前运行镜像始终保留，至少另留一个回滚镜像；更新器仅清理本项目 GHCR 镜像和本地回退镜像的多余引用。
 
 公开仓库和公开 GHCR 镜像不需要凭据。GHCR 不可读时默认使用经过 manifest 校验的源码
 构建回退。私有仓库使用 `STQB_GITHUB_TOKEN_FILE`，私有
@@ -33,6 +35,19 @@ GHCR 镜像使用 `STQB_GHCR_USERNAME` 与 `STQB_GHCR_TOKEN_FILE`。凭据文件
 bash /srv/study-qb-assistant/deploy/update-from-github.sh \
   /etc/study-qb-assistant/update.env
 ```
+
+只执行存储清理、不检查 GitHub Release：
+
+```bash
+bash /srv/study-qb-assistant/deploy/update-from-github.sh \
+  --cleanup-only /etc/study-qb-assistant/update.env
+```
+
+先查看将清理的快照和镜像引用，可将 `--cleanup-only` 换为 `--cleanup-preview`；预览不会删除文件或镜像。
+
+清理操作只处理 `${STQB_PROJECT_DIR}/deploy-data/backups/releases/` 下符合时间戳和版本号格式的直接子目录，并保留最近配置数量；其他目录、文件及符号链接不会递归删除。Docker 清理只针对当前项目镜像引用，保留运行中镜像和最近镜像；被其他容器占用的镜像会由 Docker 拒绝删除并记录跳过。
+
+兼容旧快照的 `vX.Y.Z` 与 `-manual` 后缀。没有非空数据库文件或标记为 `.incomplete` 的目录不会挤占正常回滚名额，也不会自动删除。成功部署后，`.env.release.previous` 和 `deploy/docker-compose.previous.yaml` 保存上一个成功版本；镜像清理同时保护该版本、当前版本、所有容器引用和带有其他项目标签的镜像。清理仅在宿主机执行，应用容器不需要 Docker socket 权限。
 
 自动更新可使用用户级 systemd timer。将 `systemd/` 下两个单元复制到
 `~/.config/systemd/user/`，按实际项目路径修改 service 的 `ExecStart`，然后执行：

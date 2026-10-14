@@ -36,7 +36,22 @@ bash /srv/study-qb-assistant/deploy/update-from-github.sh /etc/study-qb-assistan
 
 运行数据保存在 `${STQB_PROJECT_DIR}/deploy-data/`：SQLite、日志、用户配置和私有图片资产都在此目录中，镜像更新不会覆盖它。
 
-## 3. 自动更新与检查
+## 3. 回滚存储保留
+
+本地更新器默认保留最近 2 份 SQLite 发布快照和最近 2 个本项目镜像，当前容器使用的镜像始终保留。每次更新检查会先清理多余的有效快照和镜像，再访问 GitHub、拉取候选版本；新版本通过健康检查后，部署脚本再次核对快照保留数。保留数量可在服务器私有 `update.env` 中用 `STQB_RELEASE_BACKUP_KEEP`（`1-100`）与 `STQB_RELEASE_IMAGE_KEEP`（`2-20`）调整。
+
+空间紧张时可先执行仅清理模式：
+
+```bash
+bash /srv/study-qb-assistant/deploy/update-from-github.sh \
+  --cleanup-only /etc/study-qb-assistant/update.env
+```
+
+使用 `--cleanup-preview` 可以预览同一策略的删除清单；`--cleanup-only` 才实际删除。成功发布会保留上一版本的镜像环境和 Compose 文件，方便核实可用回滚版本。全局 Docker prune 不属于此工具的清理范围。
+
+该模式不请求 Release、不拉取镜像、不重启服务。快照清理仅作用于 `deploy-data/backups/releases/` 下匹配 UTC 时间戳和版本号的直接子目录；镜像清理只针对本项目 GHCR 和本地回退镜像，并保留当前运行镜像和配置数量。其他项目的镜像、手动导出目录、符号链接和不匹配格式的目录不会被触碰。
+
+## 4. 自动更新与检查
 
 可按 [deploy/README.md](../../deploy/README.md) 配置用户级 systemd timer，使服务器定期检查正式 Release。手动检查或更新仍使用同一命令：
 

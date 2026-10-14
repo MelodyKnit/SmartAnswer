@@ -16,6 +16,7 @@ version="${3:-}"
 build_sha="${4:-}"
 health_base_url="${5:-}"
 release_image_ref="${6:-$image_ref}"
+backup_keep="${7:-${STQB_RELEASE_BACKUP_KEEP:-2}}"
 compose_file=""
 candidate_compose_file=""
 local_override_file=""
@@ -32,7 +33,7 @@ fail() {
 }
 
 validate_arguments() {
-  local actual_docker_context expected_docker_context
+  local actual_docker_context expected_docker_context backup_keep_number
 
   [[ "$project_dir" =~ ^/[A-Za-z0-9._/-]+$ ]] || fail "invalid project directory"
   if [[ "$image_ref" =~ $REMOTE_IMAGE_RE ]]; then
@@ -45,6 +46,10 @@ validate_arguments() {
   [[ "$release_image_ref" =~ $REMOTE_IMAGE_RE ]] || fail "invalid release image reference"
   [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "invalid release version"
   [[ "$build_sha" =~ ^[a-f0-9]{40}$ ]] || fail "invalid build revision"
+  [[ "$backup_keep" =~ ^[0-9]{1,3}$ ]] || fail "invalid release backup retention count"
+  backup_keep_number=$((10#$backup_keep))
+  (( backup_keep_number >= 1 && backup_keep_number <= 100 )) || fail "release backup retention count must be between 1 and 100"
+  backup_keep="$backup_keep_number"
   [[ "$health_base_url" =~ ^https?://127\.0\.0\.1:[1-9][0-9]{0,4}$ ]] || fail "invalid health URL"
   command -v docker >/dev/null 2>&1 || fail "docker command is unavailable"
 
@@ -186,21 +191,79 @@ backup_database() {
     fi
     return 0
   fi
-  mkdir -p "$backup_directory"
+  mkdir -p "$backup_directory" || return 1
+  touch "$backup_directory/.incomplete" || return 1
 
   if service_is_running; then
-    docker exec "$SERVICE_NAME" mkdir -p "$(dirname "$container_backup_path")"
+    docker exec "$SERVICE_NAME" mkdir -p "$(dirname "$container_backup_path")" || return 1
     docker exec "$SERVICE_NAME" python -c \
       'import sqlite3, sys; source = sqlite3.connect(sys.argv[1]); target = sqlite3.connect(sys.argv[2]); source.backup(target); target.close(); source.close()' \
       "$database_container_path" \
-      "$container_backup_path"
+      "$container_backup_path" || return 1
   else
-    cp "$database_path" "$backup_path"
+    cp "$database_path" "$backup_path" || return 1
   fi
 
-  [[ -f "$backup_path" ]] || fail "SQLite backup was not written to the data mount"
+  [[ -s "$backup_path" ]] || fail "SQLite backup was not written to the data mount"
+  rm -f "$backup_directory/.incomplete" || return 1
 
   printf '%s\n' "$backup_path"
+}
+
+cleanup_release_backups() {
+  local backup_root="$project_dir/deploy-data/backups/releases"
+  local project_real backup_root_real name backup_path size_line size_kb command_name listing
+  local retained_count deleted_count=0 index freed_kb=0
+  local -a candidates=()
+
+  [[ -d "$backup_root" ]] || return 0
+  for command_name in find sort du; do
+    if ! command -v "$command_name" >/dev/null 2>&1; then
+      printf 'Release backup cleanup skipped: command is unavailable: %s.\n' "$command_name" >&2
+      return 1
+    fi
+  done
+  for backup_path in "$project_dir/deploy-data" "$project_dir/deploy-data/backups" "$backup_root"; do
+    [[ ! -L "$backup_path" ]] || { printf 'Release backup cleanup refused: symlink in backup path.\n' >&2; return 1; }
+  done
+  project_real="$(cd "$project_dir" && pwd -P)" || return 1
+  backup_root_real="$(cd "$backup_root" 2>/dev/null && pwd -P)" || return 1
+  [[ "$backup_root_real" == "$project_real/deploy-data/backups/releases" ]] || {
+    printf 'Release backup cleanup skipped: resolved path is outside the configured backup root.\n' >&2
+    return 1
+  }
+
+  listing="$(find "$backup_root_real" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | LC_ALL=C sort -r)" || return 1
+  while IFS= read -r name; do
+    [[ "$name" =~ ^[0-9]{8}T[0-9]{6}Z-v?[0-9]+\.[0-9]+\.[0-9]+(-manual)?$ ]] || continue
+    [[ ! -e "$backup_root_real/$name/.incomplete" ]] || continue
+    [[ -n "$(find "$backup_root_real/$name" -maxdepth 1 -type f -size +0c \( -name '*.sqlite3' -o -name '*.sqlite' -o -name '*.db' \) -print -quit)" ]] || continue
+    candidates+=("$name")
+  done <<< "$listing"
+
+  retained_count=${#candidates[@]}
+  (( retained_count <= backup_keep )) || retained_count="$backup_keep"
+  for ((index = retained_count; index < ${#candidates[@]}; index++)); do
+    name="${candidates[$index]}"
+    backup_path="$backup_root_real/$name"
+    [[ -d "$backup_path" && ! -L "$backup_path" ]] || continue
+    size_line="$(du -sk -- "$backup_path" 2>/dev/null)" || {
+      printf 'Release backup cleanup skipped: cannot measure %s.\n' "$name" >&2
+      return 1
+    }
+    size_kb="${size_line%%$'\t'*}"
+    [[ "$size_kb" =~ ^[0-9]+$ ]] || return 1
+    rm -rf --one-file-system -- "$backup_path" || {
+      printf 'Release backup cleanup failed while removing %s.\n' "$name" >&2
+      return 1
+    }
+    freed_kb=$((freed_kb + size_kb))
+    deleted_count=$((deleted_count + 1))
+  done
+  printf 'Release backup retention: kept=%s deleted=%s freed_mb=%s\n' \
+    "$retained_count" \
+    "$deleted_count" \
+    "$((freed_kb / 1024))" >&2
 }
 
 capture_unmanaged_release() {
@@ -310,6 +373,7 @@ fi
 candidate_build="$(docker run --rm --entrypoint python "$image_ref" -c 'from study_qb_assistant.version import BUILD_INFO; print(BUILD_INFO.version + ":" + BUILD_INFO.build_sha)')"
 [[ "$candidate_build" == "$version:$build_sha" ]] || fail "image build metadata does not match release"
 
+resolve_database_paths
 write_release_environment "$release_env"
 write_release_image_override "$image_override_file"
 if ! compose_with_file "$candidate_compose_file" config -q; then
@@ -317,8 +381,10 @@ if ! compose_with_file "$candidate_compose_file" config -q; then
   fail "candidate Compose configuration is invalid"
 fi
 
-resolve_database_paths
-backup_path="$(backup_database)" || fail "SQLite backup failed; deployment was not started"
+if ! backup_path="$(backup_database)"; then
+  restore_release_metadata_without_restart
+  fail "SQLite backup failed; deployment was not started"
+fi
 replace_file_atomically "$candidate_compose_file" "$compose_file" 644
 
 if ! compose_current_release up -d --no-build "$SERVICE_NAME"; then
@@ -333,6 +399,16 @@ if ! wait_until_healthy "$version"; then
     fail "health check failed and rollback failed"
   fi
   fail "health check failed; previous release was restored"
+fi
+
+if [[ "$had_previous_release" == true ]]; then
+  replace_file_atomically "$previous_env" "$project_dir/.env.release.previous" 600
+fi
+if [[ "$had_previous_compose" == true ]]; then
+  replace_file_atomically "$previous_compose" "$project_dir/deploy/docker-compose.previous.yaml" 644
+fi
+if ! cleanup_release_backups; then
+  printf 'Warning: release is healthy, but backup retention cleanup was incomplete.\n' >&2
 fi
 
 printf 'Release %s deployed successfully.\n' "$version"

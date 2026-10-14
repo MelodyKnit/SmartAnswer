@@ -285,6 +285,201 @@ exit 0
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertNotIn("login ghcr.io", self.docker_log.read_text(encoding="utf-8"))
 
+    def test_cleanup_only_prunes_old_release_data_and_owned_images(self) -> None:
+        """维护模式保留回滚窗口且只清理本项目的快照和镜像。"""
+
+        backup_root = self.project_dir / "deploy-data" / "backups" / "releases"
+        for index in range(1, 5):
+            backup = backup_root / f"2026100{index}T000000Z-0.19.{index}"
+            backup.mkdir(parents=True)
+            self.write_text(backup / "study-qb.sqlite3", f"snapshot {index}")
+        unrelated = backup_root / "manual-export"
+        unrelated.mkdir()
+        self.write_text(unrelated / "note.txt", "operator data")
+
+        image_rows = self.root / "docker-images.txt"
+        self.write_text(
+            image_rows,
+            "\n".join(
+                (
+                    f"ghcr.io/melodyknit/smartanswer <none> sha256:{'1' * 64} sha256:{'a' * 64}",
+                    f"ghcr.io/melodyknit/smartanswer <none> sha256:{'2' * 64} sha256:{'b' * 64}",
+                    f"ghcr.io/melodyknit/smartanswer <none> sha256:{'3' * 64} sha256:{'c' * 64}",
+                    "ghcr.io/another/project <none> sha256:" + "4" * 64 + " sha256:" + "d" * 64,
+                    "stqb-local/smartanswer release-0.19.2-cccccccccccc <none> sha256:" + "e" * 64,
+                    "stqb-local/smartanswer release-0.19.1-bbbbbbbbbbbb <none> sha256:" + "f" * 64,
+                    "stqb-local/smartanswer release-0.19.0-aaaaaaaaaaaa <none> sha256:" + "0" * 64,
+                    "",
+                )
+            ),
+        )
+        removed_images = self.root / "removed-images.txt"
+        curl_log = self.root / "curl.log"
+
+        completed = self.run_updater(
+            cleanup_only=True,
+            image_rows=image_rows,
+            removed_images=removed_images,
+            active_image_id="sha256:" + "a" * 64,
+            curl_log=curl_log,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        retained = sorted(
+            path.name
+            for path in backup_root.iterdir()
+            if path.is_dir() and path.name.startswith("202610")
+        )
+        self.assertEqual(
+            retained,
+            ["20261003T000000Z-0.19.3", "20261004T000000Z-0.19.4"],
+        )
+        self.assertTrue((unrelated / "note.txt").is_file())
+        removed = removed_images.read_text(encoding="utf-8").splitlines()
+        self.assertIn(f"ghcr.io/melodyknit/smartanswer@sha256:{'3' * 64}", removed)
+        self.assertIn("stqb-local/smartanswer:release-0.19.0-aaaaaaaaaaaa", removed)
+        self.assertFalse(any("another/project" in item for item in removed))
+        self.assertFalse(curl_log.exists())
+        self.assertFalse(self.apply_log.exists())
+
+    def test_cleanup_refuses_zero_backup_retention_before_deleting(self) -> None:
+        """保留数为零时更新器应拒绝运行，且不改动快照目录。"""
+
+        backup_root = self.project_dir / "deploy-data" / "backups" / "releases"
+        backup = backup_root / "20261001T000000Z-0.19.0"
+        backup.mkdir(parents=True)
+        self.write_text(backup / "study-qb.sqlite3", "snapshot")
+        with self.config_file.open("a", encoding="utf-8") as handle:
+            handle.write("STQB_RELEASE_BACKUP_KEEP=0\n")
+
+        completed = self.run_updater(cleanup_only=True)
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("STQB_RELEASE_BACKUP_KEEP must be between 1 and 100", completed.stderr)
+        self.assertTrue((backup / "study-qb.sqlite3").is_file())
+
+    def test_cleanup_preview_reports_candidates_without_removing_storage(self) -> None:
+        """预览与执行共用策略，但预览不能改变快照或镜像。"""
+
+        root = self.project_dir / "deploy-data/backups/releases"
+        for index in range(1, 4):
+            directory = root / f"2026100{index}T000000Z-0.19.{index}"
+            directory.mkdir(parents=True)
+            self.write_text(directory / "study-qb.sqlite3", "snapshot")
+        completed = self.run_updater(cleanup_preview=True)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("would remove release snapshot: 20261001", completed.stdout)
+        self.assertEqual(len(list(root.iterdir())), 3)
+        self.assertNotIn("image rm", self.docker_log.read_text(encoding="utf-8"))
+
+    @unittest.skipIf(os.name == "nt", "Windows hosts may not permit directory symlinks")
+    def test_symlinked_backup_parent_is_rejected_without_removing_external_data(self) -> None:
+        """备份父目录被链接到其他路径时必须拒绝清理。"""
+
+        outside = self.root / "operator-data"
+        for index in range(1, 4):
+            directory = outside / f"releases/2026100{index}T000000Z-0.19.{index}"
+            directory.mkdir(parents=True)
+            self.write_text(directory / "study-qb.sqlite3", "private data")
+        data_root = self.project_dir / "deploy-data"
+        data_root.mkdir()
+        (data_root / "backups").symlink_to(outside, target_is_directory=True)
+        completed = self.run_updater(cleanup_only=True)
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("symlink", completed.stdout)
+        self.assertEqual(len(list((outside / "releases").iterdir())), 3)
+
+    def test_regular_update_cleans_before_pulling_candidate_image(self) -> None:
+        """新旧镜像和旧数据库快照先清理，再拉取候选镜像。"""
+
+        backup_root = self.project_dir / "deploy-data" / "backups" / "releases"
+        old_backups = []
+        for index in range(1, 5):
+            backup = backup_root / f"2026100{index}T000000Z-0.19.{index}"
+            backup.mkdir(parents=True)
+            self.write_text(backup / "study-qb.sqlite3", "old rollback")
+            old_backups.append(backup)
+        image_rows = self.root / "docker-images.txt"
+        self.write_text(
+            image_rows,
+            "\n".join(
+                (
+                    f"ghcr.io/melodyknit/smartanswer <none> sha256:{'a' * 64} sha256:{'1' * 64}",
+                    f"ghcr.io/melodyknit/smartanswer <none> sha256:{'b' * 64} sha256:{'2' * 64}",
+                    f"ghcr.io/melodyknit/smartanswer <none> sha256:{'c' * 64} sha256:{'3' * 64}",
+                    "",
+                )
+            ),
+        )
+        removed_images = self.root / "removed-images.txt"
+
+        completed = self.run_updater(
+            image_rows=image_rows,
+            removed_images=removed_images,
+            active_image_id="sha256:" + "1" * 64,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        retained_backups = sorted(
+            path.name
+            for path in backup_root.iterdir()
+            if path.is_dir() and path.name.startswith("202610")
+        )
+        self.assertEqual(retained_backups, ["20261003T000000Z-0.19.3", "20261004T000000Z-0.19.4"])
+        docker_events = self.docker_log.read_text(encoding="utf-8").splitlines()
+        cleanup_position = next(i for i, line in enumerate(docker_events) if "image rm" in line)
+        pull_position = next(i for i, line in enumerate(docker_events) if line.startswith("pull "))
+        self.assertLess(cleanup_position, pull_position)
+        self.assertIn(f"ghcr.io/melodyknit/smartanswer@sha256:{'c' * 64}", removed_images.read_text(encoding="utf-8"))
+
+    def test_cleanup_keeps_all_container_images_and_removes_version_aliases(self) -> None:
+        """历史镜像的版本标签也要回收，其他容器或其他仓库引用的镜像不能删除。"""
+
+        image_rows = self.root / "docker-images.txt"
+        self.write_text(
+            image_rows,
+            "\n".join([
+                f"ghcr.io/melodyknit/smartanswer 0.20.0 sha256:{'1' * 64} sha256:{'a' * 64}",
+                f"ghcr.io/melodyknit/smartanswer 0.19.2 sha256:{'2' * 64} sha256:{'b' * 64}",
+                f"ghcr.io/melodyknit/smartanswer 0.19.0 sha256:{'3' * 64} sha256:{'c' * 64}",
+                f"ghcr.io/melodyknit/smartanswer v0.19.0 sha256:{'3' * 64} sha256:{'c' * 64}",
+                f"ghcr.io/melodyknit/smartanswer 0.18.0 sha256:{'4' * 64} sha256:{'d' * 64}",
+                f"ghcr.io/another/project saved <none> sha256:{'d' * 64}",
+                f"ghcr.io/melodyknit/smartanswer 0.17.0 sha256:{'5' * 64} sha256:{'e' * 64}",
+            ]) + "\n",
+        )
+        removed_images = self.root / "removed-images.txt"
+        completed = self.run_updater(
+            cleanup_only=True, image_rows=image_rows, removed_images=removed_images,
+            active_image_id="sha256:" + "a" * 64,
+            used_image_ids=["sha256:" + "a" * 64, "sha256:" + "e" * 64],
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        # Three owned images remain: two used by containers, plus one rollback.
+        removed = removed_images.read_text(encoding="utf-8")
+        self.assertIn("ghcr.io/melodyknit/smartanswer:0.19.0", removed)
+        self.assertIn("ghcr.io/melodyknit/smartanswer:v0.19.0", removed)
+        self.assertNotIn("ghcr.io/melodyknit/smartanswer:0.17.0", removed)
+        self.assertNotIn("ghcr.io/melodyknit/smartanswer:0.18.0", removed)
+
+    def test_cleanup_incomplete_snapshot_does_not_displace_valid_rollback(self) -> None:
+        """新但未完成的备份不能占用保留名额，也不能被自动删除。"""
+
+        backup_root = self.project_dir / "deploy-data" / "backups" / "releases"
+        for index in range(1, 4):
+            backup = backup_root / f"2026100{index}T000000Z-v0.19.{index}-manual"
+            backup.mkdir(parents=True)
+            self.write_text(backup / "study-qb.sqlite3", "snapshot")
+        partial = backup_root / "20261004T000000Z-0.20.0"
+        partial.mkdir()
+        self.write_text(partial / "study-qb.sqlite3", "unfinished")
+        self.write_text(partial / ".incomplete", "")
+        completed = self.run_updater(cleanup_only=True)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertFalse((backup_root / "20261001T000000Z-v0.19.1-manual").exists())
+        self.assertTrue((backup_root / "20261002T000000Z-v0.19.2-manual").is_dir())
+        self.assertTrue(partial.is_dir())
+
     def test_updater_has_no_github_ssh_deployment_binding(self) -> None:
         """更新器和发布工作流不应重新引入中心 SSH 部署绑定。"""
 
@@ -341,12 +536,25 @@ exit 0
                     "STQB_DOCKER_CONTEXT=rootless",
                     "STQB_PLATFORM=linux/amd64",
                     "STQB_ALLOW_DOWNGRADE=false",
+                    "STQB_RELEASE_BACKUP_KEEP=2",
+                    "STQB_RELEASE_IMAGE_KEEP=2",
                     "",
                 )
             ),
         )
 
-    def run_updater(self, *, docker_pull_fails: bool = False) -> subprocess.CompletedProcess[str]:
+    def run_updater(
+        self,
+        *,
+        docker_pull_fails: bool = False,
+        cleanup_only: bool = False,
+        cleanup_preview: bool = False,
+        image_rows: Path | None = None,
+        removed_images: Path | None = None,
+        active_image_id: str = "",
+        curl_log: Path | None = None,
+        used_image_ids: list[str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         """使用伪造 GitHub、Docker 和 flock 命令执行完整拉取流程。"""
 
         environment = {
@@ -365,14 +573,24 @@ exit 0
             "FAKE_VERSION": NEW_VERSION,
             "FAKE_SHA": NEW_SHA,
             "FAKE_DOCKER_PULL_FAILS": "1" if docker_pull_fails else "0",
+            "FAKE_DOCKER_IMAGES": self.bash_path(image_rows) if image_rows else "",
+            "FAKE_DOCKER_REMOVED_IMAGES": self.bash_path(removed_images) if removed_images else "",
+            "FAKE_ACTIVE_IMAGE_ID": active_image_id,
+            "FAKE_CURL_LOG": self.bash_path(curl_log) if curl_log else "",
+            "FAKE_USED_IMAGE_IDS": "\n".join(used_image_ids or []),
         }
+        updater_args = [self.bash_path(UPDATER_SCRIPT)]
+        if cleanup_preview:
+            updater_args.append("--cleanup-preview")
+        elif cleanup_only:
+            updater_args.append("--cleanup-only")
+        updater_args.append(self.bash_path(self.config_file))
         command = [
             str(self.bash),
             "-c",
             'export PATH="$FAKE_BIN:/usr/bin:/bin"; exec bash "$@"',
             "updater-test",
-            self.bash_path(UPDATER_SCRIPT),
-            self.bash_path(self.config_file),
+            *updater_args,
         ]
         return subprocess.run(
             command,
@@ -388,6 +606,7 @@ exit 0
 
         curl_script = r'''#!/usr/bin/env bash
 set -euo pipefail
+printf '%s\n' "$*" >> "${FAKE_CURL_LOG:-/dev/null}"
 args="$*"
 case "$args" in
   *"/releases/latest"*|*"/releases/tags/"*) cat "$FAKE_RELEASE_JSON" ;;
@@ -404,6 +623,22 @@ set -euo pipefail
 printf '%s\n' "$*" >> "$FAKE_DOCKER_LOG"
 if [[ "$#" -ge 2 && "$1" == "context" && "$2" == "show" ]]; then
   printf 'rootless'
+elif [[ "${1:-}" == "container" && "${2:-}" == "ls" ]]; then
+  if [[ -n "${FAKE_USED_IMAGE_IDS:-}" ]]; then printf 'other-container\n'; fi
+elif [[ "${1:-}" == "inspect" && " $* " == *".Image"* ]]; then
+  if [[ "${!#}" == "study-qb-assistant" ]]; then
+    printf '%s\n' "${FAKE_ACTIVE_IMAGE_ID:-}"
+  else
+    printf '%s\n' "${FAKE_USED_IMAGE_IDS:-}"
+  fi
+elif [[ "${1:-}" == "image" && "${2:-}" == "ls" ]]; then
+  if [[ -n "${FAKE_DOCKER_IMAGES:-}" && -f "$FAKE_DOCKER_IMAGES" ]]; then
+    cat "$FAKE_DOCKER_IMAGES"
+  fi
+elif [[ "${1:-}" == "image" && "${2:-}" == "inspect" && " $* " == *".Config.Labels"* ]]; then
+  printf 'https://github.com/MelodyKnit/SmartAnswer\n'
+elif [[ "${1:-}" == "image" && "${2:-}" == "rm" ]]; then
+  printf '%s\n' "${@:3}" >> "$FAKE_DOCKER_REMOVED_IMAGES"
 elif [[ "${1:-}" == "pull" && "${FAKE_DOCKER_PULL_FAILS:-0}" == "1" ]]; then
   exit 1
 elif [[ "${1:-}" == "build" ]]; then
