@@ -1,6 +1,6 @@
 """多模型主备自动降级提供者。
 
-把多个 `OpenAICompatibleProvider` 按优先级串成一条主备链：依次尝试，前一个抛错时
+把唯一主用与按优先级排列的备用 `OpenAICompatibleProvider` 串成一条主备链：前一个抛错时
 自动切换到下一个，并记录一条 failover 追溯。对外暴露与单个提供者一致的接口
 （answer / answer_with_evidence / verify_answer / verify_answer_with_evidence 以及
 model / stream / max_completion_tokens 等属性），因此可被 SearchAugmentedModelProvider
@@ -21,7 +21,7 @@ from ..contracts.providers import BaseModelProvider
 
 @dataclass(slots=True)
 class MultiModelProvider(BaseModelProvider):
-    """按优先级编排多个 OpenAI 兼容模型，提供主备自动降级。"""
+    """执行管理服务提供的主用优先、备用依次降级调用链。"""
 
     members: tuple[OpenAICompatibleProvider, ...]
     provider_name: str = "multi-model"
@@ -33,7 +33,7 @@ class MultiModelProvider(BaseModelProvider):
 
     @property
     def primary(self) -> OpenAICompatibleProvider:
-        """返回当前优先级最高的模型（主用）。"""
+        """返回调用链首个可用模型；主用启用时始终位于首位。"""
         return self.members[0]
 
     @property

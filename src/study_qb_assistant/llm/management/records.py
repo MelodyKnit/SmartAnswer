@@ -6,6 +6,14 @@ import json
 from dataclasses import dataclass
 
 
+class PrimaryModelRequiredError(ValueError):
+    """拒绝将唯一配置模型降级为备用。"""
+
+
+class LlmModelNotFoundError(LookupError):
+    """被编辑的模型已被另一配置操作删除。"""
+
+
 @dataclass(slots=True)
 class LlmModelRecord:
     """大模型接入配置记录。"""

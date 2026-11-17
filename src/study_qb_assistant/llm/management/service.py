@@ -17,6 +17,8 @@ class LlmManagementService:
     def __init__(self, repository, lock: RLock) -> None:
         self.repository = repository
         self.lock = lock
+        with self.lock:
+            self.repository.normalize_llm_model_roles()
 
     def list_models(self, *, reveal_secret: bool = False) -> list[dict]:
         """列出所有大模型配置。"""

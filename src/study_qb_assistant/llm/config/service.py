@@ -14,7 +14,7 @@ from ...platform.config import (
     LLM_RUNTIME_SECRET_KEYS,
     SYSTEM_CONFIG_KEYS,
 )
-from ..management.records import LlmModelRecord
+from ..management.records import LlmModelNotFoundError, LlmModelRecord, PrimaryModelRequiredError
 from .contracts import LlmConfigRepository
 
 
@@ -96,7 +96,8 @@ def create_llm_model(
         raise AuthError("INVALID_INPUT", "请填写模型名称", http_status=400)
     if not clean_base_url or not clean_model:
         raise AuthError("INVALID_INPUT", "请填写接口地址与模型标识", http_status=400)
-    normalized_role = role if role in {"primary", "backup", "disabled"} else "backup"
+    normalized_role = _normalize_llm_model_role(role)
+    normalized_priority = _validate_model_priority(priority)
     now = time.time()
     record = LlmModelRecord(
         model_id="llm_" + secrets.token_hex(8),
@@ -105,11 +106,15 @@ def create_llm_model(
         model=clean_model,
         api_key=(api_key or "").strip(),
         role=normalized_role,
-        priority=int(priority),
+        priority=normalized_priority,
         stream=bool(stream),
         max_completion_tokens=max(1, int(max_completion_tokens)),
         timeout_seconds=max(1.0, float(timeout_seconds)),
-        status=status if status in {"active", "inactive"} else "active",
+        status=(
+            "inactive"
+            if role == "disabled"
+            else status if status in {"active", "inactive"} else "active"
+        ),
         created_at=now,
         updated_at=now,
     )
@@ -129,6 +134,11 @@ def update_llm_model(
         record = repository.get_llm_model(model_id)
         if record is None:
             raise AuthError("MODEL_NOT_FOUND", "模型配置不存在", http_status=404)
+        update_fields = {key for key, value in values.items() if value is not None}
+        # 空白名称/连接字段和未重填的密钥保持原值，不写回旧快照。
+        for key in ("name", "base_url", "model", "api_key"):
+            if key in update_fields and not str(values[key]).strip():
+                update_fields.discard(key)
         if "name" in values and values["name"] is not None:
             record.name = str(values["name"]).strip() or record.name
         if "base_url" in values and values["base_url"] is not None:
@@ -137,21 +147,55 @@ def update_llm_model(
             record.model = str(values["model"]).strip() or record.model
         if values.get("api_key"):
             record.api_key = str(values["api_key"]).strip()
-        if values.get("role") in {"primary", "backup", "disabled"}:
-            record.role = str(values["role"])
+        requested_role = values.get("role")
+        if requested_role is not None:
+            if requested_role == "disabled":
+                record.status = "inactive"
+                update_fields.discard("role")
+                update_fields.add("status")
+            else:
+                record.role = _normalize_llm_model_role(str(requested_role))
         if "priority" in values and values["priority"] is not None:
-            record.priority = int(values["priority"])
+            record.priority = _validate_model_priority(values["priority"])
         if "stream" in values and values["stream"] is not None:
             record.stream = bool(values["stream"])
         if "max_completion_tokens" in values and values["max_completion_tokens"] is not None:
             record.max_completion_tokens = max(1, int(values["max_completion_tokens"]))
         if "timeout_seconds" in values and values["timeout_seconds"] is not None:
             record.timeout_seconds = max(1.0, float(values["timeout_seconds"]))
-        if values.get("status") in {"active", "inactive"}:
+        if values.get("status") in {"active", "inactive"} and requested_role != "disabled":
             record.status = str(values["status"])
         record.updated_at = time.time()
-        saved = repository.save_llm_model(record)
+        try:
+            saved = repository.save_llm_model(record, update_fields=update_fields)
+        except LlmModelNotFoundError as exc:
+            raise AuthError("MODEL_NOT_FOUND", "模型配置不存在", http_status=404) from exc
+        except PrimaryModelRequiredError as exc:
+            raise AuthError(
+                "PRIMARY_MODEL_REQUIRED",
+                "请先将其他模型设为主用；唯一模型如需暂停调用可直接停用",
+                http_status=400,
+            ) from exc
     return saved.to_dict()
+
+
+def _normalize_llm_model_role(role: str) -> str:
+    """将历史停用角色兼容映射为备用；启停由 status 字段单独控制。"""
+    if role == "disabled":
+        return "backup"
+    if role not in {"primary", "backup"}:
+        raise AuthError("INVALID_INPUT", "模型角色只能是主用或备用", http_status=400)
+    return role
+
+
+def _validate_model_priority(value: int) -> int:
+    try:
+        priority = int(value)
+    except (TypeError, ValueError) as exc:
+        raise AuthError("INVALID_INPUT", "备用优先级必须是整数", http_status=400) from exc
+    if not 0 <= priority <= 9999:
+        raise AuthError("INVALID_INPUT", "备用优先级必须在 0 到 9999 之间", http_status=400)
+    return priority
 
 
 def delete_llm_model(

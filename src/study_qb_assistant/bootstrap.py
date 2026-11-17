@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import sys
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -228,42 +228,50 @@ def build_answer_service(
 def refresh_answer_service(service: AnswerService, *, ai_learned_path: Path | None = None) -> None:
     """在不重启进程的情况下刷新答题服务配置。"""
 
-    config = get_global_config()
     settings_service = service.runtime_settings_service
     model_management_service = service.model_management_service
-    path = ai_learned_path or (config.data_normalized_dir / "ai-learned.jsonl")
-    provider, llm_answer_cache = build_provider_stack(
-        path,
-        settings_service=settings_service,
-        model_management_service=model_management_service,
+    runtime_lock = (
+        model_management_service.lock if model_management_service is not None
+        else settings_service.lock if settings_service is not None
+        else nullcontext()
     )
-    llm_runtime = (
-        settings_service.get_llm_runtime_config() if settings_service is not None else {}
-    )
-    system_config = settings_service.get_system_config() if settings_service is not None else {}
-    service.model_provider = provider
-    service.allow_model_fallback = (
-        bool_from_config(llm_runtime.get("llm_fallback"), default=config.llm_fallback)
-        and provider is not None
-    )
-    service.explain_local_matches = bool_from_config(
-        llm_runtime.get("llm_explain"),
-        default=config.llm_explain,
-    )
-    service.no_local_bank_mode = bool_from_config(
-        llm_runtime.get("no_local_bank_mode"),
-        default=config.no_local_bank_mode,
-    )
-    service.llm_answer_cache = llm_answer_cache
-    service.trusted_confidence_threshold = float_from_config(
-        llm_runtime.get("llm_cache_min_confidence")
-        or llm_runtime.get("ai_cache_min_confidence"),
-        default=config.llm_cache_min_confidence,
-    )
-    service.answer_retry_times = int_from_config(
-        system_config.get("answer_retry_times"),
-        default=config.answer_retry_times,
-    )
+    # 配置读取到新模型链安装期间保持同一锁，防止慢的旧刷新覆盖新主用。
+    # 此处只组装客户端，不在锁内调用供应商或执行答题请求。
+    with runtime_lock:
+        config = get_global_config()
+        path = ai_learned_path or (config.data_normalized_dir / "ai-learned.jsonl")
+        provider, llm_answer_cache = build_provider_stack(
+            path,
+            settings_service=settings_service,
+            model_management_service=model_management_service,
+        )
+        llm_runtime = (
+            settings_service.get_llm_runtime_config() if settings_service is not None else {}
+        )
+        system_config = settings_service.get_system_config() if settings_service is not None else {}
+        service.model_provider = provider
+        service.allow_model_fallback = (
+            bool_from_config(llm_runtime.get("llm_fallback"), default=config.llm_fallback)
+            and provider is not None
+        )
+        service.explain_local_matches = bool_from_config(
+            llm_runtime.get("llm_explain"),
+            default=config.llm_explain,
+        )
+        service.no_local_bank_mode = bool_from_config(
+            llm_runtime.get("no_local_bank_mode"),
+            default=config.no_local_bank_mode,
+        )
+        service.llm_answer_cache = llm_answer_cache
+        service.trusted_confidence_threshold = float_from_config(
+            llm_runtime.get("llm_cache_min_confidence")
+            or llm_runtime.get("ai_cache_min_confidence"),
+            default=config.llm_cache_min_confidence,
+        )
+        service.answer_retry_times = int_from_config(
+            system_config.get("answer_retry_times"),
+            default=config.answer_retry_times,
+        )
 
 
 def load_local_env_fallback(path: Path) -> None:

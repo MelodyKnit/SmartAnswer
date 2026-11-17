@@ -27,11 +27,16 @@ class LlmRepository(SqlAlchemyRepository):
     def list_llm_models(self) -> list[LlmModelRecord]:
         return llm_queries.list_llm_models(self.session_factory)
 
+    def normalize_llm_model_roles(self) -> None:
+        llm_queries.normalize_llm_model_roles(self.session_factory)
+
     def get_llm_model(self, model_id: str) -> LlmModelRecord | None:
         return llm_queries.get_llm_model(self.session_factory, model_id)
 
-    def save_llm_model(self, record: LlmModelRecord) -> LlmModelRecord:
-        return llm_queries.save_llm_model(self.session_factory, record)
+    def save_llm_model(
+        self, record: LlmModelRecord, *, update_fields: set[str] | None = None
+    ) -> LlmModelRecord:
+        return llm_queries.save_llm_model(self.session_factory, record, update_fields=update_fields)
 
     def delete_llm_model(self, model_id: str) -> bool:
         return llm_queries.delete_llm_model(self.session_factory, model_id)

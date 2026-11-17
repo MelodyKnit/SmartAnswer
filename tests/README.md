@@ -22,6 +22,9 @@ conda run -n ai-study-qb pytest -q
 conda run -n ai-study-qb python tests/manual/test_size_inference_simple.py
 
 node --experimental-strip-types --test tests/manual/test_redeem_share.mjs
+
+# 先构建前端；仅使用脚本自建的临时数据库，不连接生产服务。
+conda run -n ai-study-qb python tests/manual/check_llm_model_roles_ui.py --output-dir .local/llm-role-qa --browser-channel msedge
 ```
 
 ## 目录结构
@@ -49,4 +52,5 @@ tests/
 - 题库检索、AI 回退与搜索增强流程。
 - FastAPI 用户、令牌、工作台、钱包、接入和导入脚本接口。
 - 模型输出解析、搜索引擎适配和答案规范化。
+- 唯一主用模型切换、备用排序、旧角色兼容、事务回滚与并发配置写入（`test_llm_model_roles.py`）。
 - 错误处理：全局异常结构化响应、CORS 头、生图领域错误翻译（`unit/test_error_handling.py`）。

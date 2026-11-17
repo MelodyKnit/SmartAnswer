@@ -418,17 +418,20 @@ async function handleTestModel(row: LlmModel) {
 const roleLabel: Record<string, string> = {
   primary: '主用',
   backup: '备用',
-  disabled: '停用',
 }
 const roleTagType: Record<string, string> = {
   primary: 'success',
   backup: 'warning',
-  disabled: 'info',
 }
 
 const editVisible = ref(false)
 const editing = ref(false)
 const editingId = ref<string | null>(null)
+const originalModel = ref<LlmModel | null>(null)
+const canSelectBackup = computed(() => models.value.length > (editingId.value === null ? 0 : 1))
+const previousPrimary = computed(() =>
+  models.value.find((model) => model.role === 'primary' && model.model_id !== editingId.value),
+)
 const form = reactive({
   name: '',
   base_url: '',
@@ -457,12 +460,15 @@ function resetForm() {
 
 function openCreate() {
   editingId.value = null
+  originalModel.value = null
   resetForm()
+  form.role = models.value.some((model) => model.role === 'primary') ? 'backup' : 'primary'
   editVisible.value = true
 }
 
 function openEdit(row: LlmModel) {
   editingId.value = row.model_id
+  originalModel.value = { ...row }
   form.name = row.name
   form.base_url = row.base_url
   form.model = row.model
@@ -499,9 +505,14 @@ async function submitModel() {
         timeout_seconds: form.timeout_seconds,
         status: form.status,
       }
+      for (const key of Object.keys(body)) {
+        if (body[key] === originalModel.value?.[key as keyof LlmModel]) delete body[key]
+      }
       if (form.api_key.trim()) body.api_key = form.api_key.trim()
-      await llmApi.updateModel(editingId.value, body)
-      ElMessage.success('模型配置已更新')
+      if (Object.keys(body).length) {
+        await llmApi.updateModel(editingId.value, body)
+        ElMessage.success('模型配置已更新')
+      }
     } else {
       await llmApi.createModel({
         name: form.name,
@@ -867,7 +878,9 @@ onMounted(async () => {
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="优先级" width="80" prop="priority" align="center" />
+            <el-table-column label="备用优先级" width="110" align="center">
+              <template #default="{ row }">{{ row.role === 'primary' ? '—' : row.priority }}</template>
+            </el-table-column>
             <el-table-column label="密钥" width="90" align="center">
               <template #default="{ row }">
                 <el-tag size="small" :type="row.api_key_configured ? 'success' : 'info'" effect="plain">
@@ -975,7 +988,7 @@ onMounted(async () => {
       </el-tab-pane>
     </el-tabs>
 
-    <el-dialog v-model="editVisible" :title="editingId ? '编辑模型' : '新增模型'" width="620px" top="6vh">
+    <el-dialog v-model="editVisible" :title="editingId ? '编辑模型' : '新增模型'" width="min(620px, 94vw)" top="6vh">
       <el-form label-position="top" :disabled="editing">
         <el-form-item label="模型名称" required>
           <el-input v-model="form.name" maxlength="60" placeholder="便于识别的名称" />
@@ -994,18 +1007,34 @@ onMounted(async () => {
             :placeholder="editingId ? '留空表示保持原密钥不变' : '接口无需鉴权可留空'"
           />
         </el-form-item>
-        <div class="flex gap-4">
-          <el-form-item label="角色" class="flex-1">
+        <div class="flex flex-col gap-x-4 sm:flex-row">
+          <el-form-item class="min-w-0 flex-1">
+            <template #label>
+              <el-tooltip content="主用始终先尝试；主用停用或调用失败时，按备用优先级依次切换。" placement="top">
+                <span class="cursor-help border-b border-dotted border-current">模型角色</span>
+              </el-tooltip>
+            </template>
             <el-select v-model="form.role" class="w-full">
               <el-option value="primary" label="主用" />
-              <el-option value="backup" label="备用" />
-              <el-option value="disabled" label="停用" />
+              <el-option
+                value="backup"
+                label="备用"
+                :disabled="!canSelectBackup"
+              />
             </el-select>
           </el-form-item>
-          <el-form-item label="优先级（越小越靠前）" class="flex-1">
-            <el-input-number v-model="form.priority" :min="0" :max="9999" class="w-full" />
+          <el-form-item v-if="form.role === 'backup'" label="备用优先级（越小越先尝试）" class="min-w-0 flex-1">
+            <el-input-number
+              v-model="form.priority"
+              :min="0"
+              :max="9999"
+              class="w-full"
+            />
           </el-form-item>
         </div>
+        <p v-if="form.role === 'primary' && previousPrimary" class="-mt-3 mb-4 break-words text-xs text-ink-muted">
+          保存后，当前主用「{{ previousPrimary.name }}」将自动改为备用。
+        </p>
         <div class="flex gap-4">
           <el-form-item label="最大生成 token" class="flex-1">
             <el-input-number v-model="form.max_completion_tokens" :min="1" :max="32000" class="w-full" />
